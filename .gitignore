@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+.DS_Store
+*.user
+*.suo
+*.pfx
+*.p12
+*.cer
+*.msix
+*.msixbundle
+*.appxupload
+artifacts/
+TestResults/
