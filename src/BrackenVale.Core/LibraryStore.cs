@@ -118,9 +118,13 @@ public sealed class LibraryStore
         var escaped = search?.Trim().Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
         Add(command, "$pattern", string.IsNullOrWhiteSpace(escaped) ? DBNull.Value : $"%{escaped}%");
         Add(command, "$group", string.IsNullOrWhiteSpace(groupValue) || groupColumn == "folder" ? DBNull.Value : groupValue);
-        var folderPrefix = groupColumn == "folder" && !string.IsNullOrWhiteSpace(groupValue)
-            ? EscapeLike(Path.GetFullPath(groupValue)) + (Path.EndsInDirectorySeparator(Path.GetFullPath(groupValue)) ? "" : Path.DirectorySeparatorChar) + "%"
-            : null;
+        string? folderPrefix = null;
+        if (groupColumn == "folder" && !string.IsNullOrWhiteSpace(groupValue))
+        {
+            var folder = Path.GetFullPath(groupValue);
+            var prefix = Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
+            folderPrefix = EscapeLike(prefix) + "%";
+        }
         Add(command, "$folderPrefix", folderPrefix is null ? DBNull.Value : folderPrefix);
         using var reader = command.ExecuteReader();
         var result = new List<Track>();
