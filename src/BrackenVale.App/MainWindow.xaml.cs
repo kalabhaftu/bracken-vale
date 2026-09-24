@@ -250,17 +250,18 @@ public sealed partial class MainWindow : Window
 
     private void TrackList_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
 
-    private void PlayTrack(Track track, bool resetQueue)
+    private void PlayTrack(Track track, bool resetQueue, int? queueIndex = null)
     {
         if (resetQueue)
         {
             _queue.Clear(); _queue.AddRange(_tracks);
             _queueIndex = _queue.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
         }
+        else if (queueIndex is { } requestedIndex && requestedIndex >= 0 && requestedIndex < _queue.Count) _queueIndex = requestedIndex;
         else
         {
-            var index = _queue.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
-            if (index >= 0) _queueIndex = index;
+            var matchingIndex = _queue.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
+            if (matchingIndex >= 0) _queueIndex = matchingIndex;
         }
         _playback.Play(track); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0; _crossfadeInProgress = false; _repeatA = _repeatB = null;
         UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); PlayPauseButton.Content = "Pause"; SeekSlider.IsEnabled = true; SaveSession();
@@ -280,7 +281,7 @@ public sealed partial class MainWindow : Window
     private void Previous_Click(object sender, RoutedEventArgs e)
     {
         if (_playback.Position > 3000) { _playback.Seek(0); return; }
-        if (_queueIndex > 0) { _queueIndex--; PlayTrack(_queue[_queueIndex], false); }
+        if (_queueIndex > 0) { _queueIndex--; PlayTrack(_queue[_queueIndex], false, _queueIndex); }
     }
 
     private void Next_Click(object sender, RoutedEventArgs e) => AdvanceQueue(false);
@@ -289,7 +290,7 @@ public sealed partial class MainWindow : Window
     {
         if (_queue.Count == 0) { if (_tracks.Count > 0) { _queue.AddRange(_tracks); _queueIndex = -1; } }
         if (_queue.Count == 0) return;
-        if (automatic && _repeatMode == "Track" && _queueIndex >= 0) { PlayTrack(_queue[_queueIndex], false); return; }
+        if (automatic && _repeatMode == "Track" && _queueIndex >= 0) { PlayTrack(_queue[_queueIndex], false, _queueIndex); return; }
         int next;
         if (_shuffle && _queue.Count > 1)
         {
@@ -307,7 +308,7 @@ public sealed partial class MainWindow : Window
             _queueIndex = next; _crossfadeInProgress = true;
             _ = _playback.CrossfadeToAsync(track, seconds * 1000);
         }
-        else PlayTrack(track, false);
+        else PlayTrack(track, false, next);
     }
 
     private void Shuffle_Click(object sender, RoutedEventArgs e)
@@ -966,7 +967,7 @@ public sealed partial class MainWindow : Window
         queue.DoubleTapped += (_, _) =>
         {
             var index = queue.SelectedIndex;
-            if (index >= 0 && index < _queue.Count) PlayTrack(_queue[index], false);
+            if (index >= 0 && index < _queue.Count) PlayTrack(_queue[index], false, index);
             RefreshQueue();
         };
         controls.Children.Add(up); controls.Children.Add(down); controls.Children.Add(remove); controls.Children.Add(clear);

@@ -101,10 +101,10 @@ public sealed class CoreTests : IDisposable
     public void Search_sort_rating_favorite_play_count_and_session_round_trip()
     {
         var a = MakeTrack("zeta", "June", "/library/one.flac");
-        var b = MakeTrack("alpha", "Noah", "/library/two.mp3");
+        var b = MakeTrack("alpha", "Noah", "/library/two.mp3") with { LastPlayedUtc = DateTime.UtcNow.AddDays(-1) };
         _store.UpsertTracks([a, b]);
         _store.SetFavorite(a.Path, true); _store.SetRating(a.Path, 5); _store.RecordPlayed(a.Path, DateTime.UtcNow);
-        _store.SetRating(b.Path, 2); _store.RecordPlayed(b.Path, DateTime.UtcNow.AddDays(-1));
+        _store.SetRating(b.Path, 2);
         _store.SetSetting("theme", "Dark");
         var session = new PlaybackSession(a.Path, 1234, [a.Path, b.Path], true, "Queue");
         _store.SaveSession(session);
@@ -146,14 +146,14 @@ public sealed class CoreTests : IDisposable
         var two = Path.Combine(_root, "compilations", "two.mp3");
         var playlist = Path.Combine(_root, "playlists", "Road.m3u8");
         var imported = Path.Combine(_root, "playlists", "Imported.m3u8");
-        var created = _store.CreatePlaylist("Road", [one, two]);
+        var created = _store.CreatePlaylist("Road", [one, two, one]);
         _store.ExportM3u8(created.Id, playlist);
-        Assert.Equal([one, two], Playlists.ReadM3u8(playlist));
+        Assert.Equal([one, two, one], Playlists.ReadM3u8(playlist));
         _store.ImportM3u8(playlist, "Imported");
         var loaded = _store.GetPlaylists().Single(item => item.Name == "Imported");
-        Assert.Equal([one, two], loaded.Paths);
+        Assert.Equal([one, two, one], loaded.Paths);
         _store.RemoveFromPlaylist(loaded.Id, 0);
-        Assert.Equal([two], _store.GetPlaylists().Single(item => item.Id == loaded.Id).Paths);
+        Assert.Equal([two, one], _store.GetPlaylists().Single(item => item.Id == loaded.Id).Paths);
         _store.RenamePlaylist(loaded.Id, "Road copy");
         Assert.Equal("Road copy", _store.GetPlaylists().Single(item => item.Id == loaded.Id).Name);
         _store.DeletePlaylist(loaded.Id);

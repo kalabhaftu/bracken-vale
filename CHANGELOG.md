@@ -11,3 +11,4 @@ All notable changes to Bracken Vale are documented here.
 - Add dedicated album, artist, genre and folder browsing, plus queue reorder, removal and clear-upcoming controls.
 - Fix scan exclusions with trailing separators and restore playback volume when pausing or cancelling a crossfade.
 - Expose file path, last played and rating sorts in the library.
+- Keep duplicate playlist entries distinct while navigating the playback queue.
