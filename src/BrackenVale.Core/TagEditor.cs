@@ -12,11 +12,13 @@ public sealed class TagEditor(string backupDirectory)
         "COVERART", "METADATA_BLOCK_PICTURE", "WM/Title", "WM/Author", "WM/AlbumTitle", "WM/AlbumArtist", "WM/Genre", "WM/Year",
         "WM/TrackNumber", "WM/Lyrics", "WM/Picture", "Album Artist", "Track"
     };
+    private static readonly HashSet<string> CommonId3Frames = new(StringComparer.OrdinalIgnoreCase)
+        { "TIT2", "TPE1", "TALB", "TPE2", "TCON", "TYER", "TDRC", "TRCK" };
 
     public static string? CustomFieldFormat(string path) => FormatFor(path) switch
     {
         CustomFormat.Xiph => "Xiph/Vorbis comments",
-        CustomFormat.Id3v2 => "ID3v2 user text frames",
+        CustomFormat.Id3v2 => "ID3v2 text frames and user text",
         CustomFormat.Asf => "ASF descriptors",
         CustomFormat.Ape => "APEv2 items",
         _ => null
@@ -112,9 +114,18 @@ public sealed class TagEditor(string backupDirectory)
                     result[key] = string.Join("; ", xiph.GetField(key));
                 break;
             case CustomFormat.Id3v2 when media.GetTag(TagTypes.Id3v2) is TagLib.Id3v2.Tag id3:
-                foreach (var frame in id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>())
-                    if (!string.IsNullOrWhiteSpace(frame.Description) && frame.Text.Length > 0)
-                        result[frame.Description] = string.Join("; ", frame.Text);
+                foreach (var frame in id3.GetFrames<TagLib.Id3v2.TextInformationFrame>())
+                {
+                    if (frame is TagLib.Id3v2.UserTextInformationFrame user)
+                    {
+                        if (!string.IsNullOrWhiteSpace(user.Description) && user.Text.Length > 0)
+                            result[user.Description] = string.Join("; ", user.Text);
+                        continue;
+                    }
+                    var frameId = Encoding.ASCII.GetString(frame.FrameId.Data);
+                    if (!CommonId3Frames.Contains(frameId) && frame.Text.Length > 0)
+                        result["ID3:" + frameId] = string.Join("; ", frame.Text);
+                }
                 break;
             case CustomFormat.Asf when media.GetTag(TagTypes.Asf) is TagLib.Asf.Tag asf:
                 foreach (var descriptor in asf.Where(descriptor => !CommonFields.Contains(descriptor.Name) && descriptor.Type == TagLib.Asf.DataType.Unicode))
@@ -142,6 +153,14 @@ public sealed class TagEditor(string backupDirectory)
             case CustomFormat.Id3v2:
                 var id3 = media.GetTag(TagTypes.Id3v2, true) as TagLib.Id3v2.Tag
                     ?? throw new NotSupportedException("ID3v2 tags are not supported by this file format.");
+                if (key.StartsWith("ID3:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var frameId = key[4..].ToUpperInvariant();
+                    if (frameId.Length != 4 || frameId.Any(character => !char.IsAsciiLetterOrDigit(character)) || CommonId3Frames.Contains(frameId) || frameId == "TXXX")
+                        throw new ArgumentException("Use ID3: followed by a non-standard four-character text frame identifier.");
+                    id3.SetTextFrame(ByteVector.FromString(frameId, StringType.Latin1), values);
+                    break;
+                }
                 var frame = TagLib.Id3v2.UserTextInformationFrame.Get(id3, key, false);
                 if (values.Length == 0) { if (frame is not null) id3.RemoveFrame(frame); }
                 else (frame ?? TagLib.Id3v2.UserTextInformationFrame.Get(id3, key, true)!).Text = values;

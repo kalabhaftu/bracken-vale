@@ -201,14 +201,15 @@ public sealed class CoreTests : IDisposable
         var path = Path.Combine(_root, "custom.wav");
         WriteWave(path);
         var editor = new TagEditor(Path.Combine(_root, "backups"));
-        var initial = new Dictionary<string, string> { ["MOOD"] = "warm", ["SOURCE"] = "vinyl" };
+        var initial = new Dictionary<string, string> { ["MOOD"] = "warm", ["SOURCE"] = "vinyl", ["ID3:TCOM"] = "Ludwig" };
 
         editor.Save(path, new TagEdit(CustomFields: initial));
-        Assert.Equal("ID3v2 user text frames", TagEditor.CustomFieldFormat(path));
+        Assert.Equal("ID3v2 text frames and user text", TagEditor.CustomFieldFormat(path));
         Assert.Equal(initial, TagEditor.ReadCustomFields(path));
 
-        editor.Save(path, new TagEdit(CustomFields: new Dictionary<string, string> { ["MOOD"] = "quiet" }));
-        Assert.Equal(new Dictionary<string, string> { ["MOOD"] = "quiet" }, TagEditor.ReadCustomFields(path));
+        var updated = new Dictionary<string, string> { ["MOOD"] = "quiet", ["ID3:TCOM"] = "Ludwig" };
+        editor.Save(path, new TagEdit(CustomFields: updated));
+        Assert.Equal(updated, TagEditor.ReadCustomFields(path));
     }
 
     [Fact]
