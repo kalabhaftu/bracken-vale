@@ -45,6 +45,16 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Scanner_skips_unavailable_roots()
+    {
+        var found = new List<string>();
+        using var control = new ScanControl();
+        await new LibraryScanner().ScanAsync([Path.Combine(_root, "missing-root")], [], control,
+            (path, _) => { found.Add(path); return ValueTask.CompletedTask; });
+        Assert.Empty(found);
+    }
+
+    [Fact]
     public void Search_sort_rating_favorite_play_count_and_session_round_trip()
     {
         var a = MakeTrack("zeta", "June", "/library/one.flac");
