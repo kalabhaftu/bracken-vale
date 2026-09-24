@@ -104,6 +104,7 @@ public sealed class CoreTests : IDisposable
         var b = MakeTrack("alpha", "Noah", "/library/two.mp3");
         _store.UpsertTracks([a, b]);
         _store.SetFavorite(a.Path, true); _store.SetRating(a.Path, 5); _store.RecordPlayed(a.Path, DateTime.UtcNow);
+        _store.SetRating(b.Path, 2); _store.RecordPlayed(b.Path, DateTime.UtcNow.AddDays(-1));
         _store.SetSetting("theme", "Dark");
         var session = new PlaybackSession(a.Path, 1234, [a.Path, b.Path], true, "Queue");
         _store.SaveSession(session);
@@ -112,6 +113,9 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(5, _store.GetTracks(filter: "favorites").Single().Rating);
         Assert.Equal(1, _store.GetTracks(filter: "most-played").Single().PlayCount);
         Assert.Equal("alpha", _store.GetTracks(sort: TrackSort.Title).First().Title);
+        Assert.Equal(b.Path, _store.GetTracks(sort: TrackSort.Rating).First().Path);
+        Assert.Equal(a.Path, _store.GetTracks(sort: TrackSort.LastPlayed, descending: true).First().Path);
+        Assert.Equal(a.Path, _store.GetTracks(sort: TrackSort.Path).First().Path);
         Assert.Equal(a.Path, _store.GetTracks(search: "one.flac").Single().Path);
         var restored = Assert.IsType<PlaybackSession>(_store.LoadSession());
         Assert.Equal(session.TrackPath, restored.TrackPath); Assert.Equal(session.PositionMilliseconds, restored.PositionMilliseconds);

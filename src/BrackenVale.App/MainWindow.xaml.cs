@@ -193,7 +193,8 @@ public sealed partial class MainWindow : Window
         if (SortBox is not null) SortBox.SelectedIndex = _sort switch
         {
             TrackSort.Artist => 1, TrackSort.Album => 2, TrackSort.Genre => 3, TrackSort.Year => 4,
-            TrackSort.Added => 5, TrackSort.Duration => 6, TrackSort.PlayCount => 7, _ => 0
+            TrackSort.Added => 5, TrackSort.Duration => 6, TrackSort.PlayCount => 7, TrackSort.LastPlayed => 8,
+            TrackSort.Path => 9, TrackSort.Rating => 10, _ => 0
         };
         SortDirectionButton.Content = _descending ? "Descending" : "Ascending";
         RefreshLibrary();
@@ -223,10 +224,11 @@ public sealed partial class MainWindow : Window
 
     private void SortBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (SortBox.SelectedIndex >= 0 && SortBox.SelectedIndex < 8)
+        if (SortBox.SelectedIndex >= 0 && SortBox.SelectedIndex < 11)
         {
             _sort = SortBox.SelectedIndex switch { 0 => TrackSort.Title, 1 => TrackSort.Artist, 2 => TrackSort.Album, 3 => TrackSort.Genre,
-                4 => TrackSort.Year, 5 => TrackSort.Added, 6 => TrackSort.Duration, _ => TrackSort.PlayCount };
+                4 => TrackSort.Year, 5 => TrackSort.Added, 6 => TrackSort.Duration, 7 => TrackSort.PlayCount,
+                8 => TrackSort.LastPlayed, 9 => TrackSort.Path, _ => TrackSort.Rating };
             RefreshLibrary();
         }
     }

@@ -47,6 +47,7 @@ FORM: Native WinUI NavigationView and virtualized ListView; two accent treatment
                         <ComboBox x:Name="SortBox" Grid.Column="1" Header="Sort by" SelectedIndex="0" SelectionChanged="SortBox_SelectionChanged" MinWidth="130">
                             <ComboBoxItem Content="Title" /><ComboBoxItem Content="Artist" /><ComboBoxItem Content="Album" /><ComboBoxItem Content="Genre" />
                             <ComboBoxItem Content="Year" /><ComboBoxItem Content="Recently added" /><ComboBoxItem Content="Duration" /><ComboBoxItem Content="Play count" />
+                            <ComboBoxItem Content="Last played" /><ComboBoxItem Content="File path" /><ComboBoxItem Content="Rating" />
                         </ComboBox>
                         <Button x:Name="SortDirectionButton" Grid.Column="2" Content="Ascending" VerticalAlignment="Bottom" Click="SortDirection_Click" />
                     </Grid>

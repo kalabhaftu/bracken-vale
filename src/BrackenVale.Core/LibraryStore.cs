@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace BrackenVale.Core;
 
-public enum TrackSort { Title, Artist, Album, Genre, Year, Added, Duration, PlayCount, LastPlayed, Path }
+public enum TrackSort { Title, Artist, Album, Genre, Year, Added, Duration, PlayCount, LastPlayed, Path, Rating }
 public sealed record IndexedFileState(long Length, DateTime ModifiedUtc);
 
 public sealed class LibraryStore
@@ -98,7 +98,7 @@ public sealed class LibraryStore
         {
             TrackSort.Artist => "artist", TrackSort.Album => "album", TrackSort.Genre => "genre", TrackSort.Year => "year",
             TrackSort.Added => "added_utc", TrackSort.Duration => "duration_ms", TrackSort.PlayCount => "play_count",
-            TrackSort.LastPlayed => "last_played_utc", TrackSort.Path => "path", _ => "title"
+            TrackSort.LastPlayed => "last_played_utc", TrackSort.Path => "path", TrackSort.Rating => "rating", _ => "title"
         };
         var predicate = filter switch
         {
