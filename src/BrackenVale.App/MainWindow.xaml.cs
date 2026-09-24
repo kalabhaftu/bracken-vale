@@ -816,6 +816,8 @@ public sealed partial class MainWindow : Window
         var scroll = new ScrollViewer { Content = fields, MaxHeight = 620, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var dialog = new ContentDialog { Title = "Preview and edit tags", Content = scroll, PrimaryButtonText = "Save tags", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        TagBackup? backup = null;
+        var tagsWritten = false;
         try
         {
             var customFields = ParseCustomFields(custom.Text);
@@ -824,13 +826,37 @@ public sealed partial class MainWindow : Window
                 uint.TryParse(number.Text, out var parsedNumber) ? parsedNumber : null,
                 ArtworkPath: string.IsNullOrWhiteSpace(artwork.Text) ? null : artwork.Text,
                 CustomFields: customFields);
-            var backup = new TagEditor(Path.Combine(_appData, "TagBackups")).Save(track.Path, edit);
+            backup = new TagEditor(Path.Combine(_appData, "TagBackups")).Save(track.Path, edit);
+            tagsWritten = true;
             _store.RecordTagBackup(backup);
-            _store.UpsertTrack(TrackReader.Read(track.Path, Path.Combine(_appData, "Artwork")));
-            RefreshLibrary();
+            RefreshEditedTrack(track.Path);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
-        { LocalAppLog.Shared.Error("tag-editor", $"Could not save tags for {track.Path}.", ex); await ShowNoticeAsync($"Tags were not saved. The original file is intact. {ex.Message}"); }
+        catch (Exception ex)
+        {
+            if (tagsWritten)
+            {
+                LocalAppLog.Shared.Warning("tag-editor", $"Tags were written but the library refresh failed for {track.Path}. Backup: {backup?.BackupPath}", ex);
+                await ShowNoticeAsync($"Tags were written, but the library could not refresh. Backup: {backup?.BackupPath}");
+            }
+            else
+            {
+                LocalAppLog.Shared.Error("tag-editor", $"Could not save tags for {track.Path}.", ex);
+                await ShowNoticeAsync($"Tags were not saved. The original file is intact. {ex.Message}");
+            }
+        }
+    }
+
+    private void RefreshEditedTrack(string path)
+    {
+        var track = TrackReader.Read(path, Path.Combine(_appData, "Artwork"));
+        _store.UpsertTrack(track);
+        if (SameTrack(_playback.CurrentTrack?.Path, track.Path))
+        {
+            _playback.UpdateTrackMetadata(track);
+            UpdateCurrentTrack(track);
+            UpdateSystemMediaControls(track, _playback.IsPlaying);
+        }
+        RefreshLibrary();
     }
 
     private static TextBox AddTextField(string name, string value) => new() { Header = name, Text = value, MinWidth = 330 };
@@ -853,13 +879,26 @@ public sealed partial class MainWindow : Window
         if (backup is null) { await ShowNoticeAsync("No tag backup is saved for this track."); return; }
         var confirm = new ContentDialog { Title = "Restore previous tags?", Content = "The file will be replaced with the recoverable copy saved before the last tag edit.", PrimaryButtonText = "Restore", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
         if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+        var restored = false;
         try
         {
             new TagEditor(Path.Combine(_appData, "TagBackups")).Restore(backup);
-            _store.UpsertTrack(TrackReader.Read(track.Path, Path.Combine(_appData, "Artwork"))); RefreshLibrary();
+            restored = true;
+            RefreshEditedTrack(track.Path);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { LocalAppLog.Shared.Error("tag-restore", $"Could not restore tags for {track.Path}.", ex); await ShowNoticeAsync($"Could not restore the backup: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            if (restored)
+            {
+                LocalAppLog.Shared.Warning("tag-restore", $"Tags were restored but the library refresh failed for {track.Path}.", ex);
+                await ShowNoticeAsync("The file was restored, but the library could not refresh. Scan the library to update its tags.");
+            }
+            else
+            {
+                LocalAppLog.Shared.Error("tag-restore", $"Could not restore tags for {track.Path}.", ex);
+                await ShowNoticeAsync($"Could not restore the backup: {ex.Message}");
+            }
+        }
     }
 
     private async void Details_Click(object sender, RoutedEventArgs e)

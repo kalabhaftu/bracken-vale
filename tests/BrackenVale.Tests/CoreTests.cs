@@ -192,6 +192,24 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(original, System.IO.File.ReadAllBytes(path));
     }
 
+    [Fact]
+    public void Track_reader_cache_changes_when_embedded_artwork_changes()
+    {
+        var path = Path.Combine(_root, "cover.wav");
+        var firstArt = Path.Combine(_root, "first.png"); var secondArt = Path.Combine(_root, "second.png");
+        var cache = Path.Combine(_root, "artwork");
+        WriteWave(path);
+        System.IO.File.WriteAllBytes(firstArt, [1, 2, 3]); System.IO.File.WriteAllBytes(secondArt, [4, 5, 6]);
+        var editor = new TagEditor(Path.Combine(_root, "backups"));
+        editor.Save(path, new TagEdit(ArtworkPath: firstArt));
+        var first = TrackReader.Read(path, cache);
+        editor.Save(path, new TagEdit(ArtworkPath: secondArt));
+        var second = TrackReader.Read(path, cache);
+
+        Assert.NotEqual(first.ArtworkPath, second.ArtworkPath);
+        Assert.Equal(System.IO.File.ReadAllBytes(secondArt), System.IO.File.ReadAllBytes(second.ArtworkPath!));
+    }
+
     private static Track MakeTrack(string title, string artist, string path) => new(
         Path.GetFullPath(path), title, artist, "Album", artist, "Jazz", 2022, 1, TimeSpan.FromSeconds(210), 1234,
         DateTime.UtcNow, DateTime.UtcNow);

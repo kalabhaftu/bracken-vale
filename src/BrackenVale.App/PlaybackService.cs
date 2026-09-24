@@ -50,6 +50,11 @@ public sealed class PlaybackService : IDisposable
         CurrentTrack = track;
     }
 
+    public void UpdateTrackMetadata(Track track)
+    {
+        if (CurrentTrack is { } current && string.Equals(current.Path, track.Path, StringComparison.OrdinalIgnoreCase)) CurrentTrack = track;
+    }
+
     public void Play(Track track)
     {
         CancelCrossfade();

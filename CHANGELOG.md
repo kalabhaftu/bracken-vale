@@ -15,3 +15,4 @@ All notable changes to Bracken Vale are documented here.
 - Identify failed tracks in the local log and recover the active playback state when LibVLC reports an error.
 - Throttle failed automatic update checks to the configured weekly interval.
 - Clear stale synced lyrics when playback moves before the next timed line.
+- Refresh artwork cache keys after tag edits and update the current track details immediately.

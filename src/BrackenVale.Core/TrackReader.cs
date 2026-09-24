@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using TagLib;
 
 namespace BrackenVale.Core;
@@ -12,7 +11,7 @@ public static class TrackReader
         var info = new FileInfo(path);
         using var media = TagLib.File.Create(path);
         var tag = media.Tag;
-        var artwork = SaveArtwork(tag.Pictures.FirstOrDefault(), path, artworkCache);
+        var artwork = SaveArtwork(tag.Pictures.FirstOrDefault(), artworkCache);
         return new(
             path,
             string.IsNullOrWhiteSpace(tag.Title) ? Path.GetFileNameWithoutExtension(path) : tag.Title,
@@ -29,18 +28,24 @@ public static class TrackReader
             ArtworkPath: artwork);
     }
 
-    private static string? SaveArtwork(IPicture? picture, string trackPath, string cache)
+    private static string? SaveArtwork(IPicture? picture, string cache)
     {
         if (picture is null || picture.Data.Count == 0) return null;
         Directory.CreateDirectory(cache);
-        var pathKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trackPath)));
+        var image = picture.Data.ToArray();
+        var pathKey = Convert.ToHexString(SHA256.HashData(image));
         var extension = picture.MimeType switch { "image/png" => ".png", "image/jpeg" => ".jpg", "image/webp" => ".webp", _ => ".img" };
         var path = Path.Combine(cache, pathKey + extension);
         if (!System.IO.File.Exists(path))
         {
-            var temporary = path + ".tmp";
-            System.IO.File.WriteAllBytes(temporary, picture.Data.ToArray());
-            System.IO.File.Move(temporary, path, true);
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                System.IO.File.WriteAllBytes(temporary, image);
+                try { System.IO.File.Move(temporary, path); }
+                catch (IOException) when (System.IO.File.Exists(path)) { }
+            }
+            finally { if (System.IO.File.Exists(temporary)) System.IO.File.Delete(temporary); }
         }
         return path;
     }
