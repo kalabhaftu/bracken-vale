@@ -17,7 +17,7 @@ dotnet build src/BrackenVale.App/BrackenVale.App.csproj -c Release -p:Platform=x
 
 For ARM64, replace `x64`/`win-x64` with `ARM64`/`win-arm64`. The automated Windows workflow builds both architectures and uploads per-architecture artifacts.
 
-The core and its tests target .NET 10 without WinUI and can be tested on macOS or Linux. Native UI, audio devices, media keys, tray integration, installer behavior, MSIX installation and Windows 10/11 visual behavior must be checked on Windows hardware.
+The core and its tests target .NET 10 without WinUI and can be tested on macOS or Linux. The Windows workflow builds and uploads a self-contained portable ZIP for x64 and ARM64. Native UI, audio devices, media keys, tray integration, installer behavior, MSIX installation and Windows 10/11 visual behavior must be checked on Windows hardware.
 
 ## Configuration and data
 

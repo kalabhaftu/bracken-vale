@@ -16,3 +16,4 @@ All notable changes to Bracken Vale are documented here.
 - Throttle failed automatic update checks to the configured weekly interval.
 - Clear stale synced lyrics when playback moves before the next timed line.
 - Refresh artwork cache keys after tag edits and update the current track details immediately.
+- Publish self-contained x64 and ARM64 portable ZIPs from successful Windows CI runs.

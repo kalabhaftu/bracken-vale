@@ -16,7 +16,7 @@ The supported audio formats depend on the bundled LibVLC modules and the file co
 
 ## Get a Windows build
 
-Open the repository's **Actions** tab and download the x64 or ARM64 CI artifact from a successful run. These are development builds. A tagged GitHub Release is the distribution path once signing credentials and Windows validation are configured.
+Open the repository's **Actions** tab and download `bracken-vale-win-x64-portable` or `bracken-vale-win-arm64-portable` from a successful run. Extract the ZIP and start `BrackenVale.exe`. These self-contained builds do not need a separate .NET or codec installation; they are unsigned previews and Windows may show a security warning. Signed setup installers and MSIX releases require signing credentials and Windows hardware validation.
 
 ## Build from the command line
 

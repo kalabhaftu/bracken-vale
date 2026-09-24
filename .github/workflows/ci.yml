@@ -32,9 +32,17 @@ jobs:
         run: dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj --configuration Release --no-restore
       - name: Build WinUI app
         run: dotnet build src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --no-restore -p:Platform=${{ matrix.arch }} -p:RuntimeIdentifier=${{ matrix.rid }} -p:AppxPackageSigningEnabled=false -p:GenerateAppxPackageOnBuild=false
-      - name: Upload app build
+      - name: Publish self-contained portable app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $PWD 'artifacts/portable'
+          dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --output $out -p:Platform=${{ matrix.arch }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
+          $archive = 'artifacts/bracken-vale-${{ matrix.rid }}.zip'
+          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $archive -CompressionLevel Optimal
+      - name: Upload portable build
         uses: actions/upload-artifact@v7
         with:
-          name: bracken-vale-${{ matrix.rid }}
-          path: src/BrackenVale.App/bin/${{ matrix.arch }}/Release/net10.0-windows10.0.26100.0/${{ matrix.rid }}/
+          name: bracken-vale-${{ matrix.rid }}-portable
+          path: artifacts/bracken-vale-${{ matrix.rid }}.zip
           if-no-files-found: error
