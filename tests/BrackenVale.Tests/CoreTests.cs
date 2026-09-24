@@ -17,19 +17,46 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void Local_log_saves_error_details_in_an_easy_to_open_folder()
+    {
+        var folder = Path.Combine(_root, "Logs");
+        var log = new LocalAppLog(folder);
+        log.Error("tag-editor", "Could not save tags.", new IOException("file is read-only"));
+        var file = Assert.Single(Directory.GetFiles(folder, "bracken-vale-*.log"));
+        var contents = System.IO.File.ReadAllText(file);
+        Assert.Contains("[ERROR] [tag-editor] Could not save tags.", contents);
+        Assert.Contains("System.IO.IOException: file is read-only", contents);
+    }
+
+    [Fact]
+    public void Local_log_rotates_and_caps_large_entries()
+    {
+        var folder = Path.Combine(_root, "RotatingLogs");
+        var log = new LocalAppLog(folder);
+        log.Info("test", new string('x', 4 * 1024 * 1024 + 100));
+        log.Info("test", "after rotation");
+        var rotated = Assert.Single(Directory.GetFiles(folder, "bracken-vale-*.log.1"));
+        var current = Assert.Single(Directory.GetFiles(folder, "bracken-vale-*.log"));
+        Assert.True(new FileInfo(rotated).Length <= 4 * 1024 * 1024);
+        Assert.Contains("after rotation", System.IO.File.ReadAllText(current));
+    }
+
+    [Fact]
     public async Task Scanner_skips_ignored_directories_and_symlinks()
     {
         var root = Path.Combine(_root, "music"); var ignored = Path.Combine(root, "skip"); var linked = Path.Combine(root, "linked");
+        var system = Path.Combine(root, "other-user", "AppData");
         var external = Path.Combine(_root, "external");
-        Directory.CreateDirectory(ignored); Directory.CreateDirectory(external); Directory.CreateDirectory(root);
+        Directory.CreateDirectory(ignored); Directory.CreateDirectory(external); Directory.CreateDirectory(system); Directory.CreateDirectory(root);
         await System.IO.File.WriteAllTextAsync(Path.Combine(root, "keep.mp3"), "metadata is irrelevant to enumeration");
         await System.IO.File.WriteAllTextAsync(Path.Combine(root, "readme.txt"), "ignore extension");
         await System.IO.File.WriteAllTextAsync(Path.Combine(ignored, "ignored.flac"), "ignore folder");
+        await System.IO.File.WriteAllTextAsync(Path.Combine(system, "system.mp3"), "exclude application data");
         await System.IO.File.WriteAllTextAsync(Path.Combine(external, "linked.wav"), "skip linked directory");
         Directory.CreateSymbolicLink(linked, external);
         var found = new List<string>();
         using var control = new ScanControl();
-        await new LibraryScanner().ScanAsync([root], [ignored], control,
+        await new LibraryScanner(new LocalAppLog(Path.Combine(_root, "Logs"))).ScanAsync([root], [ignored], control,
             (path, _) => { found.Add(Path.GetFullPath(path)); return ValueTask.CompletedTask; });
         Assert.Equal([Path.Combine(root, "keep.mp3")], found);
     }
@@ -39,7 +66,7 @@ public sealed class CoreTests : IDisposable
     {
         var root = Path.Combine(_root, "pause"); Directory.CreateDirectory(root);
         using var control = new ScanControl(); control.Pause();
-        var scan = new LibraryScanner().ScanAsync([root], [], control, (_, _) => ValueTask.CompletedTask);
+        var scan = new LibraryScanner(new LocalAppLog(Path.Combine(_root, "Logs"))).ScanAsync([root], [], control, (_, _) => ValueTask.CompletedTask);
         await Task.Delay(50); control.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scan);
     }
@@ -49,9 +76,25 @@ public sealed class CoreTests : IDisposable
     {
         var found = new List<string>();
         using var control = new ScanControl();
-        await new LibraryScanner().ScanAsync([Path.Combine(_root, "missing-root")], [], control,
+        await new LibraryScanner(new LocalAppLog(Path.Combine(_root, "Logs"))).ScanAsync([Path.Combine(_root, "missing-root")], [], control,
             (path, _) => { found.Add(path); return ValueTask.CompletedTask; });
         Assert.Empty(found);
+    }
+
+    [Fact]
+    public async Task Indexer_removes_deleted_tracks_but_preserves_unavailable_roots()
+    {
+        var root = Path.Combine(_root, "available");
+        Directory.CreateDirectory(root);
+        var deleted = Path.Combine(root, "deleted.mp3");
+        var offline = Path.Combine(_root, "offline", "not-mounted.flac");
+        _store.UpsertTracks([MakeTrack("deleted", "Artist", deleted), MakeTrack("offline", "Artist", offline)]);
+        using var control = new ScanControl();
+        var result = await new LibraryIndexer(_store, Path.Combine(_root, "artwork"), new LocalAppLog(Path.Combine(_root, "Logs")))
+            .ScanAsync([root, Path.GetDirectoryName(offline)!], [], control);
+        Assert.Equal(1, result.Removed);
+        Assert.Null(_store.GetTrack(deleted));
+        Assert.NotNull(_store.GetTrack(offline));
     }
 
     [Fact]
@@ -77,6 +120,19 @@ public sealed class CoreTests : IDisposable
         Assert.False(PlayCompletion.HasReachedHalf(TimeSpan.FromSeconds(100), TimeSpan.FromSeconds(49)));
         Assert.False(PlayCompletion.HasReachedHalf(TimeSpan.Zero, TimeSpan.FromSeconds(4)));
         Assert.Throws<ArgumentOutOfRangeException>(() => _store.SetRating(a.Path, 6));
+    }
+
+    [Fact]
+    public void Album_artist_genre_and_folder_groups_filter_tracks()
+    {
+        var rock = MakeTrack("song", "June", Path.Combine(_root, "library", "Rock", "song.flac"));
+        var pop = MakeTrack("song", "Noah", Path.Combine(_root, "library", "Pop", "song.mp3"));
+        _store.UpsertTracks([rock with { Genre = "Rock" }, pop with { Genre = "Pop", Album = "Other Album" }]);
+        Assert.Equal([rock.Path], _store.GetTracks(groupColumn: "album", groupValue: "Album").Select(track => track.Path));
+        Assert.Equal([pop.Path], _store.GetTracks(groupColumn: "artist", groupValue: "Noah").Select(track => track.Path));
+        Assert.Equal([rock.Path], _store.GetTracks(groupColumn: "genre", groupValue: "Rock").Select(track => track.Path));
+        Assert.Equal([rock.Path], _store.GetTracks(groupColumn: "folder", groupValue: Path.Combine(_root, "library", "Rock")).Select(track => track.Path));
+        Assert.Contains(Path.Combine(_root, "library", "Rock"), _store.GetFolders());
     }
 
     [Fact]

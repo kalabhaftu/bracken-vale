@@ -20,8 +20,14 @@ public sealed class PlaybackService : IDisposable
     {
         LibVLCSharp.Shared.Core.Initialize();
         _libVlc = new LibVLC();
+        _libVlc.Log += (_, args) =>
+        {
+            if (args.Level is LogLevel.Warning or LogLevel.Error)
+                LocalAppLog.Shared.Warning("libvlc", args.FormattedLog);
+        };
         _first = new(_libVlc); _second = new(_libVlc); _active = _first; _next = _second;
         _first.EndReached += EndReached; _second.EndReached += EndReached;
+        _first.EncounteredError += EncounteredError; _second.EncounteredError += EncounteredError;
     }
 
     public event EventHandler? TrackEnded;
@@ -153,6 +159,12 @@ public sealed class PlaybackService : IDisposable
     private void EndReached(object? sender, EventArgs e)
     {
         if (ReferenceEquals(sender, _active) && _crossfadeCancellation is null) TrackEnded?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void EncounteredError(object? sender, EventArgs e)
+    {
+        var path = ReferenceEquals(sender, _active) ? CurrentTrack?.Path : "incoming track";
+        LocalAppLog.Shared.Warning("playback", $"LibVLC could not open or decode '{path ?? "unknown track"}'. {_libVlc.LastLibVLCError}");
     }
 
     private void CancelCrossfade()

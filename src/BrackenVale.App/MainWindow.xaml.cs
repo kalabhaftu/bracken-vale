@@ -95,6 +95,7 @@ public sealed partial class MainWindow : Window
         if (scanRoots.Length == 0) return;
         var control = new ScanControl();
         _scanControl = control;
+        AddFolderButton.IsEnabled = ScanLibraryButton.IsEnabled = false;
         ScanStatus.Visibility = Visibility.Visible; ScanPauseButton.Visibility = Visibility.Visible; ScanPauseButton.Content = "Pause scan";
         ScanProgress.IsIndeterminate = true; ScanStatusText.Text = "Preparing library scan…";
         try
@@ -108,13 +109,14 @@ public sealed partial class MainWindow : Window
                 if (value.FilesFound >= nextLibraryRefresh) { RefreshLibrary(); nextLibraryRefresh = value.FilesFound + 256; }
             });
             var result = await Task.Run(() => indexer.ScanAsync(scanRoots, ignored, control, progress));
-            ScanStatusText.Text = $"Indexed {result.Indexed:N0} · skipped {result.Skipped:N0}";
+            ScanStatusText.Text = $"Indexed {result.Indexed:N0} · removed {result.Removed:N0} · skipped {result.Skipped:N0}";
         }
-        catch (OperationCanceledException) { ScanStatusText.Text = "Scan cancelled; completed tracks are saved."; }
-        catch (Exception ex) { ScanStatusText.Text = $"Scan stopped: {ex.Message}"; }
+        catch (OperationCanceledException) { LocalAppLog.Shared.Info("scanner", "Library scan cancelled; completed tracks were retained."); ScanStatusText.Text = "Scan cancelled; completed tracks are saved."; }
+        catch (Exception ex) { LocalAppLog.Shared.Error("scanner", "Library scan failed.", ex); ScanStatusText.Text = $"Scan stopped: {ex.Message}"; }
         finally
         {
-            control.Dispose(); _scanControl = null; ScanPauseButton.Visibility = Visibility.Collapsed;
+            control.Dispose(); _scanControl = null; AddFolderButton.IsEnabled = ScanLibraryButton.IsEnabled = true; ScanPauseButton.Visibility = Visibility.Collapsed;
+            ConfigureGroupView();
             _ = Task.Delay(4500).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => ScanStatus.Visibility = Visibility.Collapsed));
             RefreshLibrary();
         }
@@ -161,7 +163,7 @@ public sealed partial class MainWindow : Window
         else
         {
             var filter = _view switch { "Favorites" => "favorites", "Most Played" => "most-played", "Recently Played" => "recent", _ => null };
-            source = _store.GetTracks(search, _sort, _descending, filter);
+            source = _store.GetTracks(search, _sort, _descending, filter, GroupColumn(), GroupList.SelectedItem?.ToString());
         }
         _tracks.Clear(); foreach (var track in source) _tracks.Add(track);
         TrackCountText.Text = $"{_tracks.Count:N0} {(_tracks.Count == 1 ? "track" : "tracks")}";
@@ -170,7 +172,7 @@ public sealed partial class MainWindow : Window
         LibraryView.Visibility = _view != "Now Playing" && PlaylistView.Visibility != Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
         NowPlayingView.Visibility = _view == "Now Playing" ? Visibility.Visible : Visibility.Collapsed;
         if (_selectedPlaylist is not null) ViewTitle.Text = _selectedPlaylist.Name;
-        else ViewTitle.Text = _view;
+        else ViewTitle.Text = GroupList.SelectedItem is string group ? $"{_view} · {group}" : _view;
     }
 
     private static bool Contains(string value, string query) => value.Contains(query, StringComparison.CurrentCultureIgnoreCase);
@@ -183,6 +185,8 @@ public sealed partial class MainWindow : Window
         if (next == "Playlists") { _selectedPlaylist = null; RefreshPlaylists(); }
         else _selectedPlaylist = null;
         _view = next;
+        GroupList.SelectedIndex = -1;
+        ConfigureGroupView();
         _sort = next switch { "Albums" => TrackSort.Album, "Artists" => TrackSort.Artist, "Genres" => TrackSort.Genre, "Folders" => TrackSort.Path,
             "Recently Added" => TrackSort.Added, "Most Played" => TrackSort.PlayCount, "Recently Played" => TrackSort.LastPlayed, _ => TrackSort.Title };
         _descending = next is "Recently Added" or "Most Played" or "Recently Played";
@@ -194,6 +198,26 @@ public sealed partial class MainWindow : Window
         SortDirectionButton.Content = _descending ? "Descending" : "Ascending";
         RefreshLibrary();
     }
+
+    private string? GroupColumn() => _view switch { "Albums" => "album", "Artists" => "artist", "Genres" => "genre", "Folders" => "folder", _ => null };
+
+    private void ConfigureGroupView()
+    {
+        var column = GroupColumn();
+        var grouped = column is not null;
+        GroupList.Visibility = grouped ? Visibility.Visible : Visibility.Collapsed;
+        GroupHeading.Visibility = grouped ? Visibility.Visible : Visibility.Collapsed;
+        Grid.SetColumn(TrackHeader, grouped ? 1 : 0); Grid.SetColumnSpan(TrackHeader, grouped ? 1 : 2);
+        Grid.SetColumn(TrackList, grouped ? 1 : 0); Grid.SetColumnSpan(TrackList, grouped ? 1 : 2);
+        if (column is null) { GroupList.ItemsSource = null; return; }
+        var selected = GroupList.SelectedItem?.ToString();
+        var values = column == "folder" ? _store.GetFolders() : _store.GetGroups(column);
+        GroupList.ItemsSource = values;
+        if (selected is not null && values.Contains(selected, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal))
+            GroupList.SelectedItem = selected;
+    }
+
+    private void GroupList_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshLibrary();
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshLibrary();
 
@@ -429,7 +453,7 @@ public sealed partial class MainWindow : Window
                     return;
                 }
             }
-            catch (JsonException) { }
+            catch (JsonException ex) { LocalAppLog.Shared.Warning("equalizer", "Saved equalizer settings were invalid.", ex); }
         }
         if (PlaybackService.EqualizerPresets().Contains(selected, StringComparer.OrdinalIgnoreCase)) _playback.ApplyEqualizer(selected);
     }
@@ -456,11 +480,12 @@ public sealed partial class MainWindow : Window
             _store.SaveSession(new(_playback.CurrentTrack?.Path, Math.Max(0, _playback.Position), _queue.Select(track => track.Path).ToArray(), _shuffle, _repeatMode));
             _lastSessionSave = DateTime.UtcNow;
         }
-        catch (Exception ex) { Debug.WriteLine($"Could not save the playback session: {ex.Message}"); }
+        catch (Exception ex) { LocalAppLog.Shared.Error("session", "Could not save playback state.", ex); }
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        LocalAppLog.Shared.Info("app", "Window closed.");
         SaveSession(); _clock.Stop(); _playback.Dispose(); _scanControl?.Cancel();
         _tray?.Dispose();
     }
@@ -471,6 +496,21 @@ public sealed partial class MainWindow : Window
         var info = new ProcessStartInfo("explorer.exe") { UseShellExecute = true }; info.ArgumentList.Add("/select," + path); Process.Start(info);
     }
 
+    private void OpenLogsFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var info = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+            info.ArgumentList.Add(LocalAppLog.Shared.FolderPath);
+            Process.Start(info);
+        }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Error("logs", "Could not open the log folder.", ex);
+            _ = ShowNoticeAsync($"Logs are stored at {LocalAppLog.Shared.FolderPath}");
+        }
+    }
+
     private Track? TrackFromSender(object sender)
     {
         var path = (sender as FrameworkElement)?.Tag?.ToString(); return path is null ? null : _store.GetTrack(path);
@@ -479,7 +519,7 @@ public sealed partial class MainWindow : Window
     private T[] ReadJsonSetting<T>(string key, T[] fallback)
     {
         try { return _store.GetSetting(key) is { } json ? JsonSerializer.Deserialize<T[]>(json) ?? fallback : fallback; }
-        catch (JsonException) { return fallback; }
+        catch (JsonException ex) { LocalAppLog.Shared.Warning("settings", $"Saved setting '{key}' was invalid JSON.", ex); return fallback; }
     }
 
     private void ApplyStoredNavigation()
@@ -525,6 +565,9 @@ public sealed partial class MainWindow : Window
         content.Children.Add(manualAccent);
         content.Children.Add(new TextBlock { Text = "Custom accent", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
         content.Children.Add(colorPicker); content.Children.Add(crossfade); content.Children.Add(ignored);
+        content.Children.Add(new TextBlock { Text = $"Crash and error logs stay on this PC:\n{LocalAppLog.Shared.FolderPath}", TextWrapping = TextWrapping.Wrap });
+        var openLogs = new Button { Content = "Open log folder", HorizontalAlignment = HorizontalAlignment.Left };
+        openLogs.Click += OpenLogsFolder_Click; content.Children.Add(openLogs);
         content.Children.Add(new TextBlock { Text = "Library navigation · reorder with arrows, hide optional panels", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"], Margin = new Thickness(0, 12, 0, 0) });
         var navigationList = new StackPanel { Spacing = 4 };
         foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>().ToArray())
@@ -592,7 +635,7 @@ public sealed partial class MainWindow : Window
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
-        { ResetAccent(); return false; }
+        { LocalAppLog.Shared.Warning("artwork-accent", $"Could not read artwork '{artworkPath}'.", ex); ResetAccent(); return false; }
     }
 
     private static void ApplyAccent(Color color)
@@ -639,9 +682,9 @@ public sealed partial class MainWindow : Window
             var open = new Button { Content = "View release" }; open.Click += (_, _) => Process.Start(new ProcessStartInfo(release.Url) { UseShellExecute = true });
             ReleaseNotice.ActionButton = open; ReleaseNotice.IsOpen = true;
         }
-        catch (HttpRequestException) { if (force) await ShowNoticeAsync("Could not reach GitHub. Check your connection and try again."); }
-        catch (TaskCanceledException) { if (force) await ShowNoticeAsync("The GitHub update check timed out."); }
-        catch (System.Text.Json.JsonException) { if (force) await ShowNoticeAsync("GitHub returned an update response Bracken Vale could not read."); }
+        catch (HttpRequestException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check failed.", ex); if (force) await ShowNoticeAsync("Could not reach GitHub. Check your connection and try again."); }
+        catch (TaskCanceledException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check timed out.", ex); if (force) await ShowNoticeAsync("The GitHub update check timed out."); }
+        catch (System.Text.Json.JsonException ex) { LocalAppLog.Shared.Warning("updates", "GitHub returned invalid release data.", ex); if (force) await ShowNoticeAsync("GitHub returned an update response Bracken Vale could not read."); }
     }
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(true);
@@ -674,7 +717,7 @@ public sealed partial class MainWindow : Window
         var file = await picker.PickSingleFileAsync(); if (file is null) return;
         try { _store.ImportM3u8(file.Path); RefreshPlaylists(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        { await ShowNoticeAsync($"Could not import that playlist: {ex.Message}"); }
+        { LocalAppLog.Shared.Error("playlist-import", "Could not import a playlist.", ex); await ShowNoticeAsync($"Could not import that playlist: {ex.Message}"); }
     }
 
     private async void ExportPlaylist_Click(object sender, RoutedEventArgs e)
@@ -685,7 +728,7 @@ public sealed partial class MainWindow : Window
         var file = await picker.PickSaveFileAsync(); if (file is null) return;
         try { _store.ExportM3u8(_selectedPlaylist.Id, file.Path); await ShowNoticeAsync("Playlist exported as UTF-8 M3U8."); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        { await ShowNoticeAsync($"Could not export that playlist: {ex.Message}"); }
+        { LocalAppLog.Shared.Error("playlist-export", "Could not export a playlist.", ex); await ShowNoticeAsync($"Could not export that playlist: {ex.Message}"); }
     }
 
     private async void DeletePlaylist_Click(object sender, RoutedEventArgs e)
@@ -763,7 +806,7 @@ public sealed partial class MainWindow : Window
             RefreshLibrary();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
-        { await ShowNoticeAsync($"Tags were not saved. The original file is intact. {ex.Message}"); }
+        { LocalAppLog.Shared.Error("tag-editor", $"Could not save tags for {track.Path}.", ex); await ShowNoticeAsync($"Tags were not saved. The original file is intact. {ex.Message}"); }
     }
 
     private static TextBox AddTextField(string name, string value) => new() { Header = name, Text = value, MinWidth = 330 };
@@ -792,7 +835,7 @@ public sealed partial class MainWindow : Window
             _store.UpsertTrack(TrackReader.Read(track.Path, Path.Combine(_appData, "Artwork"))); RefreshLibrary();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { await ShowNoticeAsync($"Could not restore the backup: {ex.Message}"); }
+        { LocalAppLog.Shared.Error("tag-restore", $"Could not restore tags for {track.Path}.", ex); await ShowNoticeAsync($"Could not restore the backup: {ex.Message}"); }
     }
 
     private async void Details_Click(object sender, RoutedEventArgs e)
@@ -806,7 +849,7 @@ public sealed partial class MainWindow : Window
             await ShowTextDialogAsync("Track details", text);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException)
-        { await ShowNoticeAsync($"Could not read track details: {ex.Message}"); }
+        { LocalAppLog.Shared.Error("track-details", $"Could not read details for {track.Path}.", ex); await ShowNoticeAsync($"Could not read track details: {ex.Message}"); }
     }
 
     private async void Lyrics_Click(object sender, RoutedEventArgs e)
@@ -841,7 +884,7 @@ public sealed partial class MainWindow : Window
                     editor.Text = result.SyncedLyrics ?? result.PlainLyrics ?? string.Empty;
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
-            { await ShowNoticeAsync($"LRCLIB search failed: {ex.Message}"); }
+            { LocalAppLog.Shared.Warning("lyrics-search", "User-requested LRCLIB search failed.", ex); await ShowNoticeAsync($"LRCLIB search failed: {ex.Message}"); }
         };
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = track.Title + " · " + track.Artist, Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
@@ -861,7 +904,7 @@ public sealed partial class MainWindow : Window
             _currentLyrics = Lyrics.Parse(lyricsText); NowPlayingLyrics.Text = _currentLyrics.Lines.FirstOrDefault()?.Text ?? "Lyrics saved.";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
-        { await ShowNoticeAsync($"Lyrics were not saved. The original file is intact. {ex.Message}"); }
+        { LocalAppLog.Shared.Error("lyrics-editor", $"Could not save lyrics for {track.Path}.", ex); await ShowNoticeAsync($"Lyrics were not saved. The original file is intact. {ex.Message}"); }
     }
 
     private void StampLyricLine(TextBox editor)
@@ -878,6 +921,56 @@ public sealed partial class MainWindow : Window
         var lines = text.Split('\n').Where(line => !line.Trim().StartsWith("[offset:", StringComparison.OrdinalIgnoreCase)).ToList();
         if (milliseconds != 0) lines.Insert(0, $"[offset:{milliseconds}]");
         return string.Join('\n', lines);
+    }
+
+    private async void Queue_Click(object sender, RoutedEventArgs e) => await ShowQueueAsync();
+
+    private async Task ShowQueueAsync()
+    {
+        var queue = new ListView { Height = 360, SelectionMode = ListViewSelectionMode.Single };
+        var body = new StackPanel { Spacing = 8, MinWidth = 480 };
+        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var up = new Button { Content = "Move up" }; var down = new Button { Content = "Move down" };
+        var remove = new Button { Content = "Remove" }; var clear = new Button { Content = "Clear upcoming" };
+        void RefreshQueue()
+        {
+            queue.ItemsSource = _queue.Select((track, index) => $"{(index == _queueIndex ? "Playing · " : "")}{index + 1}. {track.Title} — {track.Artist}").ToArray();
+            if (_queueIndex >= 0 && _queueIndex < _queue.Items.Count) queue.SelectedIndex = _queueIndex;
+        }
+        void Move(int direction)
+        {
+            var index = queue.SelectedIndex; var next = index + direction;
+            if (index < 0 || next < 0 || next >= _queue.Count) return;
+            (_queue[index], _queue[next]) = (_queue[next], _queue[index]);
+            if (_queueIndex == index) _queueIndex = next; else if (_queueIndex == next) _queueIndex = index;
+            RefreshQueue(); queue.SelectedIndex = next; SaveSession();
+        }
+        up.Click += (_, _) => Move(-1); down.Click += (_, _) => Move(1);
+        remove.Click += async (_, _) =>
+        {
+            var index = queue.SelectedIndex;
+            if (index < 0 || index >= _queue.Count) return;
+            if (index == _queueIndex) { await ShowNoticeAsync("The currently playing track cannot be removed from the queue."); return; }
+            _queue.RemoveAt(index); if (index < _queueIndex) _queueIndex--;
+            RefreshQueue(); SaveSession();
+        };
+        clear.Click += (_, _) =>
+        {
+            var current = _playback.CurrentTrack;
+            _queue.Clear();
+            if (current is not null) { _queue.Add(current); _queueIndex = 0; } else _queueIndex = -1;
+            RefreshQueue(); SaveSession();
+        };
+        queue.DoubleTapped += (_, _) =>
+        {
+            var index = queue.SelectedIndex;
+            if (index >= 0 && index < _queue.Count) PlayTrack(_queue[index], false);
+            RefreshQueue();
+        };
+        controls.Children.Add(up); controls.Children.Add(down); controls.Children.Add(remove); controls.Children.Add(clear);
+        body.Children.Add(queue); body.Children.Add(controls); RefreshQueue();
+        var dialog = new ContentDialog { Title = "Playback queue", Content = body, CloseButtonText = "Done", XamlRoot = ShellRoot.XamlRoot };
+        await dialog.ShowAsync();
     }
 
     private async void Equalizer_Click(object sender, RoutedEventArgs e)
@@ -953,7 +1046,7 @@ public sealed partial class MainWindow : Window
             _systemControls.IsNextEnabled = true; _systemControls.IsPreviousEnabled = true;
             _systemControls.ButtonPressed += SystemControls_ButtonPressed;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException) { Debug.WriteLine(ex.Message); }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException) { LocalAppLog.Shared.Warning("system-media-controls", "Could not initialize Windows media controls.", ex); }
     }
 
     private void SystemControls_ButtonPressed(SystemMediaTransportControls sender, SystemMediaTransportControlsButtonPressedEventArgs args)
@@ -997,7 +1090,7 @@ public sealed partial class MainWindow : Window
             updater.Update();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
-        { Debug.WriteLine($"Could not load media artwork: {ex.Message}"); }
+        { LocalAppLog.Shared.Warning("media-artwork", $"Could not load artwork: {path}", ex); }
     }
 
     private void ApplyTraySetting()

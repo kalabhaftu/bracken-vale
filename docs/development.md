@@ -21,7 +21,7 @@ The core and its tests target .NET 10 without WinUI and can be tested on macOS o
 
 ## Configuration and data
 
-Application data lives under `%LOCALAPPDATA%\BrackenVale`; the SQLite database, artwork cache and recoverable tag backups are local. The app has no server or public API. M3U8 is the playlist interchange format. LRCLIB searches send only title and artist after the user starts the search; GitHub is used only for the optional weekly release check.
+Application data lives under `%LOCALAPPDATA%\BrackenVale`; the SQLite database, artwork cache, recoverable tag backups and rotating logs are local. Logs are in `%LOCALAPPDATA%\BrackenVale\Logs` and can be opened from Settings. They contain error details and may include local file paths, so review them before sharing. The app has no server or public API. M3U8 is the playlist interchange format. LRCLIB searches send only title and artist after the user starts the search; GitHub is used only for the optional weekly release check.
 
 ## Release signing
 

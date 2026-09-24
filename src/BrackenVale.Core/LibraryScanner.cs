@@ -19,8 +19,9 @@ public sealed class ScanControl : IDisposable
     private static TaskCompletionSource Completed() { var t = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); t.SetResult(); return t; }
 }
 
-public sealed class LibraryScanner
+public sealed class LibraryScanner(LocalAppLog? log = null)
 {
+    private readonly LocalAppLog _log = log ?? LocalAppLog.Shared;
     public static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp3", ".flac", ".wav", ".wave", ".aif", ".aiff", ".m4a", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wma", ".ape", ".wv", ".tta", ".mpc", ".dsf", ".dff"
@@ -28,7 +29,7 @@ public sealed class LibraryScanner
 
     private static readonly HashSet<string> SystemFolders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Windows", "Program Files", "Program Files (x86)", "ProgramData", "Recovery", "System Volume Information", "$Recycle.Bin", "PerfLogs"
+        "Windows", "Program Files", "Program Files (x86)", "ProgramData", "AppData", "WindowsApps", "Recovery", "System Volume Information", "$Recycle.Bin", "PerfLogs"
     };
 
     public static IEnumerable<string> DefaultRoots()
@@ -48,7 +49,8 @@ public sealed class LibraryScanner
         IEnumerable<string> ignoredDirectories,
         ScanControl control,
         Func<string, CancellationToken, ValueTask> onAudioFile,
-        IProgress<ScanProgress>? progress = null)
+        IProgress<ScanProgress>? progress = null,
+        Action<string>? directoryVisited = null)
     {
         var ignored = ignoredDirectories.Select(Normalize).ToHashSet(PathComparer);
         var pending = new Stack<string>(roots.Reverse().Select(Normalize));
@@ -61,8 +63,10 @@ public sealed class LibraryScanner
             if (ignored.Contains(directory) || IsSystemDirectory(directory) || IsReparsePoint(directory)) continue;
             string[] entries;
             try { entries = Directory.GetFileSystemEntries(directory); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { _log.Warning("scanner", $"Could not enumerate directory '{directory}'.", ex); continue; }
             directoriesVisited++;
+            directoryVisited?.Invoke(directory);
             foreach (var entry in entries)
             {
                 control.Token.ThrowIfCancellationRequested();
@@ -87,9 +91,7 @@ public sealed class LibraryScanner
     private static bool IsSystemDirectory(string path)
     {
         var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
-        return SystemFolders.Contains(name) || name.Equals("AppData", StringComparison.OrdinalIgnoreCase) &&
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) is { Length: > 0 } profile &&
-            path.StartsWith(Path.Combine(profile, "AppData"), PathComparison);
+        return SystemFolders.Contains(name);
     }
 
     private static bool IsReparsePoint(string path)
@@ -100,5 +102,4 @@ public sealed class LibraryScanner
 
     private static string Normalize(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
     private static StringComparer PathComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-    private static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 }

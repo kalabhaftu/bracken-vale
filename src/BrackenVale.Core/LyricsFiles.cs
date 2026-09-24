@@ -23,16 +23,15 @@ public static class LyricsFiles
     {
         var sidecar = SidecarPath(trackPath);
         try { if (System.IO.File.Exists(sidecar)) return System.IO.File.ReadAllText(sidecar, Encoding.UTF8); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return string.Empty; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { LocalAppLog.Shared.Warning("lyrics-reader", $"Could not read lyrics sidecar '{sidecar}'.", ex); return string.Empty; }
         try
         {
             using var media = TagLib.File.Create(trackPath);
             return media.Tag.Lyrics ?? string.Empty;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException)
-        {
-            return string.Empty;
-        }
+        { LocalAppLog.Shared.Warning("lyrics-reader", $"Could not read embedded lyrics in '{trackPath}'.", ex); return string.Empty; }
     }
 
     public static void SaveSidecar(string trackPath, string lyrics)

@@ -35,13 +35,13 @@ FORM: Native WinUI NavigationView and virtualized ListView; two accent treatment
                     <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="10">
                         <TextBox x:Name="SearchBox" PlaceholderText="Search songs, artists, albums, folders" Width="360" HorizontalAlignment="Left"
                                  TextChanged="SearchBox_TextChanged" AutomationProperties.Name="Search your music library" />
-                        <Button Grid.Column="1" Content="Add folder" Click="AddFolder_Click" />
-                        <Button Grid.Column="2" Content="Scan library" Click="Scan_Click" />
+                        <Button x:Name="AddFolderButton" Grid.Column="1" Content="Add folder" Click="AddFolder_Click" />
+                        <Button x:Name="ScanLibraryButton" Grid.Column="2" Content="Scan library" Click="Scan_Click" />
                         <Button Grid.Column="3" x:Name="ScanPauseButton" Content="Pause scan" Click="ScanPause_Click" Visibility="Collapsed" />
                     </Grid>
                     <Grid Grid.Row="1" Margin="0,22,0,14" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
                         <StackPanel>
-                            <TextBlock x:Name="ViewTitle" Text="Songs" Style="{StaticResource TitleTextBlockStyle}" />
+                            <TextBlock x:Name="ViewTitle" Text="Songs" TextTrimming="CharacterEllipsis" Style="{StaticResource TitleTextBlockStyle}" />
                             <TextBlock x:Name="TrackCountText" Text="Your library" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                         <ComboBox x:Name="SortBox" Grid.Column="1" Header="Sort by" SelectedIndex="0" SelectionChanged="SortBox_SelectionChanged" MinWidth="130">
@@ -50,8 +50,9 @@ FORM: Native WinUI NavigationView and virtualized ListView; two accent treatment
                         </ComboBox>
                         <Button x:Name="SortDirectionButton" Grid.Column="2" Content="Ascending" VerticalAlignment="Bottom" Click="SortDirection_Click" />
                     </Grid>
-                    <Grid x:Name="LibraryView" Grid.Row="2" RowDefinitions="32,*">
-                        <Grid Margin="12,0" ColumnDefinitions="48,2*,*,*,72,76,50,48">
+                    <Grid x:Name="LibraryView" Grid.Row="2" RowDefinitions="32,*" ColumnDefinitions="240,*">
+                        <TextBlock x:Name="GroupHeading" Text="Browse" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" Visibility="Collapsed" />
+                        <Grid x:Name="TrackHeader" Grid.Column="1" Margin="12,0" ColumnDefinitions="48,2*,*,*,72,76,50,48">
                             <TextBlock Grid.Column="1" Text="Title" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Text="Artist" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="3" Text="Album" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
@@ -59,7 +60,8 @@ FORM: Native WinUI NavigationView and virtualized ListView; two accent treatment
                             <TextBlock Grid.Column="5" Text="Rating" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" HorizontalAlignment="Center" />
                             <TextBlock Grid.Column="6" Text="Time" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" HorizontalAlignment="Right" />
                         </Grid>
-                        <ListView x:Name="TrackList" Grid.Row="1" IsItemClickEnabled="False" SelectionMode="Single" DoubleTapped="TrackList_DoubleTapped"
+                        <ListView x:Name="GroupList" Grid.Row="1" SelectionMode="Single" SelectionChanged="GroupList_SelectionChanged" AutomationProperties.Name="Library groups" />
+                        <ListView x:Name="TrackList" Grid.Row="1" Grid.Column="1" IsItemClickEnabled="False" SelectionMode="Single" DoubleTapped="TrackList_DoubleTapped"
                                   SelectionChanged="TrackList_SelectionChanged" AutomationProperties.Name="Music tracks">
                             <ListView.ItemTemplate>
                                 <DataTemplate x:DataType="core:Track">
@@ -91,7 +93,7 @@ FORM: Native WinUI NavigationView and virtualized ListView; two accent treatment
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                        <StackPanel x:Name="EmptyState" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="Collapsed">
+                        <StackPanel x:Name="EmptyState" Grid.Row="1" Grid.ColumnSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="Collapsed">
                             <TextBlock Text="Your music will appear here" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
                             <TextBlock Text="Add a folder or let Bracken Vale scan your fixed drives." Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
                             <Button Content="Add a music folder" Click="AddFolder_Click" HorizontalAlignment="Center" />
@@ -170,6 +172,7 @@ FORM: Native WinUI NavigationView and virtualized ListView; two accent treatment
                     </Grid>
                 </Grid>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="8">
+                    <Button Content="Queue" Click="Queue_Click" AutomationProperties.Name="Show playback queue" />
                     <Button Content="Equalizer" Click="Equalizer_Click" />
                     <TextBlock Text="Vol" VerticalAlignment="Center" />
                     <Slider x:Name="VolumeSlider" Width="100" Minimum="0" Maximum="100" Value="75" ValueChanged="VolumeSlider_ValueChanged" AutomationProperties.Name="Volume" />

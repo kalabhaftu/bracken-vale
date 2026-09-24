@@ -6,9 +6,9 @@ Bracken Vale is a native Windows music library and player built with WinUI 3, C#
 
 ## Current capabilities
 
-- Searchable SQLite library, sort modes, favorites, five-star ratings, most/recently played views, and local M3U8 playlists.
+- Searchable SQLite library with album, artist, genre and folder groups; sort modes; favorites, five-star ratings, most/recently played views; and local M3U8 playlists.
 - Background scan of fixed drives, folder selection, ignored paths, pause/cancel, and skipping system or linked directories.
-- Playback through bundled LibVLC; queue controls, shuffle, repeat, A–B repeat, crossfade, volume, EQ presets and saved 10-band EQ settings.
+- Playback through bundled LibVLC; an editable queue, shuffle, repeat, A–B repeat, crossfade, volume, EQ presets and saved 10-band EQ settings.
 - Local tag editing with preview, explicit save, backup and restore; embedded/sidecar LRC lyrics and optional user-triggered LRCLIB search.
 - System/light/dark themes, artwork or manual accent color, Windows media controls, optional tray behavior, and weekly GitHub release checks that never install updates.
 
@@ -33,6 +33,8 @@ For ARM64, use `-p:Platform=ARM64 -p:RuntimeIdentifier=win-arm64`. More packagin
 ## Privacy and network use
 
 There are no accounts, streaming, telemetry or cloud sync. The weekly update check can be disabled. LRCLIB is contacted only after you request a search, and only the track title and artist are sent. No audio files or file paths are sent to either service.
+
+Crash and error logs are stored locally at `%LOCALAPPDATA%\BrackenVale\Logs`. Open the folder from Settings. Logs may contain local file paths and error details; review them before sharing.
 
 ## License
 

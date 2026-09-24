@@ -41,6 +41,22 @@ public sealed class LibraryStore
         transaction.Commit();
     }
 
+    public void RemoveTracks(IEnumerable<string> paths)
+    {
+        using var connection = Open();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM tracks WHERE path=$path";
+        var path = command.Parameters.Add("$path", SqliteType.Text);
+        foreach (var item in paths)
+        {
+            path.Value = Path.GetFullPath(item);
+            command.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
+
     private static void Upsert(SqliteConnection connection, SqliteTransaction? transaction, Track track)
     {
         using var command = connection.CreateCommand();
@@ -76,7 +92,7 @@ public sealed class LibraryStore
         return states;
     }
 
-    public IReadOnlyList<Track> GetTracks(string? search = null, TrackSort sort = TrackSort.Title, bool descending = false, string? filter = null)
+    public IReadOnlyList<Track> GetTracks(string? search = null, TrackSort sort = TrackSort.Title, bool descending = false, string? filter = null, string? groupColumn = null, string? groupValue = null)
     {
         var orderBy = sort switch
         {
@@ -89,12 +105,23 @@ public sealed class LibraryStore
             "favorites" => "favorite=1", "most-played" => "play_count>0", "recent" => "last_played_utc IS NOT NULL",
             _ => "1=1"
         };
+        var groupPredicate = groupColumn switch
+        {
+            "album" => "($group IS NULL OR album=$group)", "artist" => "($group IS NULL OR artist=$group)",
+            "genre" => "($group IS NULL OR genre=$group)", "folder" => "($folderPrefix IS NULL OR path LIKE $folderPrefix ESCAPE '\\')",
+            null => "1=1", _ => throw new ArgumentOutOfRangeException(nameof(groupColumn))
+        };
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT * FROM tracks WHERE {predicate} AND ($search IS NULL OR title LIKE $pattern ESCAPE '\\' OR artist LIKE $pattern ESCAPE '\\' OR album LIKE $pattern ESCAPE '\\' OR album_artist LIKE $pattern ESCAPE '\\' OR genre LIKE $pattern ESCAPE '\\' OR path LIKE $pattern ESCAPE '\\') ORDER BY {orderBy} {(descending ? "DESC" : "ASC")}, title COLLATE NOCASE";
+        command.CommandText = $"SELECT * FROM tracks WHERE {predicate} AND {groupPredicate} AND ($search IS NULL OR title LIKE $pattern ESCAPE '\\' OR artist LIKE $pattern ESCAPE '\\' OR album LIKE $pattern ESCAPE '\\' OR album_artist LIKE $pattern ESCAPE '\\' OR genre LIKE $pattern ESCAPE '\\' OR path LIKE $pattern ESCAPE '\\') ORDER BY {orderBy} {(descending ? "DESC" : "ASC")}, title COLLATE NOCASE";
         Add(command, "$search", string.IsNullOrWhiteSpace(search) ? DBNull.Value : search.Trim());
         var escaped = search?.Trim().Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
         Add(command, "$pattern", string.IsNullOrWhiteSpace(escaped) ? DBNull.Value : $"%{escaped}%");
+        Add(command, "$group", string.IsNullOrWhiteSpace(groupValue) || groupColumn == "folder" ? DBNull.Value : groupValue);
+        var folderPrefix = groupColumn == "folder" && !string.IsNullOrWhiteSpace(groupValue)
+            ? EscapeLike(Path.GetFullPath(groupValue)) + (Path.EndsInDirectorySeparator(Path.GetFullPath(groupValue)) ? "" : Path.DirectorySeparatorChar) + "%"
+            : null;
+        Add(command, "$folderPrefix", folderPrefix is null ? DBNull.Value : folderPrefix);
         using var reader = command.ExecuteReader();
         var result = new List<Track>();
         while (reader.Read()) result.Add(ReadTrack(reader));
@@ -111,6 +138,18 @@ public sealed class LibraryStore
         var values = new List<string>();
         while (reader.Read()) values.Add(reader.GetString(0));
         return values;
+    }
+
+    public IReadOnlyList<string> GetFolders()
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "SELECT path FROM tracks";
+        using var reader = command.ExecuteReader();
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var folders = new HashSet<string>(comparer);
+        while (reader.Read())
+            if (Path.GetDirectoryName(reader.GetString(0)) is { } folder) folders.Add(folder);
+        return folders.OrderBy(folder => folder, comparer).ToArray();
     }
 
     public void SetFavorite(string path, bool favorite) => UpdateTrack(path, "favorite", favorite ? 1 : 0);
@@ -348,6 +387,7 @@ public sealed class LibraryStore
         r.IsDBNull(r.GetOrdinal("artwork_path")) ? null : r.GetString(r.GetOrdinal("artwork_path")));
 
     private static string Stamp(DateTime value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+    private static string EscapeLike(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
     private static DateTime ParseStamp(string value) => DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
     private static void Add(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
 }
