@@ -40,6 +40,7 @@ public sealed partial class MainWindow : Window
     private long _heardMilliseconds;
     private long _lastPlayCountPosition;
     private bool _crossfadeInProgress;
+    private string? _crossfadeFailureSource;
     private int _queueIndex = -1;
     private string _view = "Songs";
     private string _repeatMode = "Off";
@@ -64,6 +65,8 @@ public sealed partial class MainWindow : Window
         NavView.SelectedItem = NavView.MenuItems.FirstOrDefault();
         _playback.TrackEnded += Playback_TrackEnded;
         _playback.CrossfadeCompleted += Playback_CrossfadeCompleted;
+        _playback.CrossfadeFailed += Playback_CrossfadeFailed;
+        _playback.PlaybackFailed += Playback_Failed;
         InitializeSystemMediaControls();
         ApplyTraySetting();
         _clock.Tick += Clock_Tick;
@@ -263,7 +266,7 @@ public sealed partial class MainWindow : Window
             var matchingIndex = _queue.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
             if (matchingIndex >= 0) _queueIndex = matchingIndex;
         }
-        _playback.Play(track); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0; _crossfadeInProgress = false; _repeatA = _repeatB = null;
+        _playback.Play(track); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0; _crossfadeInProgress = false; _crossfadeFailureSource = null; _repeatA = _repeatB = null;
         UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); PlayPauseButton.Content = "Pause"; SeekSlider.IsEnabled = true; SaveSession();
     }
 
@@ -303,7 +306,7 @@ public sealed partial class MainWindow : Window
             next = 0;
         }
         var track = _queue[next];
-        if (_playback.IsPlaying && int.TryParse(_store.GetSetting("crossfade-seconds"), out var seconds) && seconds > 0)
+        if (_playback.IsPlaying && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && int.TryParse(_store.GetSetting("crossfade-seconds"), out var seconds) && seconds > 0)
         {
             _queueIndex = next; _crossfadeInProgress = true;
             _ = _playback.CrossfadeToAsync(track, seconds * 1000);
@@ -392,7 +395,7 @@ public sealed partial class MainWindow : Window
         {
             _store.RecordPlayed(track.Path, DateTime.UtcNow); _countedCurrentPlay = true;
         }
-        if (_playback.IsPlaying && !_crossfadeInProgress && _queueIndex + 1 < _queue.Count &&
+        if (_playback.IsPlaying && !_crossfadeInProgress && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && _queueIndex + 1 < _queue.Count &&
             int.TryParse(_store.GetSetting("crossfade-seconds"), out var crossfade) && crossfade > 0 && duration > 0 && duration - position <= crossfade * 1000)
         {
             _queueIndex++; _crossfadeInProgress = true; _ = _playback.CrossfadeToAsync(_queue[_queueIndex], crossfade * 1000);
@@ -414,8 +417,27 @@ public sealed partial class MainWindow : Window
     private void Playback_TrackEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() => AdvanceQueue(true));
     private void Playback_CrossfadeCompleted(Track track) => DispatcherQueue.TryEnqueue(() =>
     {
-        _crossfadeInProgress = false; _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0;
+        _crossfadeInProgress = false; _crossfadeFailureSource = null; _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0;
         UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); PlayPauseButton.Content = "Pause";
+    });
+
+    private static bool SameTrack(string? left, string? right) => left is not null && right is not null && left.Equals(right, StringComparison.OrdinalIgnoreCase);
+
+    private void Playback_CrossfadeFailed(Track track) => DispatcherQueue.TryEnqueue(() =>
+    {
+        _crossfadeInProgress = false;
+        _crossfadeFailureSource = _playback.CurrentTrack?.Path;
+        _queueIndex = _queue.FindIndex(item => SameTrack(item.Path, _playback.CurrentTrack?.Path));
+        _ = ShowNoticeAsync($"Could not start {track.Title} during crossfade. Playback will continue; see the local log for details.");
+    });
+
+    private void Playback_Failed(Track track) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (!SameTrack(_playback.CurrentTrack?.Path, track.Path)) return;
+        _crossfadeInProgress = false;
+        PlayPauseButton.Content = "Play";
+        if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped;
+        _ = ShowNoticeAsync($"Could not play {track.Title}. See Settings → Open log folder for details.");
     });
 
     private void UpdateCurrentTrack(Track track)
@@ -675,8 +697,8 @@ public sealed partial class MainWindow : Window
         if (!force && DateTime.TryParse(_store.GetSetting("last-update-check"), out var last) && DateTime.UtcNow - last.ToUniversalTime() < TimeSpan.FromDays(7)) return;
         try
         {
-            var release = await GitHubUpdates.GetLatestAsync();
             _store.SetSetting("last-update-check", DateTime.UtcNow.ToString("O"));
+            var release = await GitHubUpdates.GetLatestAsync();
             var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 1, 0);
             if (release is null || !Version.TryParse(release.Tag.TrimStart('v'), out var latest) || latest <= current)
             { if (force) await ShowNoticeAsync("You are using the latest available release."); return; }
@@ -688,6 +710,7 @@ public sealed partial class MainWindow : Window
         catch (HttpRequestException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check failed.", ex); if (force) await ShowNoticeAsync("Could not reach GitHub. Check your connection and try again."); }
         catch (TaskCanceledException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check timed out.", ex); if (force) await ShowNoticeAsync("The GitHub update check timed out."); }
         catch (System.Text.Json.JsonException ex) { LocalAppLog.Shared.Warning("updates", "GitHub returned invalid release data.", ex); if (force) await ShowNoticeAsync("GitHub returned an update response Bracken Vale could not read."); }
+        catch (Exception ex) { LocalAppLog.Shared.Error("updates", "Could not complete the GitHub release check.", ex); if (force) await ShowNoticeAsync("The update check failed. See the local log for details."); }
     }
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(true);

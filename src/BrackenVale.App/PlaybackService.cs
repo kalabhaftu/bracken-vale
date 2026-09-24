@@ -12,7 +12,9 @@ public sealed class PlaybackService : IDisposable
     private MediaPlayer _next;
     private Media? _activeMedia;
     private Media? _nextMedia;
+    private Track? _crossfadeTarget;
     private CancellationTokenSource? _crossfadeCancellation;
+    private string? _reportedFailurePath;
     private float _volume = 75;
     private long _restorePosition;
 
@@ -32,6 +34,8 @@ public sealed class PlaybackService : IDisposable
 
     public event EventHandler? TrackEnded;
     public event Action<Track>? CrossfadeCompleted;
+    public event Action<Track>? CrossfadeFailed;
+    public event Action<Track>? PlaybackFailed;
     public Track? CurrentTrack { get; private set; }
     public bool IsPlaying => _active.IsPlaying;
     public long Position => _restorePosition > _active.Time ? _restorePosition : _active.Time;
@@ -53,14 +57,16 @@ public sealed class PlaybackService : IDisposable
         SetMedia(_active, ref _activeMedia, track.Path);
         _restorePosition = 0;
         CurrentTrack = track;
+        _reportedFailurePath = null;
         _active.Volume = (int)_volume;
-        _active.Play();
+        if (!_active.Play()) ReportPlaybackFailure(track);
     }
 
     public void PlayLoaded()
     {
-        if (_active.Media is null) return;
-        _active.Play();
+        if (_activeMedia is null) return;
+        _reportedFailurePath = null;
+        if (!_active.Play()) { ReportPlaybackFailure(CurrentTrack); return; }
         if (_restorePosition > 0) _ = SeekAfterStartAsync(_active, _restorePosition);
     }
 
@@ -102,10 +108,12 @@ public sealed class PlaybackService : IDisposable
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _crossfadeCancellation = cts;
         var old = _active; var incoming = _next;
-        incoming.Stop(); SetMedia(incoming, ref _nextMedia, nextTrack.Path); incoming.Volume = 0; incoming.Play();
+        _crossfadeTarget = nextTrack;
         var steps = Math.Max(1, milliseconds / 40);
         try
         {
+            incoming.Stop(); SetMedia(incoming, ref _nextMedia, nextTrack.Path); incoming.Volume = 0;
+            if (!incoming.Play()) throw new InvalidOperationException($"LibVLC refused to play '{nextTrack.Path}'. {_libVlc.LastLibVLCError}");
             for (var step = 1; step <= steps; step++)
             {
                 await Task.Delay(40, cts.Token).ConfigureAwait(false);
@@ -114,14 +122,22 @@ public sealed class PlaybackService : IDisposable
                 incoming.Volume = (int)(_volume * fraction);
                 old.Volume = (int)(_volume * (1 - fraction));
             }
+            cts.Token.ThrowIfCancellationRequested();
             old.Stop();
             if (ReferenceEquals(old, _first)) { _active = _second; _next = _first; (_activeMedia, _nextMedia) = (_nextMedia, _activeMedia); }
             else { _active = _first; _next = _second; (_activeMedia, _nextMedia) = (_nextMedia, _activeMedia); }
             CurrentTrack = nextTrack;
             _active.Volume = (int)_volume;
+            _crossfadeTarget = null;
             CrossfadeCompleted?.Invoke(nextTrack);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Error("crossfade", $"Could not crossfade to '{nextTrack.Path}'.", ex);
+            CancelCrossfade();
+            CrossfadeFailed?.Invoke(nextTrack);
+        }
         finally
         {
             if (ReferenceEquals(_crossfadeCancellation, cts)) _crossfadeCancellation = null;
@@ -169,8 +185,31 @@ public sealed class PlaybackService : IDisposable
 
     private void EncounteredError(object? sender, EventArgs e)
     {
-        var path = ReferenceEquals(sender, _active) ? CurrentTrack?.Path : "incoming track";
-        LocalAppLog.Shared.Warning("playback", $"LibVLC could not open or decode '{path ?? "unknown track"}'. {_libVlc.LastLibVLCError}");
+        if (ReferenceEquals(sender, _active))
+        {
+            ReportPlaybackFailure(CurrentTrack);
+            return;
+        }
+        if (_crossfadeTarget is { } target)
+        {
+            LocalAppLog.Shared.Warning("playback", $"LibVLC could not open or decode incoming track '{target.Path}'. {_libVlc.LastLibVLCError}");
+            var activeFade = _crossfadeCancellation;
+            if (activeFade is not null)
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    if (!ReferenceEquals(_crossfadeCancellation, activeFade) || !ReferenceEquals(_crossfadeTarget, target)) return;
+                    CancelCrossfade();
+                    CrossfadeFailed?.Invoke(target);
+                });
+        }
+    }
+
+    private void ReportPlaybackFailure(Track? track)
+    {
+        if (track is null || string.Equals(_reportedFailurePath, track.Path, StringComparison.OrdinalIgnoreCase)) return;
+        _reportedFailurePath = track.Path;
+        LocalAppLog.Shared.Warning("playback", $"LibVLC could not open or decode '{track.Path}'. {_libVlc.LastLibVLCError}");
+        PlaybackFailed?.Invoke(track);
     }
 
     private void CancelCrossfade()
@@ -179,6 +218,7 @@ public sealed class PlaybackService : IDisposable
         _next.Stop();
         _active.Volume = (int)_volume;
         _next.Volume = (int)_volume;
+        _crossfadeTarget = null;
     }
 
     public void Dispose()

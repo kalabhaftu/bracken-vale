@@ -12,3 +12,5 @@ All notable changes to Bracken Vale are documented here.
 - Fix scan exclusions with trailing separators and restore playback volume when pausing or cancelling a crossfade.
 - Expose file path, last played and rating sorts in the library.
 - Keep duplicate playlist entries distinct while navigating the playback queue.
+- Identify failed tracks in the local log and recover the active playback state when LibVLC reports an error.
+- Throttle failed automatic update checks to the configured weekly interval.
