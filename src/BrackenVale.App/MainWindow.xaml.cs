@@ -981,18 +981,35 @@ public sealed partial class MainWindow : Window
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         if (!int.TryParse(offset.Text, out var offsetMs)) { await ShowNoticeAsync("Timing offset must be a whole number of milliseconds."); return; }
         var lyricsText = SetLyricsOffset(editor.Text, offsetMs);
+        TagBackup? backup = null;
+        var lyricsWritten = false;
         try
         {
             if (mode.SelectedIndex == 0) LyricsFiles.SaveSidecar(track.Path, lyricsText);
             else
             {
-                var backup = new TagEditor(Path.Combine(_appData, "TagBackups")).Save(track.Path, new TagEdit(Lyrics: lyricsText));
+                backup = new TagEditor(Path.Combine(_appData, "TagBackups")).Save(track.Path, new TagEdit(Lyrics: lyricsText));
+            }
+            lyricsWritten = true;
+            _currentLyrics = Lyrics.Parse(lyricsText); NowPlayingLyrics.Text = _currentLyrics.Lines.FirstOrDefault()?.Text ?? "Lyrics saved.";
+            if (backup is not null)
+            {
                 _store.RecordTagBackup(backup); _store.UpsertTrack(TrackReader.Read(track.Path, Path.Combine(_appData, "Artwork")));
             }
-            _currentLyrics = Lyrics.Parse(lyricsText); NowPlayingLyrics.Text = _currentLyrics.Lines.FirstOrDefault()?.Text ?? "Lyrics saved.";
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
-        { LocalAppLog.Shared.Error("lyrics-editor", $"Could not save lyrics for {track.Path}.", ex); await ShowNoticeAsync($"Lyrics were not saved. The original file is intact. {ex.Message}"); }
+        catch (Exception ex)
+        {
+            if (lyricsWritten)
+            {
+                LocalAppLog.Shared.Warning("lyrics-editor", $"Lyrics were saved but the library refresh failed for {track.Path}. Backup: {backup?.BackupPath}", ex);
+                await ShowNoticeAsync($"Lyrics were saved, but the library could not refresh. Backup: {backup?.BackupPath ?? LyricsFiles.SidecarPath(track.Path)}");
+            }
+            else
+            {
+                LocalAppLog.Shared.Error("lyrics-editor", $"Could not save lyrics for {track.Path}.", ex);
+                await ShowNoticeAsync($"Lyrics were not saved. The original file is intact. {ex.Message}");
+            }
+        }
     }
 
     private void StampLyricLine(TextBox editor)
