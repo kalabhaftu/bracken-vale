@@ -36,5 +36,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bracken-vale-${{ matrix.rid }}
-          path: src/BrackenVale.App/bin/Release/net10.0-windows10.0.26100.0/${{ matrix.rid }}/
+          path: src/BrackenVale.App/bin/${{ matrix.arch }}/Release/net10.0-windows10.0.26100.0/${{ matrix.rid }}/
           if-no-files-found: error
