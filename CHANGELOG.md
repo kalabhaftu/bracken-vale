@@ -22,3 +22,4 @@ All notable changes to Bracken Vale are documented here.
 - Reset artwork accents when switching back to native styling and recover from damaged EQ settings.
 - Edit and inspect Xiph, ID3v2, ASF and APEv2 custom text tags; preserve each format's own field names.
 - Report embedded lyrics as saved when only the library refresh fails.
+- Exclude system folders by their drive-root location while keeping user folders with the same name.

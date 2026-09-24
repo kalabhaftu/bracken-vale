@@ -46,22 +46,25 @@ public sealed class CoreTests : IDisposable
     {
         var root = Path.Combine(_root, "music"); var ignored = Path.Combine(root, "skip"); var linked = Path.Combine(root, "linked");
         var system = Path.Combine(root, "other-user", "AppData");
+        var customWindowsFolder = Path.Combine(root, "Windows");
         var external = Path.Combine(_root, "external");
-        Directory.CreateDirectory(ignored); Directory.CreateDirectory(external); Directory.CreateDirectory(system); Directory.CreateDirectory(root);
+        Directory.CreateDirectory(ignored); Directory.CreateDirectory(external); Directory.CreateDirectory(system); Directory.CreateDirectory(customWindowsFolder); Directory.CreateDirectory(root);
         await System.IO.File.WriteAllTextAsync(Path.Combine(root, "keep.mp3"), "metadata is irrelevant to enumeration");
         await System.IO.File.WriteAllTextAsync(Path.Combine(root, "spoken.m4b"), "audiobook extension");
         await System.IO.File.WriteAllTextAsync(Path.Combine(root, "readme.txt"), "ignore extension");
         await System.IO.File.WriteAllTextAsync(Path.Combine(ignored, "ignored.flac"), "ignore folder");
         await System.IO.File.WriteAllTextAsync(Path.Combine(system, "system.mp3"), "exclude application data");
+        await System.IO.File.WriteAllTextAsync(Path.Combine(customWindowsFolder, "user-music.flac"), "a user folder can share a system folder name");
         await System.IO.File.WriteAllTextAsync(Path.Combine(external, "linked.wav"), "skip linked directory");
         Directory.CreateSymbolicLink(linked, external);
         var found = new List<string>();
         using var control = new ScanControl();
         await new LibraryScanner(new LocalAppLog(Path.Combine(_root, "Logs"))).ScanAsync([root], [ignored + Path.DirectorySeparatorChar], control,
             (path, _) => { found.Add(Path.GetFullPath(path)); return ValueTask.CompletedTask; });
-        Assert.Equal(2, found.Count);
+        Assert.Equal(3, found.Count);
         Assert.Contains(Path.Combine(root, "keep.mp3"), found);
         Assert.Contains(Path.Combine(root, "spoken.m4b"), found);
+        Assert.Contains(Path.Combine(customWindowsFolder, "user-music.flac"), found);
     }
 
     [Fact]

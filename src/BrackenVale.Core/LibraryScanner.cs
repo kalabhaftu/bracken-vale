@@ -29,7 +29,7 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
 
     private static readonly HashSet<string> SystemFolders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Windows", "Program Files", "Program Files (x86)", "ProgramData", "AppData", "WindowsApps", "Recovery", "System Volume Information", "$Recycle.Bin", "PerfLogs"
+        "Windows", "Program Files", "Program Files (x86)", "ProgramData", "WindowsApps", "Recovery", "System Volume Information", "$Recycle.Bin", "PerfLogs"
     };
 
     public static IEnumerable<string> DefaultRoots()
@@ -91,7 +91,13 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
     private static bool IsSystemDirectory(string path)
     {
         var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
-        return SystemFolders.Contains(name);
+        if (name.Equals("AppData", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!SystemFolders.Contains(name)) return false;
+        var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path));
+        var root = Path.GetPathRoot(path);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return parent is not null && root is not null && string.Equals(
+            Path.TrimEndingDirectorySeparator(parent), Path.TrimEndingDirectorySeparator(root), comparison);
     }
 
     private static bool IsReparsePoint(string path)
