@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics.Imaging;
 using Windows.Media;
@@ -40,6 +41,7 @@ public sealed partial class MainWindow : Window
     private bool _crossfadeInProgress;
     private int _queueIndex = -1;
     private string _view = "Songs";
+    private string _repeatMode = "Off";
     private Playlist? _selectedPlaylist;
     private TimeSpan? _repeatA;
     private TimeSpan? _repeatB;

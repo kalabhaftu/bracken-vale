@@ -18,7 +18,7 @@ public sealed class PlaybackService : IDisposable
 
     public PlaybackService()
     {
-        Core.Initialize();
+        LibVLCSharp.Shared.Core.Initialize();
         _libVlc = new LibVLC();
         _first = new(_libVlc); _second = new(_libVlc); _active = _first; _next = _second;
         _first.EndReached += EndReached; _second.EndReached += EndReached;
