@@ -1,4 +1,5 @@
 using BrackenVale.Core;
+using Microsoft.Data.Sqlite;
 using TagLib;
 using Xunit;
 
@@ -134,5 +135,10 @@ public sealed class CoreTests : IDisposable
         writer.Write(System.Text.Encoding.ASCII.GetBytes("data")); writer.Write(dataLength); writer.Write(new byte[dataLength]);
     }
 
-    public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
+    public void Dispose()
+    {
+        // Release idle pooled database handles before deleting the temporary files on Windows.
+        SqliteConnection.ClearAllPools();
+        if (Directory.Exists(_root)) Directory.Delete(_root, true);
+    }
 }
