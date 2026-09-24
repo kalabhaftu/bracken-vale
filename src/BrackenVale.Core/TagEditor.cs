@@ -6,6 +6,28 @@ namespace BrackenVale.Core;
 
 public sealed class TagEditor(string backupDirectory)
 {
+    private static readonly HashSet<string> CommonFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "TITLE", "ARTIST", "ALBUM", "ALBUMARTIST", "ALBUM ARTIST", "GENRE", "DATE", "YEAR", "TRACK", "TRACKNUMBER", "LYRICS",
+        "COVERART", "METADATA_BLOCK_PICTURE", "WM/Title", "WM/Author", "WM/AlbumTitle", "WM/AlbumArtist", "WM/Genre", "WM/Year",
+        "WM/TrackNumber", "WM/Lyrics", "WM/Picture", "Album Artist", "Track"
+    };
+
+    public static string? CustomFieldFormat(string path) => FormatFor(path) switch
+    {
+        CustomFormat.Xiph => "Xiph/Vorbis comments",
+        CustomFormat.Id3v2 => "ID3v2 user text frames",
+        CustomFormat.Asf => "ASF descriptors",
+        CustomFormat.Ape => "APEv2 items",
+        _ => null
+    };
+
+    public static IReadOnlyDictionary<string, string> ReadCustomFields(string path)
+    {
+        using var media = TagLib.File.Create(path);
+        return ReadCustomFields(media, path);
+    }
+
     public TagBackup Save(string path, TagEdit edit)
     {
         path = Path.GetFullPath(path);
@@ -30,12 +52,7 @@ public sealed class TagEditor(string backupDirectory)
                 if (edit.TrackNumber.HasValue) tag.Track = edit.TrackNumber.Value;
                 if (edit.Lyrics is not null) tag.Lyrics = edit.Lyrics;
                 if (edit.ArtworkPath is not null) tag.Pictures = [new Picture(edit.ArtworkPath)];
-                if (edit.CustomFields is { Count: > 0 })
-                {
-                    var xiph = media.GetTag(TagTypes.Xiph, true) as TagLib.Ogg.XiphComment
-                        ?? throw new NotSupportedException("Custom Xiph comments are not supported by this file format.");
-                    foreach (var field in edit.CustomFields) xiph.SetField(field.Key, [field.Value]);
-                }
+                ApplyCustomFields(media, path, edit.CustomFields);
                 media.Save();
             }
             // Same-directory replacement keeps the original intact until the fully written staged file is ready.
@@ -59,4 +76,99 @@ public sealed class TagEditor(string backupDirectory)
     }
 
     private static string[] Split(string value) => value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static void ApplyCustomFields(TagLib.File media, string path, IReadOnlyDictionary<string, string>? fields)
+    {
+        if (fields is null) return;
+        var format = FormatFor(path);
+        if (format == CustomFormat.Unsupported) throw new NotSupportedException("Custom tags are not supported for this file format.");
+        var desired = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (rawKey, value) in fields)
+        {
+            var key = rawKey.Trim();
+            if (key.Length == 0 || key.Contains('=') || key.Contains('\n') || key.Contains('\r')) throw new ArgumentException("Custom tag names cannot be empty or contain '=', or line breaks.");
+            if (format == CustomFormat.Xiph && key.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '_'))
+                throw new ArgumentException("Xiph field names can contain only ASCII letters, digits, and underscores.");
+            if (CommonFields.Contains(key)) throw new ArgumentException($"'{key}' is already edited in a standard tag field.");
+            desired[key] = value;
+        }
+
+        var existing = ReadCustomFields(media, path);
+        foreach (var key in existing.Keys.Where(key => !desired.ContainsKey(key))) SetCustomField(media, format, key, string.Empty);
+        foreach (var (key, value) in desired)
+        {
+            var storedKey = existing.Keys.FirstOrDefault(existingKey => existingKey.Equals(key, StringComparison.OrdinalIgnoreCase)) ?? key;
+            SetCustomField(media, format, storedKey, value);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string> ReadCustomFields(TagLib.File media, string path)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        switch (FormatFor(path))
+        {
+            case CustomFormat.Xiph when media.GetTag(TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph:
+                foreach (var key in xiph.Where(key => !CommonFields.Contains(key)))
+                    result[key] = string.Join("; ", xiph.GetField(key));
+                break;
+            case CustomFormat.Id3v2 when media.GetTag(TagTypes.Id3v2) is TagLib.Id3v2.Tag id3:
+                foreach (var frame in id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>())
+                    if (!string.IsNullOrWhiteSpace(frame.Description) && frame.Text.Length > 0)
+                        result[frame.Description] = string.Join("; ", frame.Text);
+                break;
+            case CustomFormat.Asf when media.GetTag(TagTypes.Asf) is TagLib.Asf.Tag asf:
+                foreach (var descriptor in asf.Where(descriptor => !CommonFields.Contains(descriptor.Name) && descriptor.Type == TagLib.Asf.DataType.Unicode))
+                    result[descriptor.Name] = descriptor.ToString();
+                break;
+            case CustomFormat.Ape when media.GetTag(TagTypes.Ape) is TagLib.Ape.Tag ape:
+                foreach (var key in ape.Where(key => !CommonFields.Contains(key)))
+                    if (ape.GetItem(key) is { Type: TagLib.Ape.ItemType.Text } item)
+                        result[key] = string.Join("; ", item.ToStringArray());
+                break;
+        }
+        return result;
+    }
+
+    private static void SetCustomField(TagLib.File media, CustomFormat format, string key, string value)
+    {
+        var values = Split(value);
+        switch (format)
+        {
+            case CustomFormat.Xiph:
+                var xiph = media.GetTag(TagTypes.Xiph, true) as TagLib.Ogg.XiphComment
+                    ?? throw new NotSupportedException("Xiph comments are not supported by this file format.");
+                xiph.SetField(key, values);
+                break;
+            case CustomFormat.Id3v2:
+                var id3 = media.GetTag(TagTypes.Id3v2, true) as TagLib.Id3v2.Tag
+                    ?? throw new NotSupportedException("ID3v2 tags are not supported by this file format.");
+                var frame = TagLib.Id3v2.UserTextInformationFrame.Get(id3, key, false);
+                if (values.Length == 0) { if (frame is not null) id3.RemoveFrame(frame); }
+                else (frame ?? TagLib.Id3v2.UserTextInformationFrame.Get(id3, key, true)!).Text = values;
+                break;
+            case CustomFormat.Asf:
+                var asf = media.GetTag(TagTypes.Asf, true) as TagLib.Asf.Tag
+                    ?? throw new NotSupportedException("ASF tags are not supported by this file format.");
+                asf.SetDescriptorStrings(values, key);
+                break;
+            case CustomFormat.Ape:
+                var ape = media.GetTag(TagTypes.Ape, true) as TagLib.Ape.Tag
+                    ?? throw new NotSupportedException("APEv2 tags are not supported by this file format.");
+                ape.SetValue(key, values);
+                break;
+            default:
+                throw new NotSupportedException("Custom tags are not supported for this file format.");
+        }
+    }
+
+    private static CustomFormat FormatFor(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".flac" or ".ogg" or ".oga" or ".opus" => CustomFormat.Xiph,
+        ".wma" => CustomFormat.Asf,
+        ".ape" or ".wv" or ".mpc" => CustomFormat.Ape,
+        ".mp3" or ".wav" or ".wave" or ".aif" or ".aiff" or ".aac" or ".tta" or ".dsf" or ".dff" => CustomFormat.Id3v2,
+        _ => CustomFormat.Unsupported
+    };
+
+    private enum CustomFormat { Unsupported, Xiph, Id3v2, Asf, Ape }
 }

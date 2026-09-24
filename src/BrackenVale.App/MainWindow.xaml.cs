@@ -804,13 +804,27 @@ public sealed partial class MainWindow : Window
     private async void EditTags_Click(object sender, RoutedEventArgs e)
     {
         if (TrackFromSender(sender) is not { } track) return;
+        IReadOnlyDictionary<string, string> customValues;
+        try { customValues = TagEditor.ReadCustomFields(track.Path); }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Error("tag-editor", $"Could not read custom tags for {track.Path}.", ex);
+            await ShowNoticeAsync($"Could not read this file's custom tags: {ex.Message}");
+            return;
+        }
         var title = AddTextField("Title", track.Title); var artist = AddTextField("Artist", track.Artist);
         var album = AddTextField("Album", track.Album); var albumArtist = AddTextField("Album artist", track.AlbumArtist); var genre = AddTextField("Genre", track.Genre);
         var year = AddTextField("Year", track.Year == 0 ? "" : track.Year.ToString()); var number = AddTextField("Track number", track.TrackNumber == 0 ? "" : track.TrackNumber.ToString());
         var artwork = AddTextField("Artwork file (optional)", "");
         var artworkPreview = new Image { Width = 96, Height = 96, Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill };
         SetArtwork(artworkPreview, track.ArtworkPath);
-        var custom = new TextBox { Header = "Format-specific Xiph fields (KEY=value, one per line)", AcceptsReturn = true, MinHeight = 70, TextWrapping = TextWrapping.Wrap };
+        var customFormat = TagEditor.CustomFieldFormat(track.Path);
+        var custom = new TextBox
+        {
+            Header = customFormat is null ? "Custom fields are unsupported for this file format" : $"{customFormat} (KEY=value, one per line; blank value removes a field)",
+            AcceptsReturn = true, MinHeight = 90, TextWrapping = TextWrapping.Wrap, IsEnabled = customFormat is not null,
+            Text = string.Join(Environment.NewLine, customValues.Select(field => $"{field.Key}={field.Value}"))
+        };
         var artPicker = new Button { Content = "Choose artwork…", HorizontalAlignment = HorizontalAlignment.Left };
         artPicker.Click += async (_, _) =>
         {
@@ -834,7 +848,7 @@ public sealed partial class MainWindow : Window
                 uint.TryParse(year.Text, out var parsedYear) ? parsedYear : null,
                 uint.TryParse(number.Text, out var parsedNumber) ? parsedNumber : null,
                 ArtworkPath: string.IsNullOrWhiteSpace(artwork.Text) ? null : artwork.Text,
-                CustomFields: customFields);
+                CustomFields: customFormat is null ? null : customFields);
             backup = new TagEditor(Path.Combine(_appData, "TagBackups")).Save(track.Path, edit);
             tagsWritten = true;
             _store.RecordTagBackup(backup);
@@ -917,10 +931,12 @@ public sealed partial class MainWindow : Window
         {
             var details = TrackInformation.Read(track.Path);
             var backup = _store.GetLatestTagBackup(track.Path);
-            var text = $"Title: {track.Title}\nArtist: {track.Artist}\nAlbum: {track.Album}\nAlbum artist: {track.AlbumArtist}\nGenre: {track.Genre}\nYear: {track.Year}\nTrack: {track.TrackNumber}\n\nPath\n{details.Path}\n\nContainer\n{details.Container}\n\nDuration\n{details.Duration}\n\nBitrate\n{details.BitrateKbps} kbps\n\nSample rate\n{details.SampleRateHz:N0} Hz\n\nBit depth\n{details.BitsPerSample} bit\n\nFile size\n{details.FileSize:N0} bytes\n\nModified\n{details.ModifiedUtc:u}\n\nBackup\n{backup?.BackupPath ?? "No tag backup"}";
+            var customTags = TagEditor.ReadCustomFields(track.Path);
+            var customText = customTags.Count == 0 ? "None" : string.Join(Environment.NewLine, customTags.Select(field => $"{field.Key}={field.Value}"));
+            var text = $"Title: {track.Title}\nArtist: {track.Artist}\nAlbum: {track.Album}\nAlbum artist: {track.AlbumArtist}\nGenre: {track.Genre}\nYear: {track.Year}\nTrack: {track.TrackNumber}\n\nCustom tags\n{customText}\n\nPath\n{details.Path}\n\nContainer\n{details.Container}\n\nDuration\n{details.Duration}\n\nBitrate\n{details.BitrateKbps} kbps\n\nSample rate\n{details.SampleRateHz:N0} Hz\n\nBit depth\n{details.BitsPerSample} bit\n\nFile size\n{details.FileSize:N0} bytes\n\nModified\n{details.ModifiedUtc:u}\n\nBackup\n{backup?.BackupPath ?? "No tag backup"}";
             await ShowTextDialogAsync("Track details", text);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException)
+        catch (Exception ex)
         { LocalAppLog.Shared.Error("track-details", $"Could not read details for {track.Path}.", ex); await ShowNoticeAsync($"Could not read track details: {ex.Message}"); }
     }
 

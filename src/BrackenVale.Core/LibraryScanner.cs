@@ -24,7 +24,7 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
     private readonly LocalAppLog _log = log ?? LocalAppLog.Shared;
     public static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".mp3", ".flac", ".wav", ".wave", ".aif", ".aiff", ".m4a", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wma", ".ape", ".wv", ".tta", ".mpc", ".dsf", ".dff"
+        ".mp3", ".flac", ".wav", ".wave", ".aif", ".aiff", ".m4a", ".m4b", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wma", ".ape", ".wv", ".tta", ".mpc", ".dsf", ".dff"
     };
 
     private static readonly HashSet<string> SystemFolders = new(StringComparer.OrdinalIgnoreCase)

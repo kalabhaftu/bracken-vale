@@ -20,3 +20,4 @@ All notable changes to Bracken Vale are documented here.
 - Refresh artwork cache keys after tag edits and update the current track details immediately.
 - Publish self-contained x64 and ARM64 portable ZIPs from successful Windows CI runs.
 - Reset artwork accents when switching back to native styling and recover from damaged EQ settings.
+- Edit and inspect Xiph, ID3v2, ASF and APEv2 custom text tags; preserve each format's own field names.

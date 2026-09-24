@@ -49,6 +49,7 @@ public sealed class CoreTests : IDisposable
         var external = Path.Combine(_root, "external");
         Directory.CreateDirectory(ignored); Directory.CreateDirectory(external); Directory.CreateDirectory(system); Directory.CreateDirectory(root);
         await System.IO.File.WriteAllTextAsync(Path.Combine(root, "keep.mp3"), "metadata is irrelevant to enumeration");
+        await System.IO.File.WriteAllTextAsync(Path.Combine(root, "spoken.m4b"), "audiobook extension");
         await System.IO.File.WriteAllTextAsync(Path.Combine(root, "readme.txt"), "ignore extension");
         await System.IO.File.WriteAllTextAsync(Path.Combine(ignored, "ignored.flac"), "ignore folder");
         await System.IO.File.WriteAllTextAsync(Path.Combine(system, "system.mp3"), "exclude application data");
@@ -58,7 +59,9 @@ public sealed class CoreTests : IDisposable
         using var control = new ScanControl();
         await new LibraryScanner(new LocalAppLog(Path.Combine(_root, "Logs"))).ScanAsync([root], [ignored + Path.DirectorySeparatorChar], control,
             (path, _) => { found.Add(Path.GetFullPath(path)); return ValueTask.CompletedTask; });
-        Assert.Equal([Path.Combine(root, "keep.mp3")], found);
+        Assert.Equal(2, found.Count);
+        Assert.Contains(Path.Combine(root, "keep.mp3"), found);
+        Assert.Contains(Path.Combine(root, "spoken.m4b"), found);
     }
 
     [Fact]
@@ -190,6 +193,22 @@ public sealed class CoreTests : IDisposable
         Assert.True(System.IO.File.Exists(backup.BackupPath));
         editor.Restore(backup);
         Assert.Equal(original, System.IO.File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void Tag_editor_round_trips_and_removes_id3v2_custom_fields()
+    {
+        var path = Path.Combine(_root, "custom.wav");
+        WriteWave(path);
+        var editor = new TagEditor(Path.Combine(_root, "backups"));
+        var initial = new Dictionary<string, string> { ["MOOD"] = "warm", ["SOURCE"] = "vinyl" };
+
+        editor.Save(path, new TagEdit(CustomFields: initial));
+        Assert.Equal("ID3v2 user text frames", TagEditor.CustomFieldFormat(path));
+        Assert.Equal(initial, TagEditor.ReadCustomFields(path));
+
+        editor.Save(path, new TagEdit(CustomFields: new Dictionary<string, string> { ["MOOD"] = "quiet" }));
+        Assert.Equal(new Dictionary<string, string> { ["MOOD"] = "quiet" }, TagEditor.ReadCustomFields(path));
     }
 
     [Fact]
