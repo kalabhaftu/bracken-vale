@@ -166,6 +166,7 @@ public sealed class CoreTests : IDisposable
         var document = Lyrics.Parse("[offset:250]\n[00:01.25][00:02.50]First\n[00:04.00]Second\n");
         Assert.Equal(TimeSpan.FromMilliseconds(1250), document.Lines[0].Time);
         Assert.Equal(TimeSpan.FromMilliseconds(2500), document.Lines[1].Time);
+        Assert.Equal(string.Empty, document.At(TimeSpan.Zero));
         Assert.Equal("First", document.At(TimeSpan.FromMilliseconds(1500)));
         Assert.Equal("Second", document.At(TimeSpan.FromSeconds(5)));
         var reparsed = Lyrics.Parse(Lyrics.Format(document));

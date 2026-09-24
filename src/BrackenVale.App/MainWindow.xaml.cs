@@ -402,10 +402,7 @@ public sealed partial class MainWindow : Window
         }
         if (DateTime.UtcNow - _lastSessionSave > TimeSpan.FromSeconds(5)) SaveSession();
         if (_playback.CurrentTrack is not null && _currentLyrics.Lines.Count > 0)
-        {
-            var line = _currentLyrics.At(TimeSpan.FromMilliseconds(position));
-            if (!string.IsNullOrEmpty(line)) NowPlayingLyrics.Text = line;
-        }
+            NowPlayingLyrics.Text = _currentLyrics.At(TimeSpan.FromMilliseconds(position));
     }
 
     private static string FormatTime(long milliseconds)
@@ -445,7 +442,8 @@ public sealed partial class MainWindow : Window
         PlayerTitle.Text = track.Title; PlayerArtist.Text = track.Artist;
         NowPlayingTitle.Text = track.Title; NowPlayingArtist.Text = track.Artist;
         _currentLyrics = LyricsFiles.Load(track.Path);
-        NowPlayingLyrics.Text = _currentLyrics.Lines.FirstOrDefault()?.Text ?? "No synced lyrics. Open lyrics to add or search.";
+        NowPlayingLyrics.Text = _currentLyrics.Lines.Count == 0 ? "No synced lyrics. Open lyrics to add or search."
+            : _currentLyrics.At(TimeSpan.FromMilliseconds(_playback.Position));
         SetArtwork(NowPlayingArtwork, track.ArtworkPath);
         if (_store.GetSetting("accent-mode") == "Artwork" && _store.GetSetting("accent-manual") != "true") _ = ApplyArtworkAccentAsync(track.ArtworkPath);
     }
