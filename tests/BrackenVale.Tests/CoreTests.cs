@@ -56,7 +56,7 @@ public sealed class CoreTests : IDisposable
         Directory.CreateSymbolicLink(linked, external);
         var found = new List<string>();
         using var control = new ScanControl();
-        await new LibraryScanner(new LocalAppLog(Path.Combine(_root, "Logs"))).ScanAsync([root], [ignored], control,
+        await new LibraryScanner(new LocalAppLog(Path.Combine(_root, "Logs"))).ScanAsync([root], [ignored + Path.DirectorySeparatorChar], control,
             (path, _) => { found.Add(Path.GetFullPath(path)); return ValueTask.CompletedTask; });
         Assert.Equal([Path.Combine(root, "keep.mp3")], found);
     }

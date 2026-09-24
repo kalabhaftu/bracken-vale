@@ -64,7 +64,11 @@ public sealed class PlaybackService : IDisposable
         if (_restorePosition > 0) _ = SeekAfterStartAsync(_active, _restorePosition);
     }
 
-    public void Pause() => _active.Pause();
+    public void Pause()
+    {
+        CancelCrossfade();
+        _active.Pause();
+    }
     public void Stop() { CancelCrossfade(); _active.Stop(); }
     public void Seek(long positionMilliseconds) { _restorePosition = 0; _active.Time = Math.Max(0, positionMilliseconds); }
 
@@ -105,6 +109,7 @@ public sealed class PlaybackService : IDisposable
             for (var step = 1; step <= steps; step++)
             {
                 await Task.Delay(40, cts.Token).ConfigureAwait(false);
+                cts.Token.ThrowIfCancellationRequested();
                 var fraction = step / (float)steps;
                 incoming.Volume = (int)(_volume * fraction);
                 old.Volume = (int)(_volume * (1 - fraction));
@@ -116,6 +121,7 @@ public sealed class PlaybackService : IDisposable
             _active.Volume = (int)_volume;
             CrossfadeCompleted?.Invoke(nextTrack);
         }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         finally
         {
             if (ReferenceEquals(_crossfadeCancellation, cts)) _crossfadeCancellation = null;
@@ -171,6 +177,7 @@ public sealed class PlaybackService : IDisposable
     {
         _crossfadeCancellation?.Cancel();
         _next.Stop();
+        _active.Volume = (int)_volume;
         _next.Volume = (int)_volume;
     }
 

@@ -271,7 +271,7 @@ public sealed partial class MainWindow : Window
             if (_tracks.Count > 0) PlayTrack(_tracks[0], true);
             return;
         }
-        if (_playback.IsPlaying) { _playback.Pause(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; PlayPauseButton.Content = "Play"; }
+        if (_playback.IsPlaying) { _playback.Pause(); _crossfadeInProgress = false; if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; PlayPauseButton.Content = "Play"; }
         else { _lastPlayCountPosition = _playback.Position; _playback.PlayLoaded(); UpdateSystemMediaControls(_playback.CurrentTrack, true); PlayPauseButton.Content = "Pause"; }
     }
 
@@ -1060,7 +1060,7 @@ public sealed partial class MainWindow : Window
                     else { _lastPlayCountPosition = _playback.Position; _playback.PlayLoaded(); PlayPauseButton.Content = "Pause"; }
                     if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Playing;
                     break;
-                case SystemMediaTransportControlsButton.Pause: _playback.Pause(); PlayPauseButton.Content = "Play"; if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; break;
+                case SystemMediaTransportControlsButton.Pause: _playback.Pause(); _crossfadeInProgress = false; PlayPauseButton.Content = "Play"; if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; break;
                 case SystemMediaTransportControlsButton.Next: AdvanceQueue(false); break;
                 case SystemMediaTransportControlsButton.Previous: Previous_Click(this, new RoutedEventArgs()); break;
             }

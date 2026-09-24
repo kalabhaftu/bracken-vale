@@ -52,7 +52,7 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
         IProgress<ScanProgress>? progress = null,
         Action<string>? directoryVisited = null)
     {
-        var ignored = ignoredDirectories.Select(Normalize).ToHashSet(PathComparer);
+        var ignored = ignoredDirectories.Select(path => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path))).ToHashSet(PathComparer);
         var pending = new Stack<string>(roots.Reverse().Select(Normalize));
         var filesFound = 0;
         var directoriesVisited = 0;
