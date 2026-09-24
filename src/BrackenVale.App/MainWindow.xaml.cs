@@ -935,7 +935,7 @@ public sealed partial class MainWindow : Window
         void RefreshQueue()
         {
             queue.ItemsSource = _queue.Select((track, index) => $"{(index == _queueIndex ? "Playing · " : "")}{index + 1}. {track.Title} — {track.Artist}").ToArray();
-            if (_queueIndex >= 0 && _queueIndex < _queue.Items.Count) queue.SelectedIndex = _queueIndex;
+            if (_queueIndex >= 0 && _queueIndex < queue.Items.Count) queue.SelectedIndex = _queueIndex;
         }
         void Move(int direction)
         {
