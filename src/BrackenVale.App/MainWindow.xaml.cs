@@ -467,18 +467,26 @@ public sealed partial class MainWindow : Window
         var saved = _store.GetSetting(selected == "Custom" ? "eq-bands" : "eq-preset:" + selected);
         if (saved is not null)
         {
-            try
-            {
-                var bands = JsonSerializer.Deserialize<float[]>(saved);
-                if (bands is { Length: > 0 })
-                {
-                    _playback.ApplyEqualizer(null, bands.Select(band => float.IsFinite(band) ? Math.Clamp(band, -20, 20) : 0).ToArray());
-                    return;
-                }
-            }
-            catch (JsonException ex) { LocalAppLog.Shared.Warning("equalizer", "Saved equalizer settings were invalid.", ex); }
+            _playback.ApplyEqualizer(null, ReadEqualizerBands(saved, PlaybackService.EqualizerBands().Count));
+            return;
         }
         if (PlaybackService.EqualizerPresets().Contains(selected, StringComparer.OrdinalIgnoreCase)) _playback.ApplyEqualizer(selected);
+    }
+
+    private static float[] ReadEqualizerBands(string? json, int count)
+    {
+        if (json is null) return new float[count];
+        try
+        {
+            var saved = JsonSerializer.Deserialize<float[]>(json) ?? [];
+            return Enumerable.Range(0, count).Select(index => index < saved.Length && float.IsFinite(saved[index])
+                ? Math.Clamp(saved[index], -20, 20) : 0).ToArray();
+        }
+        catch (JsonException ex)
+        {
+            LocalAppLog.Shared.Warning("equalizer", "Saved equalizer settings were invalid.", ex);
+            return new float[count];
+        }
     }
 
     private void RestoreSession()
@@ -631,6 +639,7 @@ public sealed partial class MainWindow : Window
         ApplyStoredAppearance();
         if (manualAccent.IsOn) ApplyAccent(colorPicker.Color);
         else if (chosenAccent == "Artwork" && _playback.CurrentTrack is { } current) await ApplyArtworkAccentAsync(current.ArtworkPath);
+        else ResetAccent();
         RefreshLibrary();
         if (_store.GetSetting("check-updates") == "true") _ = CheckForUpdatesAsync(true);
     }
@@ -1048,7 +1057,7 @@ public sealed partial class MainWindow : Window
         var labels = PlaybackService.EqualizerBands();
         var sliders = new List<Slider>(); var controls = new StackPanel { Spacing = 2 };
         var customJson = _store.GetSetting("eq-bands");
-        var values = customJson is null ? Enumerable.Repeat(0f, labels.Count).ToArray() : JsonSerializer.Deserialize<float[]>(customJson) ?? Enumerable.Repeat(0f, labels.Count).ToArray();
+        var values = ReadEqualizerBands(customJson, labels.Count);
         for (var i = 0; i < labels.Count; i++)
         {
             var row = new Grid();
@@ -1056,7 +1065,7 @@ public sealed partial class MainWindow : Window
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(42) });
             var label = new TextBlock { Text = labels[i], VerticalAlignment = VerticalAlignment.Center };
-            var slider = new Slider { Minimum = -20, Maximum = 20, Value = i < values.Length ? values[i] : 0, Tag = i };
+            var slider = new Slider { Minimum = -20, Maximum = 20, Value = values[i], Tag = i };
             var value = new TextBlock { Text = slider.Value.ToString("0.0"), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
             slider.ValueChanged += (_, args) =>
             {
@@ -1081,7 +1090,7 @@ public sealed partial class MainWindow : Window
             if (presetBox.SelectedItem is not string selected) return;
             if (selected == "Off") { _playback.ApplyEqualizer(null); _store.SetSetting("eq-current", "Off"); return; }
             IReadOnlyList<float> bands;
-            if (saved.TryGetValue("eq-preset:" + selected, out var json)) bands = JsonSerializer.Deserialize<float[]>(json) ?? [];
+            if (saved.TryGetValue("eq-preset:" + selected, out var json)) bands = ReadEqualizerBands(json, sliders.Count);
             else bands = PlaybackService.EqualizerPresetBands(selected);
             for (var i = 0; i < sliders.Count && i < bands.Count; i++) sliders[i].Value = bands[i];
             if (saved.ContainsKey("eq-preset:" + selected)) _playback.ApplyEqualizer(null, bands);

@@ -4,6 +4,8 @@ All notable changes to Bracken Vale are documented here.
 
 ## [Unreleased]
 
+## [0.1.0-preview.1]
+
 - Add the initial native Windows music player, local library, playback, playlist, metadata and lyrics features.
 - Add Windows CI and architecture-specific release packaging workflows.
 - Log crashes, playback failures, and handled app errors locally; open the log folder from Settings.
@@ -17,3 +19,4 @@ All notable changes to Bracken Vale are documented here.
 - Clear stale synced lyrics when playback moves before the next timed line.
 - Refresh artwork cache keys after tag edits and update the current track details immediately.
 - Publish self-contained x64 and ARM64 portable ZIPs from successful Windows CI runs.
+- Reset artwork accents when switching back to native styling and recover from damaged EQ settings.
