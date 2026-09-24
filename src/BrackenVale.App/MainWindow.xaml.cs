@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Text.Json;
 using BrackenVale.Core;
+using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -580,7 +581,8 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(artworkPath) || !System.IO.File.Exists(artworkPath)) { ResetAccent(); return false; }
         try
         {
-            using var stream = await StorageFile.GetFileFromPath(artworkPath).OpenAsync(FileAccessMode.Read);
+            var file = await StorageFile.GetFileFromPathAsync(artworkPath);
+            using var stream = await file.OpenAsync(FileAccessMode.Read);
             var decoder = await BitmapDecoder.CreateAsync(stream);
             var data = await decoder.GetPixelDataAsync(BitmapPixelFormat.Rgba8, BitmapAlphaMode.Ignore,
                 new BitmapTransform { ScaledWidth = 1, ScaledHeight = 1 }, ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
@@ -980,8 +982,22 @@ public sealed partial class MainWindow : Window
         var updater = _systemControls.DisplayUpdater; updater.Type = MediaPlaybackType.Music;
         updater.MusicProperties.Title = track.Title; updater.MusicProperties.Artist = track.Artist; updater.MusicProperties.AlbumTitle = track.Album;
         updater.Thumbnail = null;
-        if (!string.IsNullOrWhiteSpace(track.ArtworkPath) && System.IO.File.Exists(track.ArtworkPath)) updater.Thumbnail = RandomAccessStreamReference.CreateFromFile(StorageFile.GetFileFromPath(track.ArtworkPath));
         updater.Update();
+        if (!string.IsNullOrWhiteSpace(track.ArtworkPath) && System.IO.File.Exists(track.ArtworkPath)) _ = UpdateMediaThumbnailAsync(track.ArtworkPath);
+    }
+
+    private async Task UpdateMediaThumbnailAsync(string path)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(path);
+            if (_systemControls is null || _playback.CurrentTrack?.ArtworkPath != path) return;
+            var updater = _systemControls.DisplayUpdater;
+            updater.Thumbnail = RandomAccessStreamReference.CreateFromFile(file);
+            updater.Update();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
+        { Debug.WriteLine($"Could not load media artwork: {ex.Message}"); }
     }
 
     private void ApplyTraySetting()
