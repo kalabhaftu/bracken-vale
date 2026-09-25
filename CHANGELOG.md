@@ -15,6 +15,7 @@ All notable changes to Bracken Vale are documented here.
 - Preserve the selected duplicate playlist entry through playback and session restore.
 - Export local diagnostic logs as a shareable ZIP from Settings.
 - Allow clearing tag year and track number, and reject invalid numeric values before saving.
+- Include local OS, process architecture, and .NET version in startup logs for easier bug diagnosis.
 - Stream directory scans for responsive cancellation and skip access-denied paths without aborting the library scan.
 - Register crash logging before app resource initialization to capture more startup failures.
 - Keep A–B repeat stable while paused and prevent automatic crossfades from interrupting the marked passage.

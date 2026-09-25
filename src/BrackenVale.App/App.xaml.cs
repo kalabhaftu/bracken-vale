@@ -16,7 +16,7 @@ public partial class App : Application
             args.SetObserved();
         };
         InitializeComponent();
-        LocalAppLog.Shared.Info("app", $"Starting Bracken Vale {GetType().Assembly.GetName().Version}.");
+        LocalAppLog.Shared.Info("app", $"Starting Bracken Vale {GetType().Assembly.GetName().Version} on {System.Runtime.InteropServices.RuntimeInformation.OSDescription} ({System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, .NET {Environment.Version}).");
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
