@@ -44,6 +44,7 @@ public sealed partial class MainWindow : Window
     private long _lastPlayCountPosition;
     private bool _crossfadeInProgress;
     private string? _crossfadeFailureSource;
+    private int? _crossfadeSourceQueueIndex;
     private int _queueIndex = -1;
     private string _view = "Songs";
     private string _repeatMode = "Off";
@@ -271,7 +272,7 @@ public sealed partial class MainWindow : Window
             var matchingIndex = _queue.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
             if (matchingIndex >= 0) _queueIndex = matchingIndex;
         }
-        _playback.Play(track); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0; _crossfadeInProgress = false; _crossfadeFailureSource = null; _repeatA = _repeatB = null;
+        _playback.Play(track); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0; _crossfadeInProgress = false; _crossfadeFailureSource = null; _crossfadeSourceQueueIndex = null; _repeatA = _repeatB = null;
         UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); PlayPauseButton.Content = "Pause"; SeekSlider.IsEnabled = true; SaveSession();
     }
 
@@ -282,12 +283,13 @@ public sealed partial class MainWindow : Window
             if (_tracks.Count > 0) PlayTrack(_tracks[0], true);
             return;
         }
-        if (_playback.IsPlaying) { _playback.Pause(); _crossfadeInProgress = false; if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; PlayPauseButton.Content = "Play"; }
+        if (_playback.IsPlaying) { CancelCrossfadeAndRestoreQueue(); _playback.Pause(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; PlayPauseButton.Content = "Play"; }
         else { _lastPlayCountPosition = _playback.Position; _playback.PlayLoaded(); UpdateSystemMediaControls(_playback.CurrentTrack, true); PlayPauseButton.Content = "Pause"; }
     }
 
     private void Previous_Click(object sender, RoutedEventArgs e)
     {
+        CancelCrossfadeAndRestoreQueue();
         if (_playback.Position > 3000) { _playback.Seek(0); return; }
         if (_queueIndex > 0) { _queueIndex--; PlayTrack(_queue[_queueIndex], false, _queueIndex); }
     }
@@ -303,15 +305,32 @@ public sealed partial class MainWindow : Window
         var next = QueueNavigation.NextIndex(_queue.Count, _queueIndex, automatic, _repeatMode);
         if (next < 0)
         {
+            CancelCrossfadeAndRestoreQueue();
             _playback.Stop(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped; PlayPauseButton.Content = "Play"; return;
         }
         var track = _queue[next];
         if (_playback.IsPlaying && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && int.TryParse(_store.GetSetting("crossfade-seconds"), out var seconds) && seconds > 0)
-        {
-            _queueIndex = next; _crossfadeInProgress = true;
-            _ = _playback.CrossfadeToAsync(track, seconds * 1000);
-        }
+            StartCrossfade(next, seconds * 1000);
         else PlayTrack(track, false, next);
+    }
+
+    private void StartCrossfade(int targetIndex, int durationMilliseconds)
+    {
+        _crossfadeSourceQueueIndex = _crossfadeInProgress ? _crossfadeSourceQueueIndex ?? _queueIndex : _queueIndex;
+        _queueIndex = targetIndex;
+        _crossfadeInProgress = true;
+        _ = _playback.CrossfadeToAsync(_queue[targetIndex], durationMilliseconds);
+    }
+
+    private void CancelCrossfadeAndRestoreQueue()
+    {
+        if (!_crossfadeInProgress) return;
+        _playback.CancelCrossfade();
+        _crossfadeInProgress = false;
+        _queueIndex = _crossfadeSourceQueueIndex is { } sourceIndex && sourceIndex >= 0 && sourceIndex < _queue.Count
+            ? sourceIndex
+            : _queue.FindIndex(item => SameTrack(item.Path, _playback.CurrentTrack?.Path));
+        _crossfadeSourceQueueIndex = null;
     }
 
     private void Shuffle_Click(object sender, RoutedEventArgs e)
@@ -338,6 +357,7 @@ public sealed partial class MainWindow : Window
 
     private void AbRepeat_Click(object sender, RoutedEventArgs e)
     {
+        CancelCrossfadeAndRestoreQueue();
         var position = TimeSpan.FromMilliseconds(Math.Max(0, _playback.Position));
         if (_playback.CurrentTrack is null) return;
         if (_repeatA is null) { _repeatA = position; _repeatB = null; _ = ShowNoticeAsync("A–B repeat: mark B at the end of the passage."); }
@@ -380,7 +400,11 @@ public sealed partial class MainWindow : Window
 
     private void SeekSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        if (!_updatingPosition && SeekSlider.IsEnabled) _playback.Seek((long)e.NewValue);
+        if (!_updatingPosition && SeekSlider.IsEnabled)
+        {
+            CancelCrossfadeAndRestoreQueue();
+            _playback.Seek((long)e.NewValue);
+        }
     }
 
     private void Clock_Tick(object? sender, object e)
@@ -414,9 +438,7 @@ public sealed partial class MainWindow : Window
         var automaticNext = QueueNavigation.NextIndex(_queue.Count, _queueIndex, true, _repeatMode);
         if (_playback.IsPlaying && _repeatA is null && !_crossfadeInProgress && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && automaticNext >= 0 &&
             int.TryParse(_store.GetSetting("crossfade-seconds"), out var crossfade) && crossfade > 0 && duration > 0 && duration - position <= crossfade * 1000)
-        {
-            _queueIndex = automaticNext; _crossfadeInProgress = true; _ = _playback.CrossfadeToAsync(_queue[_queueIndex], crossfade * 1000);
-        }
+            StartCrossfade(automaticNext, crossfade * 1000);
         if (DateTime.UtcNow - _lastSessionSave > TimeSpan.FromSeconds(5)) SaveSession();
         if (_playback.CurrentTrack is not null && _currentLyrics.Lines.Count > 0)
             NowPlayingLyrics.Text = _currentLyrics.At(TimeSpan.FromMilliseconds(position));
@@ -431,7 +453,7 @@ public sealed partial class MainWindow : Window
     private void Playback_TrackEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() => AdvanceQueue(true));
     private void Playback_CrossfadeCompleted(Track track) => DispatcherQueue.TryEnqueue(() =>
     {
-        _crossfadeInProgress = false; _crossfadeFailureSource = null; _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0;
+        _crossfadeInProgress = false; _crossfadeFailureSource = null; _crossfadeSourceQueueIndex = null; _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0;
         UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); PlayPauseButton.Content = "Pause";
     });
 
@@ -439,9 +461,13 @@ public sealed partial class MainWindow : Window
 
     private void Playback_CrossfadeFailed(Track track) => DispatcherQueue.TryEnqueue(() =>
     {
+        if (!_crossfadeInProgress || _queueIndex < 0 || _queueIndex >= _queue.Count || !SameTrack(_queue[_queueIndex].Path, track.Path)) return;
         _crossfadeInProgress = false;
         _crossfadeFailureSource = _playback.CurrentTrack?.Path;
-        _queueIndex = _queue.FindIndex(item => SameTrack(item.Path, _playback.CurrentTrack?.Path));
+        _queueIndex = _crossfadeSourceQueueIndex is { } sourceIndex && sourceIndex >= 0 && sourceIndex < _queue.Count
+            ? sourceIndex
+            : _queue.FindIndex(item => SameTrack(item.Path, _playback.CurrentTrack?.Path));
+        _crossfadeSourceQueueIndex = null;
         _ = ShowNoticeAsync($"Could not start {track.Title} during crossfade. Playback will continue; see the local log for details.", InfoBarSeverity.Error);
     });
 
@@ -1159,7 +1185,11 @@ public sealed partial class MainWindow : Window
         return string.Join('\n', lines);
     }
 
-    private async void Queue_Click(object sender, RoutedEventArgs e) => await ShowQueueAsync();
+    private async void Queue_Click(object sender, RoutedEventArgs e)
+    {
+        CancelCrossfadeAndRestoreQueue();
+        await ShowQueueAsync();
+    }
 
     private async Task ShowQueueAsync()
     {
@@ -1308,7 +1338,7 @@ public sealed partial class MainWindow : Window
                     else { _lastPlayCountPosition = _playback.Position; _playback.PlayLoaded(); PlayPauseButton.Content = "Pause"; }
                     if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Playing;
                     break;
-                case SystemMediaTransportControlsButton.Pause: _playback.Pause(); _crossfadeInProgress = false; PlayPauseButton.Content = "Play"; if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; break;
+                case SystemMediaTransportControlsButton.Pause: CancelCrossfadeAndRestoreQueue(); _playback.Pause(); PlayPauseButton.Content = "Play"; if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; break;
                 case SystemMediaTransportControlsButton.Next: AdvanceQueue(false); break;
                 case SystemMediaTransportControlsButton.Previous: Previous_Click(this, new RoutedEventArgs()); break;
             }

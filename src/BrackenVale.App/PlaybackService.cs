@@ -217,7 +217,7 @@ public sealed class PlaybackService : IDisposable
         PlaybackFailed?.Invoke(track);
     }
 
-    private void CancelCrossfade()
+    public void CancelCrossfade()
     {
         _crossfadeCancellation?.Cancel();
         _next.Stop();
