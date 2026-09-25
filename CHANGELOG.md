@@ -5,6 +5,7 @@ All notable changes to Bracken Vale are documented here.
 ## [Unreleased]
 
 - Register crash logging before app resource initialization to capture more startup failures.
+- Keep A–B repeat stable while paused and prevent automatic crossfades from interrupting the marked passage.
 
 ## [0.1.0-preview.1]
 

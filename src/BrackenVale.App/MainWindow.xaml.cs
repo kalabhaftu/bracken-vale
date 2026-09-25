@@ -383,9 +383,13 @@ public sealed partial class MainWindow : Window
     private void Clock_Tick(object? sender, object e)
     {
         var position = Math.Max(0, _playback.Position); var duration = Math.Max(0, _playback.Duration);
+        if (_playback.IsPlaying && _repeatA is not null && _repeatB is not null && position >= _repeatB.Value.TotalMilliseconds)
+        {
+            _playback.Seek((long)_repeatA.Value.TotalMilliseconds);
+            position = Math.Max(0, _playback.Position);
+        }
         _updatingPosition = true; SeekSlider.Maximum = Math.Max(1, duration); SeekSlider.Value = Math.Min(position, SeekSlider.Maximum); _updatingPosition = false;
         ElapsedText.Text = FormatTime(position); DurationText.Text = FormatTime(duration);
-        if (_repeatA is not null && _repeatB is not null && position >= _repeatB.Value.TotalMilliseconds) _playback.Seek((long)_repeatA.Value.TotalMilliseconds);
         if (_systemControls is not null && duration > 0)
         {
             var timeline = new SystemMediaTransportControlsTimelineProperties { StartTime = TimeSpan.Zero, EndTime = TimeSpan.FromMilliseconds(duration), Position = TimeSpan.FromMilliseconds(position) };
@@ -405,7 +409,7 @@ public sealed partial class MainWindow : Window
             _store.RecordPlayed(track.Path, DateTime.UtcNow); _countedCurrentPlay = true;
         }
         var automaticNext = QueueNavigation.NextIndex(_queue.Count, _queueIndex, true, _repeatMode);
-        if (_playback.IsPlaying && !_crossfadeInProgress && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && automaticNext >= 0 &&
+        if (_playback.IsPlaying && _repeatA is null && !_crossfadeInProgress && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && automaticNext >= 0 &&
             int.TryParse(_store.GetSetting("crossfade-seconds"), out var crossfade) && crossfade > 0 && duration > 0 && duration - position <= crossfade * 1000)
         {
             _queueIndex = automaticNext; _crossfadeInProgress = true; _ = _playback.CrossfadeToAsync(_queue[_queueIndex], crossfade * 1000);
