@@ -828,8 +828,14 @@ public sealed partial class MainWindow : Window
     private void RemoveFromPlaylist_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedPlaylist is null) return;
-        var track = TrackFromSender(sender); if (track is null) return;
-        var position = Array.FindIndex(_selectedPlaylist.Paths.ToArray(), path => path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
+        DependencyObject? container = sender as DependencyObject;
+        while (container is not null && container is not ListViewItem) container = VisualTreeHelper.GetParent(container);
+        if (container is not ListViewItem row) return;
+        var rowIndex = PlaylistTrackList.IndexFromContainer(row);
+        if (rowIndex < 0 || rowIndex >= _tracks.Count) return;
+        var path = _tracks[rowIndex].Path;
+        var occurrence = _tracks.Take(rowIndex + 1).Count(track => track.Path.Equals(path, StringComparison.OrdinalIgnoreCase)) - 1;
+        var position = Playlists.FindPathOccurrence(_selectedPlaylist.Paths, path, occurrence);
         if (position < 0) return;
         _store.RemoveFromPlaylist(_selectedPlaylist.Id, position);
         _selectedPlaylist = _store.GetPlaylists().FirstOrDefault(item => item.Id == _selectedPlaylist.Id);

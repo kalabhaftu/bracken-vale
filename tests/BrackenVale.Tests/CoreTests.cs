@@ -167,6 +167,16 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void Playlist_duplicate_path_occurrences_map_to_their_distinct_positions()
+    {
+        var paths = new[] { "missing.flac", "same.mp3", "unindexed.wav", "same.mp3" };
+        Assert.Equal(1, Playlists.FindPathOccurrence(paths, "same.mp3", 0));
+        Assert.Equal(3, Playlists.FindPathOccurrence(paths, "same.mp3", 1));
+        Assert.Equal(-1, Playlists.FindPathOccurrence(paths, "same.mp3", 2));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Playlists.FindPathOccurrence(paths, "same.mp3", -1));
+    }
+
+    [Fact]
     public void Lrc_parser_keeps_milliseconds_multiple_timestamps_and_offset()
     {
         var document = Lyrics.Parse("[offset:250]\n[00:01.25][00:02.50]First\n[00:04.00]Second\n");

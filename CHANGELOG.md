@@ -26,3 +26,4 @@ All notable changes to Bracken Vale are documented here.
 - Keep LRCLIB search and queue, equalizer and update feedback inside their open dialogs.
 - Roll back unsaved navigation changes when Settings is cancelled or contains an invalid folder path.
 - Show app feedback in dismissible banners so playback errors cannot collide with open dialogs.
+- Remove the selected duplicate playlist entry instead of always removing its first occurrence.

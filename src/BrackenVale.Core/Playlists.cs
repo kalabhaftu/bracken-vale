@@ -7,6 +7,15 @@ public static class Playlists
 {
     private static readonly Regex ExtInf = new("^#EXTINF:-?\\d+,(.*)$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    public static int FindPathOccurrence(IReadOnlyList<string> paths, string path, int occurrence)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(occurrence);
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        for (var index = 0; index < paths.Count; index++)
+            if (comparer.Equals(paths[index], path) && occurrence-- == 0) return index;
+        return -1;
+    }
+
     public static IReadOnlyList<string> ReadM3u8(string playlistPath)
     {
         var baseDirectory = Path.GetDirectoryName(Path.GetFullPath(playlistPath))!;
