@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using BrackenVale.Core;
@@ -571,6 +572,10 @@ public sealed partial class MainWindow : Window
 
     private void ApplyStoredNavigation()
     {
+        NavView.OpenPaneLength = ReadPanelWidth("navigation-pane-width", 224, 180, 360);
+        var browseWidth = ReadPanelWidth("browse-pane-width", 240, 160, 400);
+        LibraryView.ColumnDefinitions[0].Width = new GridLength(browseWidth);
+        PlaylistView.ColumnDefinitions[0].Width = new GridLength(browseWidth);
         var items = NavView.MenuItems.OfType<NavigationViewItem>().ToList();
         var byTag = items.Where(item => item.Tag is not null).ToDictionary(item => item.Tag!.ToString()!, StringComparer.Ordinal);
         var order = ReadJsonSetting("navigation-order", Array.Empty<string>());
@@ -580,6 +585,10 @@ public sealed partial class MainWindow : Window
         var hidden = ReadJsonSetting("hidden-panels", Array.Empty<string>()).ToHashSet(StringComparer.Ordinal);
         foreach (var item in arranged) item.Visibility = hidden.Contains(item.Tag?.ToString() ?? "") ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    private int ReadPanelWidth(string key, int fallback, int minimum, int maximum) =>
+        int.TryParse(_store.GetSetting(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            ? Math.Clamp(value, minimum, maximum) : fallback;
 
     private void ApplyStoredAppearance()
     {
@@ -626,6 +635,16 @@ public sealed partial class MainWindow : Window
         var openLogs = new Button { Content = "Open log folder", HorizontalAlignment = HorizontalAlignment.Left };
         openLogs.Click += OpenLogsFolder_Click; content.Children.Add(openLogs);
         content.Children.Add(new TextBlock { Text = "Library navigation · reorder with arrows, hide optional panels", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"], Margin = new Thickness(0, 12, 0, 0) });
+        var navigationWidth = new Slider { Minimum = 180, Maximum = 360, StepFrequency = 10, Value = ReadPanelWidth("navigation-pane-width", 224, 180, 360) };
+        var browseWidth = new Slider { Minimum = 160, Maximum = 400, StepFrequency = 10, Value = ReadPanelWidth("browse-pane-width", 240, 160, 400) };
+        var navigationWidthLabel = new TextBlock { Text = $"Navigation pane · {(int)navigationWidth.Value} px" };
+        var browseWidthLabel = new TextBlock { Text = $"Browse pane · {(int)browseWidth.Value} px" };
+        navigationWidth.ValueChanged += (_, args) => navigationWidthLabel.Text = $"Navigation pane · {(int)args.NewValue} px";
+        browseWidth.ValueChanged += (_, args) => browseWidthLabel.Text = $"Browse pane · {(int)args.NewValue} px";
+        AutomationProperties.SetName(navigationWidth, "Navigation pane width");
+        AutomationProperties.SetName(browseWidth, "Browse pane width");
+        content.Children.Add(navigationWidthLabel); content.Children.Add(navigationWidth);
+        content.Children.Add(browseWidthLabel); content.Children.Add(browseWidth);
         var navigationList = new StackPanel { Spacing = 4 };
         foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>().ToArray())
         {
@@ -651,6 +670,8 @@ public sealed partial class MainWindow : Window
         var chosenTheme = theme.SelectedItem?.ToString() ?? "System";
         var chosenAccent = accentMode.SelectedIndex == 1 ? "Artwork" : "Native";
         var crossfadeSeconds = crossfade.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 5, 4 => 8, 5 => 10, _ => 0 };
+        var navigationPaneWidth = (int)Math.Round(navigationWidth.Value);
+        var browsePaneWidth = (int)Math.Round(browseWidth.Value);
         string[] ignoredPaths;
         try
         {
@@ -664,6 +685,11 @@ public sealed partial class MainWindow : Window
         _store.SetSetting("check-updates", updateCheck.IsOn ? "true" : "false"); _store.SetSetting("crossfade-seconds", crossfadeSeconds.ToString());
         _store.SetSetting("minimize-to-tray", minimizeToTray.IsOn ? "true" : "false"); ApplyTraySetting();
         _store.SetSetting("ignored-directories", JsonSerializer.Serialize(ignoredPaths));
+        _store.SetSetting("navigation-pane-width", navigationPaneWidth.ToString(CultureInfo.InvariantCulture));
+        _store.SetSetting("browse-pane-width", browsePaneWidth.ToString(CultureInfo.InvariantCulture));
+        NavView.OpenPaneLength = navigationPaneWidth;
+        LibraryView.ColumnDefinitions[0].Width = new GridLength(browsePaneWidth);
+        PlaylistView.ColumnDefinitions[0].Width = new GridLength(browsePaneWidth);
         _store.SetSetting("navigation-order", JsonSerializer.Serialize(NavView.MenuItems.OfType<NavigationViewItem>().Select(item => item.Tag?.ToString())));
         _store.SetSetting("hidden-panels", JsonSerializer.Serialize(NavView.MenuItems.OfType<NavigationViewItem>().Where(item => item.Visibility != Visibility.Visible).Select(item => item.Tag?.ToString())));
         ApplyStoredAppearance();
