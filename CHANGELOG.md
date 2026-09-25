@@ -29,3 +29,4 @@ All notable changes to Bracken Vale are documented here.
 - Remove the selected duplicate playlist entry instead of always removing its first occurrence.
 - Honor the weekly update-check interval when saving Settings while keeping manual checks immediate.
 - Display plain lyrics in Now Playing when timed LRC lines are unavailable.
+- Prevent an early sort-selection event from crashing the window during XAML initialization.

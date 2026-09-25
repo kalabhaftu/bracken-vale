@@ -35,6 +35,7 @@ public sealed partial class MainWindow : Window
     private TrackSort _sort = TrackSort.Title;
     private bool _descending;
     private bool _shuffle;
+    private bool _uiReady;
     private bool _updatingPosition;
     private bool _countedCurrentPlay;
     private long _heardMilliseconds;
@@ -53,6 +54,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _uiReady = true;
         Title = "Bracken Vale";
         if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) SystemBackdrop = new MicaBackdrop();
         var volume = int.TryParse(_store.GetSetting("volume"), out var savedVolume) ? Math.Clamp(savedVolume, 0, 100) : 75;
@@ -227,7 +229,7 @@ public sealed partial class MainWindow : Window
 
     private void SortBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (SortBox.SelectedIndex >= 0 && SortBox.SelectedIndex < 11)
+        if (_uiReady && SortBox.SelectedIndex >= 0 && SortBox.SelectedIndex < 11)
         {
             _sort = SortBox.SelectedIndex switch { 0 => TrackSort.Title, 1 => TrackSort.Artist, 2 => TrackSort.Album, 3 => TrackSort.Genre,
                 4 => TrackSort.Year, 5 => TrackSort.Added, 6 => TrackSort.Duration, 7 => TrackSort.PlayCount,
