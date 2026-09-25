@@ -10,6 +10,7 @@ All notable changes to Bracken Vale are documented here.
 - Compare stable and preview release tags correctly so preview users can see newer previews.
 - Let users resize the navigation and browse panes.
 - Restore A–B repeat marks with the paused playback session.
+- Decode version-4 notification-area callbacks so tray activation restores the app.
 - Stream directory scans for responsive cancellation and skip access-denied paths without aborting the library scan.
 - Register crash logging before app resource initialization to capture more startup failures.
 - Keep A–B repeat stable while paused and prevent automatic crossfades from interrupting the marked passage.

@@ -5,7 +5,8 @@ namespace BrackenVale.App;
 
 internal sealed class TrayIconService : IDisposable
 {
-    private const uint WmSize = 0x0005, WmApp = 0x8000, WmLButtonUp = 0x0202, WmLButtonDoubleClick = 0x0203, WmRButtonUp = 0x0205;
+    private const uint WmSize = 0x0005, WmApp = 0x8000, WmContextMenu = 0x007B, WmLButtonUp = 0x0202, WmLButtonDoubleClick = 0x0203, WmRButtonUp = 0x0205;
+    private const uint NinSelect = 0x0400, NinKeySelect = 0x0401;
     private const uint SizeMinimized = 1, SwHide = 0, SwRestore = 9, ImageIcon = 1, LoadFromFile = 0x10;
     private const uint NimAdd = 0, NimDelete = 2, NimSetVersion = 4, NifMessage = 1, NifIcon = 2, NifTip = 4;
     private const uint CallbackMessage = WmApp + 41;
@@ -52,8 +53,8 @@ internal sealed class TrayIconService : IDisposable
             ShowWindow(window, SwHide);
             return IntPtr.Zero;
         }
-        var notification = unchecked((uint)lParam.ToInt64());
-        if (message == CallbackMessage && (notification == WmLButtonUp || notification == WmLButtonDoubleClick || notification == WmRButtonUp))
+        var notification = unchecked((uint)lParam.ToInt64()) & 0xFFFF;
+        if (message == CallbackMessage && notification is WmContextMenu or WmLButtonUp or WmLButtonDoubleClick or WmRButtonUp or NinSelect or NinKeySelect)
         {
             _restore();
             return IntPtr.Zero;
