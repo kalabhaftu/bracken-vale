@@ -343,6 +343,7 @@ public sealed partial class MainWindow : Window
         if (_repeatA is null) { _repeatA = position; _repeatB = null; _ = ShowNoticeAsync("A–B repeat: mark B at the end of the passage."); }
         else if (_repeatB is null && position > _repeatA) { _repeatB = position; _ = ShowNoticeAsync("A–B repeat is set. Press again to clear."); }
         else { _repeatA = _repeatB = null; _ = ShowNoticeAsync("A–B repeat cleared."); }
+        SaveSession();
     }
 
     private async void PlayNext_Click(object sender, RoutedEventArgs e)
@@ -510,6 +511,8 @@ public sealed partial class MainWindow : Window
     {
         var session = _store.LoadSession(); if (session is null) return;
         _shuffle = session.Shuffle; _repeatMode = session.RepeatMode;
+        if (session.RepeatAMilliseconds is long repeatA && repeatA >= 0 && session.RepeatBMilliseconds is long repeatB && repeatB > repeatA)
+        { _repeatA = TimeSpan.FromMilliseconds(repeatA); _repeatB = TimeSpan.FromMilliseconds(repeatB); }
         RepeatButton.Content = $"Repeat: {_repeatMode}";
         _queue.AddRange(session.Queue.Select(path => _store.GetTrack(path)).Where(track => track is not null).Cast<Track>());
         if (session.TrackPath is { } path && _store.GetTrack(path) is { } current)
@@ -525,7 +528,9 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            _store.SaveSession(new(_playback.CurrentTrack?.Path, Math.Max(0, _playback.Position), _queue.Select(track => track.Path).ToArray(), _shuffle, _repeatMode));
+            _store.SaveSession(new(_playback.CurrentTrack?.Path, Math.Max(0, _playback.Position), _queue.Select(track => track.Path).ToArray(), _shuffle, _repeatMode,
+                _repeatA is { } repeatA ? (long)repeatA.TotalMilliseconds : null,
+                _repeatB is { } repeatB ? (long)repeatB.TotalMilliseconds : null));
             _lastSessionSave = DateTime.UtcNow;
         }
         catch (Exception ex) { LocalAppLog.Shared.Error("session", "Could not save playback state.", ex); }

@@ -37,7 +37,14 @@ public sealed record LyricsDocument(IReadOnlyList<LyricsLine> Lines, TimeSpan Of
 }
 
 public sealed record Playlist(string Id, string Name, IReadOnlyList<string> Paths, DateTime CreatedUtc);
-public sealed record PlaybackSession(string? TrackPath, long PositionMilliseconds, IReadOnlyList<string> Queue, bool Shuffle, string RepeatMode);
+public sealed record PlaybackSession(
+    string? TrackPath,
+    long PositionMilliseconds,
+    IReadOnlyList<string> Queue,
+    bool Shuffle,
+    string RepeatMode,
+    long? RepeatAMilliseconds = null,
+    long? RepeatBMilliseconds = null);
 public sealed record TagEdit(
     string? Title = null,
     string? Artist = null,
