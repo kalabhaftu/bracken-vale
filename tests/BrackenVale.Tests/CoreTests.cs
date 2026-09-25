@@ -102,6 +102,28 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Scanner_logs_and_skips_directories_without_read_permission()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(_root, "restricted"); var denied = Path.Combine(root, "private");
+        Directory.CreateDirectory(denied);
+        await System.IO.File.WriteAllTextAsync(Path.Combine(denied, "private.flac"), "audio");
+        var originalMode = System.IO.File.GetUnixFileMode(denied);
+        var logFolder = Path.Combine(_root, "Logs");
+        try
+        {
+            System.IO.File.SetUnixFileMode(denied, UnixFileMode.None);
+            var found = new List<string>();
+            using var control = new ScanControl();
+            await new LibraryScanner(new LocalAppLog(logFolder)).ScanAsync([root], [], control,
+                (path, _) => { found.Add(path); return ValueTask.CompletedTask; });
+            Assert.Empty(found);
+            Assert.Contains("Could not completely enumerate directory", System.IO.File.ReadAllText(Assert.Single(Directory.GetFiles(logFolder, "bracken-vale-*.log"))));
+        }
+        finally { System.IO.File.SetUnixFileMode(denied, originalMode); }
+    }
+
+    [Fact]
     public async Task Indexer_removes_deleted_tracks_but_preserves_unavailable_roots()
     {
         var root = Path.Combine(_root, "available");

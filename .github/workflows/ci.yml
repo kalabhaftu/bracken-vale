@@ -10,6 +10,19 @@ permissions:
   contents: read
 
 jobs:
+  core-tests-linux:
+    name: Core tests · Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore core tests
+        run: dotnet restore tests/BrackenVale.Tests/BrackenVale.Tests.csproj
+      - name: Test core
+        run: dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj --configuration Release --no-restore
+
   test-and-build:
     name: ${{ matrix.arch }}
     runs-on: windows-2022
