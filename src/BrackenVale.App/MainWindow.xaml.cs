@@ -248,12 +248,12 @@ public sealed partial class MainWindow : Window
 
     private void TrackList_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
-        if (TrackList.SelectedItem is Track track) PlayTrack(track, true);
+        if (TrackList.SelectedItem is Track track) PlayTrack(track, true, TrackList.SelectedIndex);
     }
 
     private void PlaylistTrackList_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
-        if (PlaylistTrackList.SelectedItem is Track track) PlayTrack(track, true);
+        if (PlaylistTrackList.SelectedItem is Track track) PlayTrack(track, true, PlaylistTrackList.SelectedIndex);
     }
 
     private void TrackList_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
@@ -263,7 +263,9 @@ public sealed partial class MainWindow : Window
         if (resetQueue)
         {
             _queue.Clear(); _queue.AddRange(_tracks);
-            _queueIndex = _queue.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
+            _queueIndex = queueIndex is { } selectedIndex && selectedIndex >= 0 && selectedIndex < _queue.Count && SameTrack(_queue[selectedIndex].Path, track.Path)
+                ? selectedIndex
+                : _queue.FindIndex(item => SameTrack(item.Path, track.Path));
             if (_shuffle) QueueNavigation.ShuffleUpcoming(_queue, Math.Clamp(_queueIndex + 1, 0, _queue.Count));
         }
         else if (queueIndex is { } requestedIndex && requestedIndex >= 0 && requestedIndex < _queue.Count) _queueIndex = requestedIndex;
@@ -544,7 +546,12 @@ public sealed partial class MainWindow : Window
         if (session.TrackPath is { } path && _store.GetTrack(path) is { } current)
         {
             if (_queue.Count == 0) _queue.Add(current);
-            _queueIndex = _queue.FindIndex(track => track.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+            var savedIndex = session.QueueIndex;
+            var occurrence = savedIndex >= 0 && savedIndex < session.Queue.Count && SameTrack(session.Queue[savedIndex], path)
+                ? session.Queue.Take(savedIndex + 1).Count(queuedPath => SameTrack(queuedPath, path)) - 1
+                : 0;
+            _queueIndex = Playlists.FindPathOccurrence(_queue.Select(track => track.Path).ToArray(), path, Math.Max(0, occurrence));
+            if (_queueIndex < 0) _queueIndex = _queue.FindIndex(track => SameTrack(track.Path, path));
             _playback.LoadPaused(current, session.PositionMilliseconds); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = session.PositionMilliseconds;
             UpdateCurrentTrack(current); UpdateSystemMediaControls(current, false); SeekSlider.IsEnabled = true; PlayPauseButton.Content = "Play";
         }
@@ -554,9 +561,11 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            var savedQueueIndex = _crossfadeInProgress ? _crossfadeSourceQueueIndex ?? _queueIndex : _queueIndex;
             _store.SaveSession(new(_playback.CurrentTrack?.Path, Math.Max(0, _playback.Position), _queue.Select(track => track.Path).ToArray(), _shuffle, _repeatMode,
                 _repeatA is { } repeatA ? (long)repeatA.TotalMilliseconds : null,
-                _repeatB is { } repeatB ? (long)repeatB.TotalMilliseconds : null));
+                _repeatB is { } repeatB ? (long)repeatB.TotalMilliseconds : null,
+                savedQueueIndex));
             _lastSessionSave = DateTime.UtcNow;
         }
         catch (Exception ex) { LocalAppLog.Shared.Error("session", "Could not save playback state.", ex); }

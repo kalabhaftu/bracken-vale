@@ -44,7 +44,8 @@ public sealed record PlaybackSession(
     bool Shuffle,
     string RepeatMode,
     long? RepeatAMilliseconds = null,
-    long? RepeatBMilliseconds = null);
+    long? RepeatBMilliseconds = null,
+    int QueueIndex = -1);
 public sealed record TagEdit(
     string? Title = null,
     string? Artist = null,

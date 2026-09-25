@@ -150,7 +150,7 @@ public sealed class CoreTests : IDisposable
         _store.SetFavorite(a.Path, true); _store.SetRating(a.Path, 5); _store.RecordPlayed(a.Path, DateTime.UtcNow);
         _store.SetRating(b.Path, 2);
         _store.SetSetting("theme", "Dark");
-        var session = new PlaybackSession(a.Path, 1234, [a.Path, b.Path], true, "Queue", 8000, 14000);
+        var session = new PlaybackSession(a.Path, 1234, [a.Path, b.Path, a.Path], true, "Queue", 8000, 14000, 2);
         _store.SaveSession(session);
 
         Assert.Equal("Dark", _store.GetSetting("theme"));
@@ -165,6 +165,7 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(session.TrackPath, restored.TrackPath); Assert.Equal(session.PositionMilliseconds, restored.PositionMilliseconds);
         Assert.Equal(session.Queue, restored.Queue); Assert.Equal(session.Shuffle, restored.Shuffle); Assert.Equal(session.RepeatMode, restored.RepeatMode);
         Assert.Equal(session.RepeatAMilliseconds, restored.RepeatAMilliseconds); Assert.Equal(session.RepeatBMilliseconds, restored.RepeatBMilliseconds);
+        Assert.Equal(session.QueueIndex, restored.QueueIndex);
         Assert.True(PlayCompletion.HasReachedHalf(TimeSpan.FromSeconds(100), TimeSpan.FromSeconds(50)));
         Assert.False(PlayCompletion.HasReachedHalf(TimeSpan.FromSeconds(100), TimeSpan.FromSeconds(49)));
         Assert.False(PlayCompletion.HasReachedHalf(TimeSpan.Zero, TimeSpan.FromSeconds(4)));
