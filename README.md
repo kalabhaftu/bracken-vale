@@ -7,8 +7,10 @@ Bracken Vale is a native Windows music library and player built with WinUI 3, C#
 ## Current capabilities
 
 - Searchable SQLite library with album, artist, genre and folder groups; sort modes; favorites, five-star ratings, most/recently played views; and local M3U8 playlists.
+- Reorderable and hideable library navigation, with adjustable navigation and browse pane widths.
 - Background scan of fixed drives, folder selection, ignored paths, pause/cancel, and skipping system or linked directories.
 - Playback through bundled LibVLC; an editable queue, shuffle, repeat, A–B repeat, crossfade, volume, EQ presets and saved 10-band EQ settings.
+- Paused-session restore for the track, position, queue, shuffle, repeat mode and A–B marks.
 - Local tag editing with preview, explicit save, backup and restore; standard and format-specific text fields, embedded/sidecar LRC lyrics and optional user-triggered LRCLIB search.
 - System/light/dark themes, artwork or manual accent color, Windows media controls, optional tray behavior, and weekly GitHub release checks that never install updates.
 
@@ -16,7 +18,7 @@ The supported audio formats depend on the bundled LibVLC modules and the file co
 
 ## Get a Windows build
 
-Open the repository's **Actions** tab and download `bracken-vale-win-x64-portable` or `bracken-vale-win-arm64-portable` from a successful run. Extract the ZIP and start `BrackenVale.exe`. These self-contained builds do not need a separate .NET or codec installation; they are unsigned previews and Windows may show a security warning. Signed setup installers and MSIX releases require signing credentials and Windows hardware validation.
+Download the latest x64 or ARM64 portable ZIP from [GitHub Releases](https://github.com/kalabhaftu/bracken-vale/releases). Extract it and start `BrackenVale.exe`. These self-contained builds do not need a separate .NET or codec installation; they are unsigned previews and Windows may show a security warning. Signed setup installers and MSIX releases require signing credentials and Windows hardware validation.
 
 ## Build from the command line
 
