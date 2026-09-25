@@ -6,6 +6,7 @@ All notable changes to Bracken Vale are documented here.
 
 ## [0.1.0-preview.1]
 
+- Serialize simultaneous tag edits per file and give staged files and backups unique names.
 - Register crash logging before app resource initialization to capture more startup failures.
 - Keep A–B repeat stable while paused and prevent automatic crossfades from interrupting the marked passage.
 - Save completed tracks from the current database batch when a library scan is cancelled.

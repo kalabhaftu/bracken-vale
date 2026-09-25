@@ -262,6 +262,24 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_tag_saves_are_serialized_with_unique_backups_and_staging_files()
+    {
+        var path = Path.Combine(_root, "parallel.wav");
+        WriteWave(path);
+        var editor = new TagEditor(Path.Combine(_root, "backups"));
+        var saves = Enumerable.Range(0, 6)
+            .Select(index => Task.Run(() => editor.Save(path, new TagEdit(Title: $"Concurrent edit {index}"))))
+            .ToArray();
+
+        var backups = await Task.WhenAll(saves);
+        Assert.Equal(saves.Length, backups.Select(backup => backup.BackupPath).Distinct(StringComparer.Ordinal).Count());
+        Assert.All(backups, backup => Assert.True(System.IO.File.Exists(backup.BackupPath)));
+        using var media = TagLib.File.Create(path);
+        Assert.StartsWith("Concurrent edit ", media.Tag.Title);
+        Assert.Empty(Directory.GetFiles(_root, ".parallel.bracken-stage-*.wav"));
+    }
+
+    [Fact]
     public void Tag_editor_round_trips_and_removes_id3v2_custom_fields()
     {
         var path = Path.Combine(_root, "custom.wav");
