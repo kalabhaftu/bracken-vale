@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Globalization;
 using TagLib;
 
 namespace BrackenVale.Core;
@@ -10,10 +11,41 @@ public sealed class TagEditor(string backupDirectory)
     {
         "TITLE", "ARTIST", "ALBUM", "ALBUMARTIST", "ALBUM ARTIST", "GENRE", "DATE", "YEAR", "TRACK", "TRACKNUMBER", "LYRICS",
         "COVERART", "METADATA_BLOCK_PICTURE", "WM/Title", "WM/Author", "WM/AlbumTitle", "WM/AlbumArtist", "WM/Genre", "WM/Year",
-        "WM/TrackNumber", "WM/Lyrics", "WM/Picture", "Album Artist", "Track"
+        "WM/TrackNumber", "WM/Lyrics", "WM/Picture", "Album Artist", "Track",
+        "TITLE_SORT", "TITLESORT", "SORTNAME", "SUBTITLE", "DESCRIPTION", "ARTIST_SORT", "ARTISTSORT", "SORTARTIST", "ARTIST_ROLE",
+        "PERFORMER_ROLE", "ALBUM_ARTIST_SORT", "ALBUMARTISTSORT", "COMPOSER", "COMPOSERS", "COMPOSER_SORT", "ALBUM_SORT", "SORTALBUM",
+        "COMMENT", "TRACKCOUNT", "TRACKTOTAL", "TOTALTRACKS", "DISC", "DISCNUMBER", "DISCCOUNT", "DISCTOTAL", "TOTALDISCS", "GROUPING",
+        "CONTENTGROUP", "BPM", "BEATSPERMINUTE", "CONDUCTOR", "COPYRIGHT", "DATE_TAGGED", "MUSICBRAINZ_ARTIST_ID", "MUSICBRAINZ_RELEASE_GROUP_ID",
+        "MUSICBRAINZ_RELEASE_ID", "MUSICBRAINZ_RELEASE_ARTIST_ID", "MUSICBRAINZ_TRACK_ID", "MUSICBRAINZ_DISC_ID", "MUSICIP_ID", "AMAZON_ID",
+        "MUSICBRAINZ_RELEASE_STATUS", "MUSICBRAINZ_RELEASE_TYPE", "MUSICBRAINZ_RELEASE_COUNTRY", "REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK",
+        "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK", "INITIAL_KEY", "REMIXED_BY", "PUBLISHER", "ISRC",
+        "WM/TitleSort", "WM/SubTitle", "WM/Description", "WM/ArtistSort", "WM/AlbumArtistSort", "WM/Composers", "WM/ComposerSort",
+        "WM/AlbumSort", "WM/Comment", "WM/TrackCount", "WM/PartOfSet", "WM/BeatsPerMinute", "WM/Conductor", "WM/Copyright", "WM/Publisher",
+        "WM/ISRC", "WM/InitialKey", "WM/ModifiedBy", "MusicBrainz/Artist Id", "MusicBrainz/Release Group Id", "MusicBrainz/Album Id",
+        "MusicBrainz/Album Artist Id", "MusicBrainz/Track Id", "MusicBrainz/Disc Id", "MusicBrainz/Album Status", "MusicBrainz/Album Type",
+        "MusicBrainz/Album Release Country", "MusicBrainz Artist Id", "MusicBrainz Release Group Id", "MusicBrainz Album Id", "MusicBrainz Album Artist Id",
+        "MusicBrainz Track Id", "MusicBrainz Disc Id", "MusicBrainz Album Status", "MusicBrainz Album Type", "MusicBrainz Album Release Country"
     };
     private static readonly HashSet<string> CommonId3Frames = new(StringComparer.OrdinalIgnoreCase)
-        { "TIT2", "TPE1", "TALB", "TPE2", "TCON", "TYER", "TDRC", "TRCK" };
+        { "TIT2", "TPE1", "TALB", "TPE2", "TCON", "TYER", "TDRC", "TRCK", "TSOT", "TIT3", "TIT1", "TSOP", "TMCL", "TIPL", "TCOM", "TSOC", "TSO2", "TSOA", "TPOS", "TBPM", "TPE3", "TCOP", "TKEY", "TPE4", "TPUB", "TSRC" };
+
+    public static IReadOnlyList<(string Key, string Label)> AdditionalStandardFields { get; } =
+    [
+        ("TITLE_SORT", "Title sort"), ("SUBTITLE", "Subtitle"), ("DESCRIPTION", "Description"),
+        ("ARTIST_SORT", "Artist sort"), ("ARTIST_ROLE", "Artist role / instruments"), ("ALBUM_ARTIST_SORT", "Album artist sort"),
+        ("COMPOSERS", "Composers"), ("COMPOSER_SORT", "Composer sort"), ("ALBUM_SORT", "Album sort"),
+        ("COMMENT", "Comment"), ("TRACK_COUNT", "Track count"), ("DISC", "Disc number"), ("DISC_COUNT", "Disc count"),
+        ("GROUPING", "Grouping"), ("BPM", "Beats per minute"), ("CONDUCTOR", "Conductor"), ("COPYRIGHT", "Copyright"),
+        ("MUSICBRAINZ_ARTIST_ID", "MusicBrainz artist ID"), ("MUSICBRAINZ_RELEASE_GROUP_ID", "MusicBrainz release group ID"),
+        ("MUSICBRAINZ_RELEASE_ID", "MusicBrainz release ID"), ("MUSICBRAINZ_RELEASE_ARTIST_ID", "MusicBrainz release artist ID"),
+        ("MUSICBRAINZ_TRACK_ID", "MusicBrainz track ID"), ("MUSICBRAINZ_DISC_ID", "MusicBrainz disc ID"),
+        ("MUSICIP_ID", "MusicIP ID"), ("AMAZON_ID", "Amazon ID"), ("MUSICBRAINZ_RELEASE_STATUS", "Release status"),
+        ("MUSICBRAINZ_RELEASE_TYPE", "Release type"), ("MUSICBRAINZ_RELEASE_COUNTRY", "Release country"),
+        ("DATE_TAGGED", "Date tagged (ISO 8601)"),
+        ("REPLAYGAIN_TRACK_GAIN", "ReplayGain track gain (dB)"), ("REPLAYGAIN_TRACK_PEAK", "ReplayGain track peak"),
+        ("REPLAYGAIN_ALBUM_GAIN", "ReplayGain album gain (dB)"), ("REPLAYGAIN_ALBUM_PEAK", "ReplayGain album peak"),
+        ("INITIAL_KEY", "Initial key"), ("REMIXED_BY", "Remixed by"), ("PUBLISHER", "Publisher"), ("ISRC", "ISRC")
+    ];
 
     public static string? CustomFieldFormat(string path) => FormatFor(path) switch
     {
@@ -28,6 +60,12 @@ public sealed class TagEditor(string backupDirectory)
     {
         using var media = TagLib.File.Create(path);
         return ReadCustomFields(media, path);
+    }
+
+    public static IReadOnlyDictionary<string, string> ReadAdditionalStandardFields(string path)
+    {
+        using var media = TagLib.File.Create(path);
+        return AdditionalStandardFields.ToDictionary(field => field.Key, field => ReadAdditionalField(media.Tag, field.Key), StringComparer.OrdinalIgnoreCase);
     }
 
     public TagBackup Save(string path, TagEdit edit)
@@ -54,6 +92,7 @@ public sealed class TagEditor(string backupDirectory)
                 if (edit.TrackNumber.HasValue) tag.Track = edit.TrackNumber.Value;
                 if (edit.Lyrics is not null) tag.Lyrics = edit.Lyrics;
                 if (edit.ArtworkPath is not null) tag.Pictures = [new Picture(edit.ArtworkPath)];
+                ApplyAdditionalFields(tag, edit.AdditionalFields);
                 ApplyCustomFields(media, path, edit.CustomFields);
                 media.Save();
             }
@@ -78,6 +117,81 @@ public sealed class TagEditor(string backupDirectory)
     }
 
     private static string[] Split(string value) => value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string ReadAdditionalField(TagLib.Tag tag, string key) => key switch
+    {
+        "TITLE_SORT" => tag.TitleSort ?? "", "SUBTITLE" => tag.Subtitle ?? "", "DESCRIPTION" => tag.Description ?? "",
+        "ARTIST_SORT" => string.Join("; ", tag.PerformersSort), "ARTIST_ROLE" => string.Join("; ", tag.PerformersRole),
+        "ALBUM_ARTIST_SORT" => string.Join("; ", tag.AlbumArtistsSort), "COMPOSERS" => string.Join("; ", tag.Composers),
+        "COMPOSER_SORT" => string.Join("; ", tag.ComposersSort), "ALBUM_SORT" => tag.AlbumSort ?? "", "COMMENT" => tag.Comment ?? "",
+        "TRACK_COUNT" => Number(tag.TrackCount), "DISC" => Number(tag.Disc), "DISC_COUNT" => Number(tag.DiscCount),
+        "GROUPING" => tag.Grouping ?? "", "BPM" => Number(tag.BeatsPerMinute), "CONDUCTOR" => tag.Conductor ?? "", "COPYRIGHT" => tag.Copyright ?? "",
+        "MUSICBRAINZ_ARTIST_ID" => tag.MusicBrainzArtistId ?? "", "MUSICBRAINZ_RELEASE_GROUP_ID" => tag.MusicBrainzReleaseGroupId ?? "",
+        "MUSICBRAINZ_RELEASE_ID" => tag.MusicBrainzReleaseId ?? "", "MUSICBRAINZ_RELEASE_ARTIST_ID" => tag.MusicBrainzReleaseArtistId ?? "",
+        "MUSICBRAINZ_TRACK_ID" => tag.MusicBrainzTrackId ?? "", "MUSICBRAINZ_DISC_ID" => tag.MusicBrainzDiscId ?? "",
+        "MUSICIP_ID" => tag.MusicIpId ?? "", "AMAZON_ID" => tag.AmazonId ?? "", "MUSICBRAINZ_RELEASE_STATUS" => tag.MusicBrainzReleaseStatus ?? "",
+        "MUSICBRAINZ_RELEASE_TYPE" => tag.MusicBrainzReleaseType ?? "", "MUSICBRAINZ_RELEASE_COUNTRY" => tag.MusicBrainzReleaseCountry ?? "",
+        "DATE_TAGGED" => tag.DateTagged?.ToString("O", CultureInfo.InvariantCulture) ?? "",
+        "REPLAYGAIN_TRACK_GAIN" => Number(tag.ReplayGainTrackGain), "REPLAYGAIN_TRACK_PEAK" => Number(tag.ReplayGainTrackPeak),
+        "REPLAYGAIN_ALBUM_GAIN" => Number(tag.ReplayGainAlbumGain), "REPLAYGAIN_ALBUM_PEAK" => Number(tag.ReplayGainAlbumPeak),
+        "INITIAL_KEY" => tag.InitialKey ?? "", "REMIXED_BY" => tag.RemixedBy ?? "", "PUBLISHER" => tag.Publisher ?? "", "ISRC" => tag.ISRC ?? "",
+        _ => throw new ArgumentException($"Unknown standard tag field '{key}'.")
+    };
+
+    private static void ApplyAdditionalFields(TagLib.Tag tag, IReadOnlyDictionary<string, string>? fields)
+    {
+        if (fields is null) return;
+        foreach (var (rawKey, value) in fields)
+        {
+            var key = rawKey.Trim().ToUpperInvariant();
+            if (!AdditionalStandardFields.Any(field => field.Key == key)) throw new ArgumentException($"Unknown standard tag field '{rawKey}'.");
+            switch (key)
+            {
+                case "TITLE_SORT": tag.TitleSort = value; break;
+                case "SUBTITLE": tag.Subtitle = value; break;
+                case "DESCRIPTION": tag.Description = value; break;
+                case "ARTIST_SORT": tag.PerformersSort = Split(value); break;
+                case "ARTIST_ROLE": tag.PerformersRole = Split(value); break;
+                case "ALBUM_ARTIST_SORT": tag.AlbumArtistsSort = Split(value); break;
+                case "COMPOSERS": tag.Composers = Split(value); break;
+                case "COMPOSER_SORT": tag.ComposersSort = Split(value); break;
+                case "ALBUM_SORT": tag.AlbumSort = value; break;
+                case "COMMENT": tag.Comment = value; break;
+                case "TRACK_COUNT": tag.TrackCount = ParseUInt(value, rawKey); break;
+                case "DISC": tag.Disc = ParseUInt(value, rawKey); break;
+                case "DISC_COUNT": tag.DiscCount = ParseUInt(value, rawKey); break;
+                case "GROUPING": tag.Grouping = value; break;
+                case "BPM": tag.BeatsPerMinute = ParseUInt(value, rawKey); break;
+                case "CONDUCTOR": tag.Conductor = value; break;
+                case "COPYRIGHT": tag.Copyright = value; break;
+                case "MUSICBRAINZ_ARTIST_ID": tag.MusicBrainzArtistId = value; break;
+                case "MUSICBRAINZ_RELEASE_GROUP_ID": tag.MusicBrainzReleaseGroupId = value; break;
+                case "MUSICBRAINZ_RELEASE_ID": tag.MusicBrainzReleaseId = value; break;
+                case "MUSICBRAINZ_RELEASE_ARTIST_ID": tag.MusicBrainzReleaseArtistId = value; break;
+                case "MUSICBRAINZ_TRACK_ID": tag.MusicBrainzTrackId = value; break;
+                case "MUSICBRAINZ_DISC_ID": tag.MusicBrainzDiscId = value; break;
+                case "MUSICIP_ID": tag.MusicIpId = value; break;
+                case "AMAZON_ID": tag.AmazonId = value; break;
+                case "MUSICBRAINZ_RELEASE_STATUS": tag.MusicBrainzReleaseStatus = value; break;
+                case "MUSICBRAINZ_RELEASE_TYPE": tag.MusicBrainzReleaseType = value; break;
+                case "MUSICBRAINZ_RELEASE_COUNTRY": tag.MusicBrainzReleaseCountry = value; break;
+                case "DATE_TAGGED": tag.DateTagged = string.IsNullOrWhiteSpace(value) ? null : DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var tagged) ? tagged : throw new ArgumentException("'Date tagged' must use an ISO 8601 date and time."); break;
+                case "REPLAYGAIN_TRACK_GAIN": tag.ReplayGainTrackGain = ParseDouble(value, rawKey); break;
+                case "REPLAYGAIN_TRACK_PEAK": tag.ReplayGainTrackPeak = ParseDouble(value, rawKey); break;
+                case "REPLAYGAIN_ALBUM_GAIN": tag.ReplayGainAlbumGain = ParseDouble(value, rawKey); break;
+                case "REPLAYGAIN_ALBUM_PEAK": tag.ReplayGainAlbumPeak = ParseDouble(value, rawKey); break;
+                case "INITIAL_KEY": tag.InitialKey = value; break;
+                case "REMIXED_BY": tag.RemixedBy = value; break;
+                case "PUBLISHER": tag.Publisher = value; break;
+                case "ISRC": tag.ISRC = value; break;
+            }
+        }
+    }
+
+    private static string Number(uint value) => value == 0 ? "" : value.ToString(CultureInfo.InvariantCulture);
+    private static string Number(double value) => double.IsNaN(value) ? "" : value.ToString("R", CultureInfo.InvariantCulture);
+    private static uint ParseUInt(string value, string field) => string.IsNullOrWhiteSpace(value) ? 0 : uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : throw new ArgumentException($"'{field}' must be a whole number.");
+    private static double ParseDouble(string value, string field) => string.IsNullOrWhiteSpace(value) ? double.NaN : double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) && double.IsFinite(parsed) ? parsed : throw new ArgumentException($"'{field}' must be a finite number.");
 
     private static void ApplyCustomFields(TagLib.File media, string path, IReadOnlyDictionary<string, string>? fields)
     {

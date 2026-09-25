@@ -217,7 +217,7 @@ public sealed class CoreTests : IDisposable
         var path = Path.Combine(_root, "custom.wav");
         WriteWave(path);
         var editor = new TagEditor(Path.Combine(_root, "backups"));
-        var initial = new Dictionary<string, string> { ["MOOD"] = "warm", ["SOURCE"] = "vinyl", ["ID3:TCOM"] = "Ludwig" };
+        var initial = new Dictionary<string, string> { ["MOOD"] = "warm", ["SOURCE"] = "vinyl", ["ID3:TLAN"] = "eng" };
 
         editor.Save(path, new TagEdit(CustomFields: initial));
         Assert.Equal("ID3v2 text frames and user text", TagEditor.CustomFieldFormat(path));
@@ -226,6 +226,28 @@ public sealed class CoreTests : IDisposable
         var updated = new Dictionary<string, string> { ["MOOD"] = "quiet", ["ID3:TCOM"] = "Ludwig" };
         editor.Save(path, new TagEdit(CustomFields: updated));
         Assert.Equal(updated, TagEditor.ReadCustomFields(path));
+    }
+
+    [Fact]
+    public void Tag_editor_round_trips_additional_standard_fields_and_keeps_original_on_invalid_values()
+    {
+        var path = Path.Combine(_root, "extended.wav");
+        WriteWave(path);
+        var editor = new TagEditor(Path.Combine(_root, "backups"));
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["COMPOSERS"] = "Ludwig; Wolfgang", ["COMMENT"] = "Studio master", ["TRACK_COUNT"] = "12",
+            ["DISC"] = "2", ["DISC_COUNT"] = "3", ["BPM"] = "120", ["GROUPING"] = "Suite",
+            ["PUBLISHER"] = "Label", ["INITIAL_KEY"] = "C minor", ["ISRC"] = "USAAA2400001",
+            ["MUSICBRAINZ_TRACK_ID"] = "recording-id", ["REPLAYGAIN_TRACK_GAIN"] = "-6.25"
+        };
+        editor.Save(path, new TagEdit(AdditionalFields: fields));
+        var actual = TagEditor.ReadAdditionalStandardFields(path);
+        foreach (var (key, value) in fields) Assert.Equal(value, actual[key]);
+
+        var original = System.IO.File.ReadAllBytes(path);
+        Assert.Throws<ArgumentException>(() => editor.Save(path, new TagEdit(AdditionalFields: new Dictionary<string, string> { ["BPM"] = "fast" })));
+        Assert.Equal(original, System.IO.File.ReadAllBytes(path));
     }
 
     [Fact]

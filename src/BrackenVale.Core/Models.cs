@@ -48,6 +48,7 @@ public sealed record TagEdit(
     uint? TrackNumber = null,
     string? Lyrics = null,
     string? ArtworkPath = null,
-    IReadOnlyDictionary<string, string>? CustomFields = null);
+    IReadOnlyDictionary<string, string>? CustomFields = null,
+    IReadOnlyDictionary<string, string>? AdditionalFields = null);
 
 public sealed record TagBackup(string OriginalPath, string BackupPath, DateTime CreatedUtc);

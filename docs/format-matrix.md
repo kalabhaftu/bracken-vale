@@ -10,6 +10,6 @@ The playback backend is bundled LibVLC. The list below records formats the scann
 | WMA, APE, WV, TTA, MPC | Yes | Pending Windows validation |
 | AIFF/AIF, DSF, DFF | Yes | Pending Windows validation |
 
-TagLib# writes common title, artist, album, album artist, genre, year, track number, lyrics and cover art fields when supported by the container. The editor exposes custom Xiph/Vorbis comments, ID3v2 text frames and user text, ASF descriptors, and APEv2 text items; custom fields are unavailable for MP4/M4A/M4B. ID3v2 frame IDs use `ID3:XXXX` notation. Format-specific tag preservation and artwork compatibility still require per-format validation before stable release.
+TagLib# exposes the common title, artist, album, genre, track/disc numbering, composers, comments, sorting fields, grouping, BPM, conductor, copyright, publisher, ISRC, MusicBrainz IDs, ReplayGain, lyrics and artwork properties where the container supports them. The editor also exposes custom Xiph/Vorbis comments, ID3v2 text frames and user text, ASF text descriptors, and APEv2 text items; custom fields are unavailable for MP4/M4A/M4B. ID3v2 frame IDs use `ID3:XXXX` notation. TagLib# may ignore a standard property unsupported by a particular container. Format-specific tag preservation and artwork compatibility still require per-format validation before stable release.
 
 Playback support depends on the bundled LGPL package and its modules. Codec patent rules vary by country; users and distributors are responsible for checking local requirements. No GPL-only LibVLC package is used.

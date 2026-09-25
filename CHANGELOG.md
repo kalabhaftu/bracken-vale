@@ -4,6 +4,8 @@ All notable changes to Bracken Vale are documented here.
 
 ## [Unreleased]
 
+- Expose additional standard metadata fields and show them in track details.
+
 ## [0.1.0-preview.1]
 
 - Add the initial native Windows music player, local library, playback, playlist, metadata and lyrics features.
