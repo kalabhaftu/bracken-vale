@@ -441,9 +441,10 @@ public sealed partial class MainWindow : Window
     {
         PlayerTitle.Text = track.Title; PlayerArtist.Text = track.Artist;
         NowPlayingTitle.Text = track.Title; NowPlayingArtist.Text = track.Artist;
-        _currentLyrics = LyricsFiles.Load(track.Path);
-        NowPlayingLyrics.Text = _currentLyrics.Lines.Count == 0 ? "No synced lyrics. Open lyrics to add or search."
-            : _currentLyrics.At(TimeSpan.FromMilliseconds(_playback.Position));
+        var rawLyrics = LyricsFiles.ReadRaw(track.Path);
+        _currentLyrics = Lyrics.Parse(rawLyrics);
+        var currentLyrics = Lyrics.DisplayAt(_currentLyrics, rawLyrics, TimeSpan.FromMilliseconds(_playback.Position));
+        NowPlayingLyrics.Text = currentLyrics.Length == 0 && _currentLyrics.Lines.Count == 0 ? "No lyrics. Open lyrics to add or search." : currentLyrics;
         SetArtwork(NowPlayingArtwork, track.ArtworkPath);
         if (_store.GetSetting("accent-mode") == "Artwork" && _store.GetSetting("accent-manual") != "true") _ = ApplyArtworkAccentAsync(track.ArtworkPath);
     }
@@ -1049,7 +1050,9 @@ public sealed partial class MainWindow : Window
                 backup = new TagEditor(Path.Combine(_appData, "TagBackups")).Save(track.Path, new TagEdit(Lyrics: lyricsText));
             }
             lyricsWritten = true;
-            _currentLyrics = Lyrics.Parse(lyricsText); NowPlayingLyrics.Text = _currentLyrics.Lines.FirstOrDefault()?.Text ?? "Lyrics saved.";
+            _currentLyrics = Lyrics.Parse(lyricsText);
+            var currentLyrics = Lyrics.DisplayAt(_currentLyrics, lyricsText, TimeSpan.FromMilliseconds(_playback.Position));
+            NowPlayingLyrics.Text = currentLyrics.Length == 0 && _currentLyrics.Lines.Count == 0 ? "Lyrics saved." : currentLyrics;
             if (backup is not null)
             {
                 _store.RecordTagBackup(backup); _store.UpsertTrack(TrackReader.Read(track.Path, Path.Combine(_appData, "Artwork")));

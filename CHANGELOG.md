@@ -28,3 +28,4 @@ All notable changes to Bracken Vale are documented here.
 - Show app feedback in dismissible banners so playback errors cannot collide with open dialogs.
 - Remove the selected duplicate playlist entry instead of always removing its first occurrence.
 - Honor the weekly update-check interval when saving Settings while keeping manual checks immediate.
+- Display plain lyrics in Now Playing when timed LRC lines are unavailable.

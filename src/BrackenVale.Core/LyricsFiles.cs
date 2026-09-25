@@ -16,9 +16,6 @@ public static class LyricsFiles
 {
     public static string SidecarPath(string trackPath) => Path.ChangeExtension(trackPath, ".lrc");
 
-    public static LyricsDocument Load(string trackPath)
-        => Lyrics.Parse(ReadRaw(trackPath));
-
     public static string ReadRaw(string trackPath)
     {
         var sidecar = SidecarPath(trackPath);

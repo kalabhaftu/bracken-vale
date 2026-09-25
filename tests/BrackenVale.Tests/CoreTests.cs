@@ -185,6 +185,9 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(string.Empty, document.At(TimeSpan.Zero));
         Assert.Equal("First", document.At(TimeSpan.FromMilliseconds(1500)));
         Assert.Equal("Second", document.At(TimeSpan.FromSeconds(5)));
+        const string plainLyrics = "First plain line\nSecond plain line\n";
+        Assert.Equal(plainLyrics, Lyrics.DisplayAt(Lyrics.Parse(plainLyrics), plainLyrics, TimeSpan.Zero));
+        Assert.Equal("First", Lyrics.DisplayAt(document, plainLyrics, TimeSpan.FromMilliseconds(1500)));
         var reparsed = Lyrics.Parse(Lyrics.Format(document));
         Assert.Equal(document.Lines, reparsed.Lines);
         Assert.Equal(document.Offset, reparsed.Offset);

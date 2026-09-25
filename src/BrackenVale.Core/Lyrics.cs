@@ -11,6 +11,9 @@ public static partial class Lyrics
     [GeneratedRegex(@"^\[offset:([+-]?\d+)\]$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex OffsetLine();
 
+    public static string DisplayAt(LyricsDocument document, string plainText, TimeSpan position)
+        => document.Lines.Count == 0 ? plainText : document.At(position);
+
     public static LyricsDocument Parse(string text)
     {
         var lines = new List<LyricsLine>();
