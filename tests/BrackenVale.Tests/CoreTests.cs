@@ -118,7 +118,9 @@ public sealed class CoreTests : IDisposable
             await new LibraryScanner(new LocalAppLog(logFolder)).ScanAsync([root], [], control,
                 (path, _) => { found.Add(path); return ValueTask.CompletedTask; });
             Assert.Empty(found);
-            Assert.Contains("Could not completely enumerate directory", System.IO.File.ReadAllText(Assert.Single(Directory.GetFiles(logFolder, "bracken-vale-*.log"))));
+            var log = System.IO.File.ReadAllText(Assert.Single(Directory.GetFiles(logFolder, "bracken-vale-*.log")));
+            Assert.Contains("[WARN] [scanner]", log);
+            Assert.Contains("private", log);
         }
         finally { System.IO.File.SetUnixFileMode(denied, originalMode); }
     }
