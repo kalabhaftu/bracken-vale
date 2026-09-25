@@ -656,7 +656,7 @@ public sealed partial class MainWindow : Window
         else ResetAccent();
         RefreshLibrary();
         SelectVisibleLibraryNavigation();
-        if (_store.GetSetting("check-updates") == "true") _ = CheckForUpdatesAsync(true);
+        if (_store.GetSetting("check-updates") == "true") _ = CheckForUpdatesAsync(false);
     }
 
     private void SelectVisibleLibraryNavigation()
