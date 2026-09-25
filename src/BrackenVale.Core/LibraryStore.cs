@@ -12,10 +12,12 @@ public sealed class LibraryStore
     private const int SchemaVersion = 1;
     private readonly string _databasePath;
     private readonly string _connectionString;
+    private readonly LocalAppLog _log;
 
-    public LibraryStore(string databasePath)
+    public LibraryStore(string databasePath, LocalAppLog? log = null)
     {
         _databasePath = Path.GetFullPath(databasePath);
+        _log = log ?? LocalAppLog.Shared;
         Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
         _connectionString = new SqliteConnectionStringBuilder { DataSource = _databasePath, Mode = SqliteOpenMode.ReadWriteCreate, Cache = SqliteCacheMode.Shared, DefaultTimeout = 10 }.ToString();
         Migrate();
@@ -212,7 +214,13 @@ public sealed class LibraryStore
         using var connection = Open();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT payload FROM playback_session WHERE id=1";
-        return command.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<PlaybackSession>(payload) : null;
+        if (command.ExecuteScalar() is not string payload) return null;
+        try { return JsonSerializer.Deserialize<PlaybackSession>(payload); }
+        catch (JsonException ex)
+        {
+            _log.Warning("session", "Saved playback session was invalid and could not be restored.", ex);
+            return null;
+        }
     }
 
     public void RecordTagBackup(TagBackup backup)

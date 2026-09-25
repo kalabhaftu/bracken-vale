@@ -205,7 +205,7 @@ public sealed class TagEditor(string backupDirectory)
             if (key.Length == 0 || key.Contains('=') || key.Contains('\n') || key.Contains('\r')) throw new ArgumentException("Custom tag names cannot be empty or contain '=', or line breaks.");
             if (format == CustomFormat.Xiph && key.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '_'))
                 throw new ArgumentException("Xiph field names can contain only ASCII letters, digits, and underscores.");
-            if (CommonFields.Contains(key)) throw new ArgumentException($"'{key}' is already edited in a standard tag field.");
+            if (format != CustomFormat.Id3v2 && CommonFields.Contains(key)) throw new ArgumentException($"'{key}' is already edited in a standard tag field.");
             desired[key] = value;
         }
 

@@ -6,6 +6,7 @@ All notable changes to Bracken Vale are documented here.
 
 - Expose additional standard metadata fields and show them in track details.
 - Preserve the current track while shuffling the upcoming queue, and honor repeat modes during timed crossfades.
+- Skip and log a corrupt saved playback session so it cannot block app startup.
 
 ## [0.1.0-preview.1]
 

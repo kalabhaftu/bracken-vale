@@ -13,7 +13,7 @@ public sealed class CoreTests : IDisposable
     public CoreTests()
     {
         Directory.CreateDirectory(_root);
-        _store = new(Path.Combine(_root, "library.db"));
+        _store = new(Path.Combine(_root, "library.db"), new LocalAppLog(Path.Combine(_root, "Logs")));
     }
 
     [Fact]
@@ -133,6 +133,24 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void Corrupt_saved_session_is_logged_and_does_not_block_library_startup()
+    {
+        _store.SaveSession(new PlaybackSession(null, 0, [], false, "Off"));
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(_root, "library.db") }.ToString()))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE playback_session SET payload=$payload WHERE id=1";
+            command.Parameters.AddWithValue("$payload", "{invalid-json");
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Null(_store.LoadSession());
+        var log = Assert.Single(Directory.GetFiles(Path.Combine(_root, "Logs"), "bracken-vale-*.log"));
+        Assert.Contains("Saved playback session was invalid", System.IO.File.ReadAllText(log));
+    }
+
+    [Fact]
     public void Album_artist_genre_and_folder_groups_filter_tracks()
     {
         var rock = MakeTrack("song", "June", Path.Combine(_root, "library", "Rock", "song.flac"));
@@ -190,7 +208,7 @@ public sealed class CoreTests : IDisposable
         var queue = new[] { "heard", "playing", "one", "two", "three" };
         QueueNavigation.ShuffleUpcoming(queue, 2);
         Assert.Equal(["heard", "playing"], queue[..2]);
-        Assert.Equal(new[] { "one", "two", "three" }, queue[2..].OrderBy(value => value, StringComparer.Ordinal));
+        Assert.Equal(new[] { "one", "three", "two" }, queue[2..].OrderBy(value => value, StringComparer.Ordinal).ToArray());
         Assert.Throws<ArgumentOutOfRangeException>(() => QueueNavigation.ShuffleUpcoming(queue, queue.Length + 1));
     }
 
@@ -235,13 +253,13 @@ public sealed class CoreTests : IDisposable
         var path = Path.Combine(_root, "custom.wav");
         WriteWave(path);
         var editor = new TagEditor(Path.Combine(_root, "backups"));
-        var initial = new Dictionary<string, string> { ["MOOD"] = "warm", ["SOURCE"] = "vinyl", ["ID3:TLAN"] = "eng" };
+        var initial = new Dictionary<string, string> { ["MOOD"] = "warm", ["SOURCE"] = "vinyl", ["COMMENT"] = "Custom user text", ["ID3:TLAN"] = "eng" };
 
         editor.Save(path, new TagEdit(CustomFields: initial));
         Assert.Equal("ID3v2 text frames and user text", TagEditor.CustomFieldFormat(path));
         Assert.Equal(initial, TagEditor.ReadCustomFields(path));
 
-        var updated = new Dictionary<string, string> { ["MOOD"] = "quiet", ["ID3:TLAN"] = "fra" };
+        var updated = new Dictionary<string, string> { ["MOOD"] = "quiet", ["COMMENT"] = "Custom user text", ["ID3:TLAN"] = "fra" };
         editor.Save(path, new TagEdit(CustomFields: updated));
         Assert.Equal(updated, TagEditor.ReadCustomFields(path));
     }
