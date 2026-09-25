@@ -425,7 +425,7 @@ public sealed partial class MainWindow : Window
         _crossfadeInProgress = false;
         _crossfadeFailureSource = _playback.CurrentTrack?.Path;
         _queueIndex = _queue.FindIndex(item => SameTrack(item.Path, _playback.CurrentTrack?.Path));
-        _ = ShowNoticeAsync($"Could not start {track.Title} during crossfade. Playback will continue; see the local log for details.");
+        _ = ShowNoticeAsync($"Could not start {track.Title} during crossfade. Playback will continue; see the local log for details.", InfoBarSeverity.Error);
     });
 
     private void Playback_Failed(Track track) => DispatcherQueue.TryEnqueue(() =>
@@ -434,7 +434,7 @@ public sealed partial class MainWindow : Window
         _crossfadeInProgress = false;
         PlayPauseButton.Content = "Play";
         if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped;
-        _ = ShowNoticeAsync($"Could not play {track.Title}. See Settings → Open log folder for details.");
+        _ = ShowNoticeAsync($"Could not play {track.Title}. See Settings → Open log folder for details.", InfoBarSeverity.Error);
     });
 
     private void UpdateCurrentTrack(Track track)
@@ -642,7 +642,7 @@ public sealed partial class MainWindow : Window
                 .Select(path => Path.GetFullPath(path)).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        { RestoreNavigation(); await ShowNoticeAsync($"One ignored folder path is invalid: {ex.Message}"); return; }
+        { RestoreNavigation(); await ShowNoticeAsync($"One ignored folder path is invalid: {ex.Message}", InfoBarSeverity.Warning); return; }
         _store.SetSetting("theme", chosenTheme); _store.SetSetting("accent-mode", chosenAccent);
         _store.SetSetting("accent-manual", manualAccent.IsOn ? "true" : "false"); _store.SetSetting("accent-color", $"#{colorPicker.Color.R:X2}{colorPicker.Color.G:X2}{colorPicker.Color.B:X2}");
         _store.SetSetting("check-updates", updateCheck.IsOn ? "true" : "false"); _store.SetSetting("crossfade-seconds", crossfadeSeconds.ToString());
@@ -752,7 +752,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ReportUpdateCheckStatusAsync(TextBlock? statusTarget, string message)
     {
-        if (statusTarget is null) await ShowNoticeAsync(message); else statusTarget.Text = message;
+        if (statusTarget is null) await ShowNoticeAsync(message, InfoBarSeverity.Warning); else statusTarget.Text = message;
     }
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(true);
@@ -785,7 +785,7 @@ public sealed partial class MainWindow : Window
         var file = await picker.PickSingleFileAsync(); if (file is null) return;
         try { _store.ImportM3u8(file.Path); RefreshPlaylists(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        { LocalAppLog.Shared.Error("playlist-import", "Could not import a playlist.", ex); await ShowNoticeAsync($"Could not import that playlist: {ex.Message}"); }
+        { LocalAppLog.Shared.Error("playlist-import", "Could not import a playlist.", ex); await ShowNoticeAsync($"Could not import that playlist: {ex.Message}", InfoBarSeverity.Error); }
     }
 
     private async void ExportPlaylist_Click(object sender, RoutedEventArgs e)
@@ -796,7 +796,7 @@ public sealed partial class MainWindow : Window
         var file = await picker.PickSaveFileAsync(); if (file is null) return;
         try { _store.ExportM3u8(_selectedPlaylist.Id, file.Path); await ShowNoticeAsync("Playlist exported as UTF-8 M3U8."); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        { LocalAppLog.Shared.Error("playlist-export", "Could not export a playlist.", ex); await ShowNoticeAsync($"Could not export that playlist: {ex.Message}"); }
+        { LocalAppLog.Shared.Error("playlist-export", "Could not export a playlist.", ex); await ShowNoticeAsync($"Could not export that playlist: {ex.Message}", InfoBarSeverity.Error); }
     }
 
     private async void DeletePlaylist_Click(object sender, RoutedEventArgs e)
@@ -894,12 +894,12 @@ public sealed partial class MainWindow : Window
             if (tagsWritten)
             {
                 LocalAppLog.Shared.Warning("tag-editor", $"Tags were written but the library refresh failed for {track.Path}. Backup: {backup?.BackupPath}", ex);
-                await ShowNoticeAsync($"Tags were written, but the library could not refresh. Backup: {backup?.BackupPath}");
+                await ShowNoticeAsync($"Tags were written, but the library could not refresh. Backup: {backup?.BackupPath}", InfoBarSeverity.Warning);
             }
             else
             {
                 LocalAppLog.Shared.Error("tag-editor", $"Could not save tags for {track.Path}.", ex);
-                await ShowNoticeAsync($"Tags were not saved. The original file is intact. {ex.Message}");
+                await ShowNoticeAsync($"Tags were not saved. The original file is intact. {ex.Message}", InfoBarSeverity.Error);
             }
         }
     }
@@ -949,12 +949,12 @@ public sealed partial class MainWindow : Window
             if (restored)
             {
                 LocalAppLog.Shared.Warning("tag-restore", $"Tags were restored but the library refresh failed for {track.Path}.", ex);
-                await ShowNoticeAsync("The file was restored, but the library could not refresh. Scan the library to update its tags.");
+                await ShowNoticeAsync("The file was restored, but the library could not refresh. Scan the library to update its tags.", InfoBarSeverity.Warning);
             }
             else
             {
                 LocalAppLog.Shared.Error("tag-restore", $"Could not restore tags for {track.Path}.", ex);
-                await ShowNoticeAsync($"Could not restore the backup: {ex.Message}");
+                await ShowNoticeAsync($"Could not restore the backup: {ex.Message}", InfoBarSeverity.Error);
             }
         }
     }
@@ -972,7 +972,7 @@ public sealed partial class MainWindow : Window
             await ShowTextDialogAsync("Track details", text);
         }
         catch (Exception ex)
-        { LocalAppLog.Shared.Error("track-details", $"Could not read details for {track.Path}.", ex); await ShowNoticeAsync($"Could not read track details: {ex.Message}"); }
+        { LocalAppLog.Shared.Error("track-details", $"Could not read details for {track.Path}.", ex); await ShowNoticeAsync($"Could not read track details: {ex.Message}", InfoBarSeverity.Error); }
     }
 
     private async void Lyrics_Click(object sender, RoutedEventArgs e)
@@ -1031,7 +1031,7 @@ public sealed partial class MainWindow : Window
         body.Children.Add(editor); body.Children.Add(offset); body.Children.Add(mode); body.Children.Add(stamp); body.Children.Add(search); body.Children.Add(results); body.Children.Add(useResult); body.Children.Add(searchStatus);
         var dialog = new ContentDialog { Title = "Lyrics and timing", Content = new ScrollViewer { Content = body, MaxHeight = 620 }, PrimaryButtonText = "Save lyrics", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        if (!int.TryParse(offset.Text, out var offsetMs)) { await ShowNoticeAsync("Timing offset must be a whole number of milliseconds."); return; }
+        if (!int.TryParse(offset.Text, out var offsetMs)) { await ShowNoticeAsync("Timing offset must be a whole number of milliseconds.", InfoBarSeverity.Warning); return; }
         var lyricsText = SetLyricsOffset(editor.Text, offsetMs);
         TagBackup? backup = null;
         var lyricsWritten = false;
@@ -1054,12 +1054,12 @@ public sealed partial class MainWindow : Window
             if (lyricsWritten)
             {
                 LocalAppLog.Shared.Warning("lyrics-editor", $"Lyrics were saved but the library refresh failed for {track.Path}. Backup: {backup?.BackupPath}", ex);
-                await ShowNoticeAsync($"Lyrics were saved, but the library could not refresh. Backup: {backup?.BackupPath ?? LyricsFiles.SidecarPath(track.Path)}");
+                await ShowNoticeAsync($"Lyrics were saved, but the library could not refresh. Backup: {backup?.BackupPath ?? LyricsFiles.SidecarPath(track.Path)}", InfoBarSeverity.Warning);
             }
             else
             {
                 LocalAppLog.Shared.Error("lyrics-editor", $"Could not save lyrics for {track.Path}.", ex);
-                await ShowNoticeAsync($"Lyrics were not saved. The original file is intact. {ex.Message}");
+                await ShowNoticeAsync($"Lyrics were not saved. The original file is intact. {ex.Message}", InfoBarSeverity.Error);
             }
         }
     }
@@ -1272,9 +1272,11 @@ public sealed partial class MainWindow : Window
         else { _tray?.Dispose(); _tray = null; }
     }
 
-    private async Task ShowNoticeAsync(string message)
+    private Task ShowNoticeAsync(string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
     {
-        var dialog = new ContentDialog { Title = "Bracken Vale", Content = message, CloseButtonText = "OK", XamlRoot = ShellRoot.XamlRoot };
-        await dialog.ShowAsync();
+        AppNotice.Message = message;
+        AppNotice.Severity = severity;
+        AppNotice.IsOpen = true;
+        return Task.CompletedTask;
     }
 }

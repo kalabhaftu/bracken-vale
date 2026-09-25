@@ -150,7 +150,10 @@ FORM: Native WinUI NavigationView and virtualized ListView; two accent treatment
                 </Grid>
             </NavigationView.Content>
         </NavigationView>
-        <InfoBar x:Name="ReleaseNotice" Grid.Row="0" IsOpen="False" Severity="Informational" VerticalAlignment="Top" HorizontalAlignment="Center" MaxWidth="680" Margin="0,8" />
+        <StackPanel Grid.Row="0" VerticalAlignment="Top" HorizontalAlignment="Center" MaxWidth="680" Margin="0,8" Spacing="4">
+            <InfoBar x:Name="AppNotice" IsOpen="False" IsClosable="True" Severity="Informational" />
+            <InfoBar x:Name="ReleaseNotice" IsOpen="False" IsClosable="True" Severity="Informational" />
+        </StackPanel>
         <Border Grid.Row="1" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
             <Grid Margin="18,8" ColumnDefinitions="240,*,240" ColumnSpacing="16">
                 <StackPanel VerticalAlignment="Center" Spacing="2">

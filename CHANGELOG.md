@@ -25,3 +25,4 @@ All notable changes to Bracken Vale are documented here.
 - Exclude system folders by their drive-root location while keeping user folders with the same name.
 - Keep LRCLIB search and queue, equalizer and update feedback inside their open dialogs.
 - Roll back unsaved navigation changes when Settings is cancelled or contains an invalid folder path.
+- Show app feedback in dismissible banners so playback errors cannot collide with open dialogs.
