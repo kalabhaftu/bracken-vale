@@ -357,6 +357,20 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void Tag_editor_clears_year_and_track_number_when_set_to_zero()
+    {
+        var path = Path.Combine(_root, "clear-number.wav");
+        WriteWave(path);
+        var editor = new TagEditor(Path.Combine(_root, "backups"));
+        editor.Save(path, new TagEdit(Year: 2024, TrackNumber: 7));
+        editor.Save(path, new TagEdit(Year: 0, TrackNumber: 0));
+
+        using var media = TagLib.File.Create(path);
+        Assert.Equal(0u, media.Tag.Year);
+        Assert.Equal(0u, media.Tag.Track);
+    }
+
+    [Fact]
     public async Task Concurrent_tag_saves_are_serialized_with_unique_backups_and_staging_files()
     {
         var path = Path.Combine(_root, "parallel.wav");

@@ -1000,8 +1000,19 @@ public sealed partial class MainWindow : Window
         }
         fields.Children.Add(new Expander { Header = "Additional standard tags", IsExpanded = false, Content = additionalTagFields });
         fields.Children.Add(artPicker); fields.Children.Add(artworkPreview); fields.Children.Add(custom);
+        var validation = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        fields.Children.Add(validation);
         var scroll = new ScrollViewer { Content = fields, MaxHeight = 620, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var dialog = new ContentDialog { Title = "Preview and edit tags", Content = scroll, PrimaryButtonText = "Save tags", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
+        uint parsedYear = 0, parsedNumber = 0;
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            if (!TryParseOptionalUInt(year.Text, out parsedYear) || parsedYear > 9999)
+            { validation.Text = "Year must be a whole number from 0 to 9999, or blank to clear it."; args.Cancel = true; return; }
+            if (!TryParseOptionalUInt(number.Text, out parsedNumber))
+            { validation.Text = "Track number must be a whole number, or blank to clear it."; args.Cancel = true; return; }
+            validation.Text = string.Empty;
+        };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         TagBackup? backup = null;
         var tagsWritten = false;
@@ -1009,8 +1020,7 @@ public sealed partial class MainWindow : Window
         {
             var customFields = ParseCustomFields(custom.Text);
             var edit = new TagEdit(title.Text, artist.Text, album.Text, albumArtist.Text, genre.Text,
-                uint.TryParse(year.Text, out var parsedYear) ? parsedYear : null,
-                uint.TryParse(number.Text, out var parsedNumber) ? parsedNumber : null,
+                parsedYear, parsedNumber,
                 ArtworkPath: string.IsNullOrWhiteSpace(artwork.Text) ? null : artwork.Text,
                 CustomFields: customFormat is null ? null : customFields,
                 AdditionalFields: additionalFields.ToDictionary(field => field.Key, field => field.Value.Text, StringComparer.OrdinalIgnoreCase));
@@ -1048,6 +1058,12 @@ public sealed partial class MainWindow : Window
     }
 
     private static TextBox AddTextField(string name, string value) => new() { Header = name, Text = value, MinWidth = 330 };
+
+    private static bool TryParseOptionalUInt(string value, out uint result)
+    {
+        result = 0;
+        return string.IsNullOrWhiteSpace(value) || uint.TryParse(value.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out result);
+    }
 
     private static IReadOnlyDictionary<string, string> ParseCustomFields(string text)
     {
