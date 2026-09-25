@@ -23,3 +23,5 @@ All notable changes to Bracken Vale are documented here.
 - Edit and inspect Xiph, ID3v2, ASF and APEv2 custom text tags; preserve each format's own field names.
 - Report embedded lyrics as saved when only the library refresh fails.
 - Exclude system folders by their drive-root location while keeping user folders with the same name.
+- Keep LRCLIB search and queue, equalizer and update feedback inside their open dialogs.
+- Roll back unsaved navigation changes when Settings is cancelled or contains an invalid folder path.

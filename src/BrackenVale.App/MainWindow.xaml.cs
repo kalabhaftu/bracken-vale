@@ -573,6 +573,13 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowSettingsAsync()
     {
+        var navigationSnapshot = NavView.MenuItems.OfType<NavigationViewItem>().Select(item => (Item: item, item.Visibility)).ToArray();
+        void RestoreNavigation()
+        {
+            NavView.MenuItems.Clear();
+            foreach (var (item, visibility) in navigationSnapshot) { item.Visibility = visibility; NavView.MenuItems.Add(item); }
+            SelectVisibleLibraryNavigation();
+        }
         var content = new StackPanel { Spacing = 12, Margin = new Thickness(4) };
         var scroll = new ScrollViewer { Content = content, MaxHeight = 640, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var theme = new ComboBox { Header = "Color theme", MinWidth = 260 };
@@ -592,7 +599,10 @@ public sealed partial class MainWindow : Window
         crossfade.SelectedIndex = oldCrossfade switch { 2 => 1, 3 => 2, 5 => 3, 8 => 4, 10 => 5, _ => 0 };
         var ignored = new TextBox { Header = "Ignored folders (one full path per line)", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 84, Text = string.Join(Environment.NewLine, ReadJsonSetting("ignored-directories", Array.Empty<string>())) };
         content.Children.Add(theme); content.Children.Add(accentMode); content.Children.Add(updateCheck); content.Children.Add(minimizeToTray);
-        var updateNow = new Button { Content = "Check for updates now" }; updateNow.Click += CheckUpdates_Click; content.Children.Add(updateNow);
+        var updateNow = new Button { Content = "Check for updates now" };
+        var updateStatus = new TextBlock { Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"], TextWrapping = TextWrapping.Wrap };
+        updateNow.Click += async (_, _) => await CheckForUpdatesAsync(true, updateStatus);
+        content.Children.Add(updateNow); content.Children.Add(updateStatus);
         content.Children.Add(manualAccent);
         content.Children.Add(new TextBlock { Text = "Custom accent", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
         content.Children.Add(colorPicker); content.Children.Add(crossfade); content.Children.Add(ignored);
@@ -617,7 +627,11 @@ public sealed partial class MainWindow : Window
         }
         content.Children.Add(navigationList);
         var dialog = new ContentDialog { Title = "Settings", Content = scroll, PrimaryButtonText = "Save", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            RestoreNavigation();
+            return;
+        }
         var chosenTheme = theme.SelectedItem?.ToString() ?? "System";
         var chosenAccent = accentMode.SelectedIndex == 1 ? "Artwork" : "Native";
         var crossfadeSeconds = crossfade.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 5, 4 => 8, 5 => 10, _ => 0 };
@@ -628,7 +642,7 @@ public sealed partial class MainWindow : Window
                 .Select(path => Path.GetFullPath(path)).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        { await ShowNoticeAsync($"One ignored folder path is invalid: {ex.Message}"); return; }
+        { RestoreNavigation(); await ShowNoticeAsync($"One ignored folder path is invalid: {ex.Message}"); return; }
         _store.SetSetting("theme", chosenTheme); _store.SetSetting("accent-mode", chosenAccent);
         _store.SetSetting("accent-manual", manualAccent.IsOn ? "true" : "false"); _store.SetSetting("accent-color", $"#{colorPicker.Color.R:X2}{colorPicker.Color.G:X2}{colorPicker.Color.B:X2}");
         _store.SetSetting("check-updates", updateCheck.IsOn ? "true" : "false"); _store.SetSetting("crossfade-seconds", crossfadeSeconds.ToString());
@@ -641,7 +655,15 @@ public sealed partial class MainWindow : Window
         else if (chosenAccent == "Artwork" && _playback.CurrentTrack is { } current) await ApplyArtworkAccentAsync(current.ArtworkPath);
         else ResetAccent();
         RefreshLibrary();
+        SelectVisibleLibraryNavigation();
         if (_store.GetSetting("check-updates") == "true") _ = CheckForUpdatesAsync(true);
+    }
+
+    private void SelectVisibleLibraryNavigation()
+    {
+        var visible = NavView.MenuItems.OfType<NavigationViewItem>().Where(item => item.Visibility == Visibility.Visible).ToArray();
+        var selected = visible.FirstOrDefault(item => item.Tag?.ToString() == _view) ?? visible.FirstOrDefault();
+        if (selected is not null) NavView.SelectedItem = selected;
     }
 
     private void MoveNavigationItem(NavigationViewItem item, int direction)
@@ -698,7 +720,7 @@ public sealed partial class MainWindow : Window
         color = Color.FromArgb(255, r, g, b); return true;
     }
 
-    private async Task CheckForUpdatesAsync(bool force)
+    private async Task CheckForUpdatesAsync(bool force, TextBlock? statusTarget = null)
     {
         if (!force && _store.GetSetting("check-updates") == "false") return;
         if (!force && DateTime.TryParse(_store.GetSetting("last-update-check"), out var last) && DateTime.UtcNow - last.ToUniversalTime() < TimeSpan.FromDays(7)) return;
@@ -708,16 +730,29 @@ public sealed partial class MainWindow : Window
             var release = await GitHubUpdates.GetLatestAsync();
             var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 1, 0);
             if (release is null || !Version.TryParse(release.Tag.TrimStart('v'), out var latest) || latest <= current)
-            { if (force) await ShowNoticeAsync("You are using the latest available release."); return; }
+            {
+                if (force)
+                {
+                    const string message = "You are using the latest available release.";
+                    if (statusTarget is null) await ShowNoticeAsync(message); else statusTarget.Text = message;
+                }
+                return;
+            }
             ReleaseNotice.Title = $"Bracken Vale {release.Tag} is available";
             ReleaseNotice.Message = "A new release is ready to view. Updates are never downloaded automatically.";
             var open = new Button { Content = "View release" }; open.Click += (_, _) => Process.Start(new ProcessStartInfo(release.Url) { UseShellExecute = true });
             ReleaseNotice.ActionButton = open; ReleaseNotice.IsOpen = true;
+            if (statusTarget is not null) statusTarget.Text = $"Bracken Vale {release.Tag} is available.";
         }
-        catch (HttpRequestException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check failed.", ex); if (force) await ShowNoticeAsync("Could not reach GitHub. Check your connection and try again."); }
-        catch (TaskCanceledException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check timed out.", ex); if (force) await ShowNoticeAsync("The GitHub update check timed out."); }
-        catch (System.Text.Json.JsonException ex) { LocalAppLog.Shared.Warning("updates", "GitHub returned invalid release data.", ex); if (force) await ShowNoticeAsync("GitHub returned an update response Bracken Vale could not read."); }
-        catch (Exception ex) { LocalAppLog.Shared.Error("updates", "Could not complete the GitHub release check.", ex); if (force) await ShowNoticeAsync("The update check failed. See the local log for details."); }
+        catch (HttpRequestException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check failed.", ex); if (force) await ReportUpdateCheckStatusAsync(statusTarget, "Could not reach GitHub. Check your connection and try again."); }
+        catch (TaskCanceledException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check timed out.", ex); if (force) await ReportUpdateCheckStatusAsync(statusTarget, "The GitHub update check timed out."); }
+        catch (System.Text.Json.JsonException ex) { LocalAppLog.Shared.Warning("updates", "GitHub returned invalid release data.", ex); if (force) await ReportUpdateCheckStatusAsync(statusTarget, "GitHub returned an update response Bracken Vale could not read."); }
+        catch (Exception ex) { LocalAppLog.Shared.Error("updates", "Could not complete the GitHub release check.", ex); if (force) await ReportUpdateCheckStatusAsync(statusTarget, "The update check failed. See the local log for details."); }
+    }
+
+    private async Task ReportUpdateCheckStatusAsync(TextBlock? statusTarget, string message)
+    {
+        if (statusTarget is null) await ShowNoticeAsync(message); else statusTarget.Text = message;
     }
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(true);
@@ -960,23 +995,40 @@ public sealed partial class MainWindow : Window
         var stamp = new Button { Content = "Stamp current playback time at the caret", HorizontalAlignment = HorizontalAlignment.Left };
         stamp.Click += (_, _) => StampLyricLine(editor);
         var search = new Button { Content = "Search LRCLIB…", HorizontalAlignment = HorizontalAlignment.Left };
+        var results = new ComboBox { MinWidth = 360, Visibility = Visibility.Collapsed };
+        var useResult = new Button { Content = "Use selected lyrics", HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        var searchStatus = new TextBlock { Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"], TextWrapping = TextWrapping.Wrap };
+        useResult.Click += (_, _) =>
+        {
+            if (results.SelectedItem is LyricsSearchResult result)
+            {
+                editor.Text = result.SyncedLyrics ?? result.PlainLyrics ?? string.Empty;
+                searchStatus.Text = $"Loaded lyrics from {result.ArtistName} — {result.TrackName}.";
+            }
+        };
         search.Click += async (_, _) =>
         {
+            search.IsEnabled = false;
+            searchStatus.Text = "Searching LRCLIB…";
             try
             {
                 var matches = await LyricsFiles.SearchLrclibAsync(track.Title, track.Artist);
-                if (matches.Count == 0) { await ShowNoticeAsync("LRCLIB found no matching lyrics."); return; }
-                var picker = new ComboBox { ItemsSource = matches, DisplayMemberPath = "TrackName", SelectedIndex = 0, MinWidth = 360 };
-                var choose = new ContentDialog { Title = "Choose lyrics", Content = picker, PrimaryButtonText = "Use selected lyrics", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
-                if (await choose.ShowAsync() == ContentDialogResult.Primary && picker.SelectedItem is LyricsSearchResult result)
-                    editor.Text = result.SyncedLyrics ?? result.PlainLyrics ?? string.Empty;
+                results.ItemsSource = matches;
+                results.DisplayMemberPath = "TrackName";
+                results.SelectedIndex = matches.Count > 0 ? 0 : -1;
+                results.Visibility = matches.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                useResult.Visibility = matches.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                searchStatus.Text = matches.Count == 0 ? "LRCLIB found no matching lyrics." : $"Found {matches.Count} result(s). Choose one, then load it into the editor.";
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
-            { LocalAppLog.Shared.Warning("lyrics-search", "User-requested LRCLIB search failed.", ex); await ShowNoticeAsync($"LRCLIB search failed: {ex.Message}"); }
+            { LocalAppLog.Shared.Warning("lyrics-search", "User-requested LRCLIB search failed.", ex); searchStatus.Text = $"LRCLIB search failed: {ex.Message}"; }
+            catch (Exception ex)
+            { LocalAppLog.Shared.Error("lyrics-search", "Unexpected failure during user-requested LRCLIB search.", ex); searchStatus.Text = "LRCLIB search failed. See the local log for details."; }
+            finally { search.IsEnabled = true; }
         };
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = track.Title + " · " + track.Artist, Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
-        body.Children.Add(editor); body.Children.Add(offset); body.Children.Add(mode); body.Children.Add(stamp); body.Children.Add(search);
+        body.Children.Add(editor); body.Children.Add(offset); body.Children.Add(mode); body.Children.Add(stamp); body.Children.Add(search); body.Children.Add(results); body.Children.Add(useResult); body.Children.Add(searchStatus);
         var dialog = new ContentDialog { Title = "Lyrics and timing", Content = new ScrollViewer { Content = body, MaxHeight = 620 }, PrimaryButtonText = "Save lyrics", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         if (!int.TryParse(offset.Text, out var offsetMs)) { await ShowNoticeAsync("Timing offset must be a whole number of milliseconds."); return; }
@@ -1037,6 +1089,7 @@ public sealed partial class MainWindow : Window
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var up = new Button { Content = "Move up" }; var down = new Button { Content = "Move down" };
         var remove = new Button { Content = "Remove" }; var clear = new Button { Content = "Clear upcoming" };
+        var queueStatus = new TextBlock { Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"], TextWrapping = TextWrapping.Wrap };
         void RefreshQueue()
         {
             queue.ItemsSource = _queue.Select((track, index) => $"{(index == _queueIndex ? "Playing · " : "")}{index + 1}. {track.Title} — {track.Artist}").ToArray();
@@ -1055,7 +1108,7 @@ public sealed partial class MainWindow : Window
         {
             var index = queue.SelectedIndex;
             if (index < 0 || index >= _queue.Count) return;
-            if (index == _queueIndex) { await ShowNoticeAsync("The currently playing track cannot be removed from the queue."); return; }
+            if (index == _queueIndex) { queueStatus.Text = "The currently playing track cannot be removed from the queue."; return; }
             _queue.RemoveAt(index); if (index < _queueIndex) _queueIndex--;
             RefreshQueue(); SaveSession();
         };
@@ -1073,7 +1126,7 @@ public sealed partial class MainWindow : Window
             RefreshQueue();
         };
         controls.Children.Add(up); controls.Children.Add(down); controls.Children.Add(remove); controls.Children.Add(clear);
-        body.Children.Add(queue); body.Children.Add(controls); RefreshQueue();
+        body.Children.Add(queue); body.Children.Add(controls); body.Children.Add(queueStatus); RefreshQueue();
         var dialog = new ContentDialog { Title = "Playback queue", Content = body, CloseButtonText = "Done", XamlRoot = ShellRoot.XamlRoot };
         await dialog.ShowAsync();
     }
@@ -1081,7 +1134,7 @@ public sealed partial class MainWindow : Window
     private async void Equalizer_Click(object sender, RoutedEventArgs e)
     {
         var presets = PlaybackService.EqualizerPresets();
-        var saved = _store.GetSettings("eq-preset:");
+        var saved = new Dictionary<string, string>(_store.GetSettings("eq-preset:"), StringComparer.OrdinalIgnoreCase);
         var presetBox = new ComboBox { Header = "Preset", MinWidth = 220 };
         presetBox.Items.Add("Off"); foreach (var preset in presets) presetBox.Items.Add(preset);
         foreach (var item in saved.Keys) presetBox.Items.Add(item["eq-preset:".Length..]);
@@ -1111,12 +1164,23 @@ public sealed partial class MainWindow : Window
         }
         var saveName = new TextBox { Header = "Save current custom preset as" };
         var savePreset = new Button { Content = "Save preset", HorizontalAlignment = HorizontalAlignment.Left };
-        savePreset.Click += async (_, _) =>
+        var presetStatus = new TextBlock { Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"], TextWrapping = TextWrapping.Wrap };
+        savePreset.Click += (_, _) =>
         {
-            if (string.IsNullOrWhiteSpace(saveName.Text)) { await ShowNoticeAsync("Enter a preset name first."); return; }
+            if (string.IsNullOrWhiteSpace(saveName.Text)) { presetStatus.Text = "Enter a preset name first."; return; }
+            var name = saveName.Text.Trim();
+            if (name.Equals("Off", StringComparison.OrdinalIgnoreCase) || presets.Contains(name, StringComparer.OrdinalIgnoreCase))
+            { presetStatus.Text = "Choose a name that is different from the built-in presets."; return; }
             var bands = sliders.Select(control => (float)control.Value).ToArray();
-            _store.SetSetting("eq-preset:" + saveName.Text.Trim(), JsonSerializer.Serialize(bands));
-            _store.SetSetting("eq-current", saveName.Text.Trim()); await ShowNoticeAsync("Equalizer preset saved.");
+            var requestedKey = "eq-preset:" + name;
+            var key = saved.Keys.FirstOrDefault(candidate => candidate.Equals(requestedKey, StringComparison.OrdinalIgnoreCase)) ?? requestedKey;
+            var displayName = key["eq-preset:".Length..];
+            var json = JsonSerializer.Serialize(bands);
+            saved[key] = json;
+            _store.SetSetting(key, json); _store.SetSetting("eq-current", displayName);
+            if (!presetBox.Items.Cast<object>().Any(item => item.ToString()?.Equals(displayName, StringComparison.OrdinalIgnoreCase) == true)) presetBox.Items.Add(displayName);
+            _playback.ApplyEqualizer(null, bands); presetBox.SelectedItem = displayName;
+            presetStatus.Text = "Equalizer preset saved and applied.";
         };
         presetBox.SelectionChanged += (_, _) =>
         {
@@ -1130,7 +1194,7 @@ public sealed partial class MainWindow : Window
             else _playback.ApplyEqualizer(selected);
             _store.SetSetting("eq-current", selected);
         };
-        var content = new StackPanel { Spacing = 8 }; content.Children.Add(presetBox); content.Children.Add(controls); content.Children.Add(saveName); content.Children.Add(savePreset);
+        var content = new StackPanel { Spacing = 8 }; content.Children.Add(presetBox); content.Children.Add(controls); content.Children.Add(saveName); content.Children.Add(savePreset); content.Children.Add(presetStatus);
         var dialog = new ContentDialog { Title = "10-band equalizer", Content = new ScrollViewer { Content = content, MaxHeight = 650 }, CloseButtonText = "Done", XamlRoot = ShellRoot.XamlRoot };
         await dialog.ShowAsync();
     }
