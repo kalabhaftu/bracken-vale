@@ -45,6 +45,7 @@ public sealed partial class MainWindow : Window
     private bool _descending;
     private bool _shuffle;
     private bool _uiReady;
+    private bool _windowClosed;
     private bool _updatingPosition;
     private bool _countedCurrentPlay;
     private long _heardMilliseconds;
@@ -120,20 +121,37 @@ public sealed partial class MainWindow : Window
             var nextLibraryRefresh = 256;
             var progress = new Progress<ScanProgress>(value =>
             {
+                if (_windowClosed) return;
                 ScanStatusText.Text = $"{value.FilesFound:N0} tracks · {value.DirectoriesVisited:N0} folders";
                 if (value.FilesFound >= nextLibraryRefresh) { RefreshLibrary(); nextLibraryRefresh = value.FilesFound + 256; }
             });
             var result = await Task.Run(() => indexer.ScanAsync(scanRoots, ignored, control, progress));
-            ScanStatusText.Text = $"Indexed {result.Indexed:N0} · removed {result.Removed:N0} · skipped {result.Skipped:N0}";
+            if (!_windowClosed) ScanStatusText.Text = $"Indexed {result.Indexed:N0} · removed {result.Removed:N0} · skipped {result.Skipped:N0}";
         }
-        catch (OperationCanceledException) { LocalAppLog.Shared.Info("scanner", "Library scan cancelled; completed tracks were retained."); ScanStatusText.Text = "Scan cancelled; completed tracks are saved."; }
-        catch (Exception ex) { LocalAppLog.Shared.Error("scanner", "Library scan failed.", ex); ScanStatusText.Text = $"Scan stopped: {ex.Message}"; }
+        catch (OperationCanceledException)
+        {
+            LocalAppLog.Shared.Info("scanner", "Library scan cancelled; completed tracks were retained.");
+            if (!_windowClosed) ScanStatusText.Text = "Scan cancelled; completed tracks are saved.";
+        }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Error("scanner", "Library scan failed.", ex);
+            if (!_windowClosed) ScanStatusText.Text = $"Scan stopped: {ex.Message}";
+        }
         finally
         {
-            control.Dispose(); _scanControl = null; AddFolderButton.IsEnabled = ScanLibraryButton.IsEnabled = true; ScanPauseButton.Visibility = Visibility.Collapsed;
-            ConfigureGroupView();
-            _ = Task.Delay(4500).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => ScanStatus.Visibility = Visibility.Collapsed));
-            RefreshLibrary();
+            control.Dispose();
+            if (ReferenceEquals(_scanControl, control)) _scanControl = null;
+            if (!_windowClosed)
+            {
+                AddFolderButton.IsEnabled = ScanLibraryButton.IsEnabled = true; ScanPauseButton.Visibility = Visibility.Collapsed;
+                ConfigureGroupView();
+                _ = Task.Delay(4500).ContinueWith(_ => DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!_windowClosed) ScanStatus.Visibility = Visibility.Collapsed;
+                }));
+                RefreshLibrary();
+            }
         }
     }
 
@@ -616,6 +634,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        _windowClosed = true;
         LocalAppLog.Shared.Info("app", "Window closed.");
         SaveSession(); _clock.Stop(); _playback.Dispose(); _scanControl?.Cancel();
         _tray?.Dispose();

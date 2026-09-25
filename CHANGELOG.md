@@ -6,6 +6,7 @@ All notable changes to Bracken Vale are documented here.
 
 ## [0.1.0-preview.1]
 
+- Avoid updating closed-window controls after a library scan is cancelled during shutdown.
 - Select connected Windows audio outputs, including Bluetooth headphones and speakers, and retain the choice across restarts.
 - Choose Mica, Desktop Acrylic, or an opaque backdrop, plus subtle, expressive, or disabled page transitions that honor Windows accessibility settings.
 - Serialize concurrent tag, lyric-sidecar and playlist writes per file, with unique staged files and backups.
