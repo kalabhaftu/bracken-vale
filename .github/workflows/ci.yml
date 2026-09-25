@@ -40,6 +40,23 @@ jobs:
           dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --output $out -p:Platform=${{ matrix.arch }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
           $archive = 'artifacts/bracken-vale-${{ matrix.rid }}.zip'
           Compress-Archive -Path (Join-Path $out '*') -DestinationPath $archive -CompressionLevel Optimal
+      - name: Smoke test self-contained x64 startup
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'artifacts/portable/BrackenVale.exe'
+          $process = Start-Process -FilePath $exe -PassThru
+          try {
+            Start-Sleep -Seconds 8
+            $process.Refresh()
+            if ($process.HasExited) {
+              $logs = Join-Path $env:LOCALAPPDATA 'BrackenVale/Logs'
+              if (Test-Path $logs) { Get-ChildItem $logs -Filter 'bracken-vale-*.log' | Get-Content }
+              throw "Bracken Vale exited during startup with code $($process.ExitCode)."
+            }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+          }
       - name: Upload portable build
         uses: actions/upload-artifact@v7
         with:
