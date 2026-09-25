@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
 using BrackenVale.Core;
+using Microsoft.UI.Composition;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -12,6 +14,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Hosting;
 using Windows.Devices.Enumeration;
 using Windows.Graphics.Imaging;
 using Windows.Media;
@@ -20,6 +23,7 @@ using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
 using Windows.UI;
+using Windows.UI.ViewManagement;
 using WinRT.Interop;
 
 namespace BrackenVale.App;
@@ -32,6 +36,7 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<Playlist> _playlists = [];
     private readonly List<Track> _queue = [];
     private readonly PlaybackService _playback = new();
+    private readonly UISettings _uiSettings = new();
     private SystemMediaTransportControls? _systemControls;
     private TrayIconService? _tray;
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -61,7 +66,6 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         _uiReady = true;
         Title = "Bracken Vale";
-        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) SystemBackdrop = new MicaBackdrop();
         var volume = int.TryParse(_store.GetSetting("volume"), out var savedVolume) ? Math.Clamp(savedVolume, 0, 100) : 75;
         VolumeSlider.Value = volume; _playback.Volume = volume;
         _playback.SelectAudioOutputDevice(_store.GetSetting("audio-output-device"));
@@ -178,15 +182,51 @@ public sealed partial class MainWindow : Window
         }
         _tracks.Clear(); foreach (var track in source) _tracks.Add(track);
         TrackCountText.Text = $"{_tracks.Count:N0} {(_tracks.Count == 1 ? "track" : "tracks")}";
+        var activeView = _view == "Now Playing" ? NowPlayingView : _view == "Playlists" && _selectedPlaylist is null ? PlaylistView : LibraryView;
+        var enteringView = activeView.Visibility != Visibility.Visible;
         EmptyState.Visibility = _tracks.Count == 0 && _selectedPlaylist is null ? Visibility.Visible : Visibility.Collapsed;
         PlaylistView.Visibility = _view == "Playlists" && _selectedPlaylist is null ? Visibility.Visible : Visibility.Collapsed;
         LibraryView.Visibility = _view != "Now Playing" && PlaylistView.Visibility != Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
         NowPlayingView.Visibility = _view == "Now Playing" ? Visibility.Visible : Visibility.Collapsed;
+        if (enteringView) AnimateContentEntrance(activeView);
         if (_selectedPlaylist is not null) ViewTitle.Text = _selectedPlaylist.Name;
         else ViewTitle.Text = GroupList.SelectedItem is string group ? $"{_view} · {group}" : _view;
     }
 
     private static bool Contains(string value, string query) => value.Contains(query, StringComparison.CurrentCultureIgnoreCase);
+
+    private void AnimateContentEntrance(UIElement enteringView)
+    {
+        foreach (var view in new UIElement[] { LibraryView, PlaylistView, NowPlayingView })
+        {
+            view.Opacity = 1;
+            view.Translation = Vector3.Zero;
+            ElementCompositionPreview.SetIsTranslationEnabled(view, false);
+        }
+
+        var style = _store.GetSetting("motion-style") ?? "Subtle";
+        if (style == "Off" || !_uiSettings.AnimationsEnabled) return;
+
+        ElementCompositionPreview.SetIsTranslationEnabled(enteringView, true);
+        var compositor = ElementCompositionPreview.GetElementVisual(enteringView).Compositor;
+        var expressive = style == "Expressive";
+        var duration = TimeSpan.FromMilliseconds(expressive ? 220 : 130);
+        var ease = compositor.CreateCubicBezierEasingFunction(new Vector2(.16f, 1f), new Vector2(.3f, 1f));
+        enteringView.Opacity = 0;
+        enteringView.Translation = new Vector3(0, expressive ? 16 : 8, 0);
+        var fade = compositor.CreateScalarKeyFrameAnimation();
+        fade.Target = "Opacity";
+        fade.InsertKeyFrame(0, 0);
+        fade.InsertKeyFrame(1, 1, ease);
+        fade.Duration = duration;
+        var slide = compositor.CreateVector3KeyFrameAnimation();
+        slide.Target = "Translation";
+        slide.InsertKeyFrame(0, enteringView.Translation);
+        slide.InsertKeyFrame(1, Vector3.Zero, ease);
+        slide.Duration = duration;
+        enteringView.StartAnimation(fade);
+        enteringView.StartAnimation(slide);
+    }
 
     private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
@@ -656,6 +696,12 @@ public sealed partial class MainWindow : Window
     private void ApplyStoredAppearance()
     {
         ShellRoot.RequestedTheme = _store.GetSetting("theme") switch { "Light" => ElementTheme.Light, "Dark" => ElementTheme.Dark, _ => ElementTheme.Default };
+        SystemBackdrop = _store.GetSetting("window-material") switch
+        {
+            "Acrylic" => new DesktopAcrylicBackdrop(),
+            "Opaque" => null,
+            _ => OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ? new MicaBackdrop() : null
+        };
         if (_store.GetSetting("accent-manual") == "true" && TryParseColor(_store.GetSetting("accent-color"), out var color)) ApplyAccent(color);
     }
 
@@ -676,6 +722,12 @@ public sealed partial class MainWindow : Window
         var accentMode = new ComboBox { Header = "Accent style", MinWidth = 260 };
         accentMode.Items.Add("Windows Fluent"); accentMode.Items.Add("Album-art emphasis");
         accentMode.SelectedIndex = _store.GetSetting("accent-mode") == "Artwork" ? 1 : 0;
+        var windowMaterial = new ComboBox { Header = "Window material", MinWidth = 300 };
+        foreach (var value in new[] { "Mica", "Desktop Acrylic", "Opaque" }) windowMaterial.Items.Add(value);
+        windowMaterial.SelectedItem = _store.GetSetting("window-material") switch { "Acrylic" => "Desktop Acrylic", "Opaque" => "Opaque", _ => "Mica" };
+        var motionStyle = new ComboBox { Header = "Navigation motion", MinWidth = 260 };
+        foreach (var value in new[] { "Off", "Subtle", "Expressive" }) motionStyle.Items.Add(value);
+        motionStyle.SelectedItem = _store.GetSetting("motion-style") switch { "Off" => "Off", "Expressive" => "Expressive", _ => "Subtle" };
         var updateCheck = new ToggleSwitch { Header = "Check GitHub Releases weekly", IsOn = _store.GetSetting("check-updates") != "false" };
         var minimizeToTray = new ToggleSwitch { Header = "Minimize to the notification area", IsOn = _store.GetSetting("minimize-to-tray") == "true" };
         var manualAccent = new ToggleSwitch { Header = "Use a custom accent color", IsOn = _store.GetSetting("accent-manual") == "true" };
@@ -733,7 +785,11 @@ public sealed partial class MainWindow : Window
         refreshAudioOutputs.Click += async (_, _) => await RefreshAudioOutputsAsync();
         await RefreshAudioOutputsAsync();
         var ignored = new TextBox { Header = "Ignored folders (one full path per line)", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 84, Text = string.Join(Environment.NewLine, ReadJsonSetting("ignored-directories", Array.Empty<string>())) };
-        content.Children.Add(theme); content.Children.Add(accentMode); content.Children.Add(updateCheck); content.Children.Add(minimizeToTray);
+        content.Children.Add(theme); content.Children.Add(accentMode); content.Children.Add(windowMaterial);
+        content.Children.Add(new TextBlock { Text = "Mica is the Windows 11 default. Desktop Acrylic is more transparent; Windows may fall back to an opaque surface when transparency effects are unavailable.", TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] });
+        content.Children.Add(motionStyle);
+        content.Children.Add(new TextBlock { Text = "Transitions affect library pages only, never individual track rows, and follow the Windows animation accessibility setting.", TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] });
+        content.Children.Add(updateCheck); content.Children.Add(minimizeToTray);
         var updateNow = new Button { Content = "Check for updates now" };
         var updateStatus = new TextBlock { Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"], TextWrapping = TextWrapping.Wrap };
         updateNow.Click += async (_, _) => await CheckForUpdatesAsync(true, updateStatus);
@@ -782,6 +838,8 @@ public sealed partial class MainWindow : Window
         }
         var chosenTheme = theme.SelectedItem?.ToString() ?? "System";
         var chosenAccent = accentMode.SelectedIndex == 1 ? "Artwork" : "Native";
+        var chosenWindowMaterial = windowMaterial.SelectedItem?.ToString() switch { "Desktop Acrylic" => "Acrylic", "Opaque" => "Opaque", _ => "Mica" };
+        var chosenMotionStyle = motionStyle.SelectedItem?.ToString() ?? "Subtle";
         var crossfadeSeconds = crossfade.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 5, 4 => 8, 5 => 10, _ => 0 };
         var selectedAudioOutput = audioOutput.SelectedItem as ComboBoxItem;
         var audioOutputId = selectedAudioOutput?.Tag?.ToString() ?? "";
@@ -798,6 +856,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         { RestoreNavigation(); await ShowNoticeAsync($"One ignored folder path is invalid: {ex.Message}", InfoBarSeverity.Warning); return; }
         _store.SetSetting("theme", chosenTheme); _store.SetSetting("accent-mode", chosenAccent);
+        _store.SetSetting("window-material", chosenWindowMaterial); _store.SetSetting("motion-style", chosenMotionStyle);
         _store.SetSetting("accent-manual", manualAccent.IsOn ? "true" : "false"); _store.SetSetting("accent-color", $"#{colorPicker.Color.R:X2}{colorPicker.Color.G:X2}{colorPicker.Color.B:X2}");
         _store.SetSetting("check-updates", updateCheck.IsOn ? "true" : "false"); _store.SetSetting("crossfade-seconds", crossfadeSeconds.ToString());
         _store.SetSetting("audio-output-device", audioOutputId); _store.SetSetting("audio-output-name", audioOutputName);

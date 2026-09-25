@@ -11,6 +11,7 @@ Bracken Vale is a native Windows music library and player built with WinUI 3, C#
 - Background scan of fixed drives, folder selection, ignored paths, pause/cancel, and skipping system or linked directories.
 - Playback through bundled LibVLC; an editable queue, shuffle, repeat, A–B repeat, crossfade, volume, EQ presets and saved 10-band EQ settings.
 - Choose a connected Windows audio output, including Bluetooth headphones and speakers; output selection is saved and can be refreshed in Settings.
+- Choose Mica, Desktop Acrylic glass, or an opaque window surface; set page transitions to subtle, expressive, or off. Motion follows Windows accessibility preferences and never animates individual library rows.
 - Paused-session restore for the track, position, queue, shuffle, repeat mode and A–B marks.
 - Local tag editing with preview, explicit save, backup and restore; standard and format-specific text fields, embedded/sidecar LRC lyrics and optional user-triggered LRCLIB search.
 - System/light/dark themes, artwork or manual accent color, Windows media controls, optional tray behavior, and weekly GitHub release checks that never install updates.

@@ -4,10 +4,10 @@ All notable changes to Bracken Vale are documented here.
 
 ## [Unreleased]
 
-- Select connected Windows audio outputs, including Bluetooth headphones and speakers, and retain the choice across restarts.
-
 ## [0.1.0-preview.1]
 
+- Select connected Windows audio outputs, including Bluetooth headphones and speakers, and retain the choice across restarts.
+- Choose Mica, Desktop Acrylic, or an opaque backdrop, plus subtle, expressive, or disabled page transitions that honor Windows accessibility settings.
 - Serialize concurrent tag, lyric-sidecar and playlist writes per file, with unique staged files and backups.
 - Compare stable and preview release tags correctly so preview users can see newer previews.
 - Let users resize the navigation and browse panes.
