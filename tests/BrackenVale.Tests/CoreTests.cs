@@ -214,7 +214,7 @@ public sealed class CoreTests : IDisposable
         await Task.WhenAll(writes);
 
         var exported = Playlists.ReadM3u8(destination);
-        Assert.True(playlists.Any(paths => exported.SequenceEqual(paths, StringComparer.Ordinal)));
+        Assert.Contains(playlists, paths => exported.SequenceEqual(paths, StringComparer.Ordinal));
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(destination)!, "shared.m3u8.*.tmp"));
     }
 
