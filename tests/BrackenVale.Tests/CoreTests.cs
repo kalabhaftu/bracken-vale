@@ -199,6 +199,26 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_m3u8_exports_keep_one_complete_playlist()
+    {
+        var destination = Path.Combine(_root, "exports", "shared.m3u8");
+        var playlists = Enumerable.Range(0, 4)
+            .Select(album => Enumerable.Range(0, 1024)
+                .Select(track => Path.Combine(_root, $"album-{album}", $"track-{track:D4}.flac"))
+                .ToArray())
+            .ToArray();
+        using var start = new ManualResetEventSlim();
+        var writes = playlists.Select(paths => Task.Run(() => { start.Wait(); Playlists.WriteM3u8(destination, paths); })).ToArray();
+
+        start.Set();
+        await Task.WhenAll(writes);
+
+        var exported = Playlists.ReadM3u8(destination);
+        Assert.True(playlists.Any(paths => exported.SequenceEqual(paths, StringComparer.Ordinal)));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(destination)!, "shared.m3u8.*.tmp"));
+    }
+
+    [Fact]
     public void Playlist_duplicate_path_occurrences_map_to_their_distinct_positions()
     {
         var paths = new[] { "missing.flac", "same.mp3", "unindexed.wav", "same.mp3" };
@@ -244,6 +264,21 @@ public sealed class CoreTests : IDisposable
         var lyricsPath = Path.Combine(_root, "timed.lrc");
         LyricsFiles.SaveSidecar(Path.Combine(_root, "timed.flac"), "[ar:Artist]\n[offset:250]\n[00:01.25]Café\n");
         Assert.Equal("[ar:Artist]\n[offset:250]\n[00:01.25]Café\n", System.IO.File.ReadAllText(lyricsPath));
+    }
+
+    [Fact]
+    public async Task Concurrent_sidecar_saves_do_not_share_temporary_files()
+    {
+        var trackPath = Path.Combine(_root, "sync.flac");
+        var lyrics = Enumerable.Range(0, 4).Select(index => new string((char)('A' + index), 200_000)).ToArray();
+        using var start = new ManualResetEventSlim();
+        var writes = lyrics.Select(text => Task.Run(() => { start.Wait(); LyricsFiles.SaveSidecar(trackPath, text); return text; })).ToArray();
+
+        start.Set();
+        await Task.WhenAll(writes);
+
+        Assert.Contains(System.IO.File.ReadAllText(LyricsFiles.SidecarPath(trackPath)), lyrics);
+        Assert.Empty(Directory.GetFiles(_root, "sync.lrc.*.tmp"));
     }
 
     [Fact]

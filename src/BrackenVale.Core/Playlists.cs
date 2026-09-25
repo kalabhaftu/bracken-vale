@@ -34,7 +34,7 @@ public static class Playlists
         var fullPlaylistPath = Path.GetFullPath(playlistPath);
         var directory = Path.GetDirectoryName(fullPlaylistPath)!;
         Directory.CreateDirectory(directory);
-        var temporary = fullPlaylistPath + ".tmp";
+        var temporary = fullPlaylistPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             using (var writer = new StreamWriter(temporary, false, new UTF8Encoding(false)))

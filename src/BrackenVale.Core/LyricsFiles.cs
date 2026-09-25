@@ -34,7 +34,7 @@ public static class LyricsFiles
     public static void SaveSidecar(string trackPath, string lyrics)
     {
         var destination = SidecarPath(trackPath);
-        var temporary = destination + ".tmp";
+        var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             System.IO.File.WriteAllText(temporary, lyrics, new UTF8Encoding(false));

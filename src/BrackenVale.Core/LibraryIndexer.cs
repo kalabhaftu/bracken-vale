@@ -1,3 +1,5 @@
+using System.Security;
+
 namespace BrackenVale.Core;
 
 public sealed record IndexResult(int Indexed, int Skipped, int Removed = 0);
@@ -44,7 +46,7 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
                     known[fullPath] = new(info.Length, info.LastWriteTimeUtc);
                     if (pending.Count >= 64) FlushPending();
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
                 {
                     skipped++;
                     _log.Warning("indexer", $"Skipped audio file '{fullPath}'.", ex);
