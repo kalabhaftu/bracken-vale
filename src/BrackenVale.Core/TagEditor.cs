@@ -72,44 +72,40 @@ public sealed class TagEditor(string backupDirectory)
     {
         path = Path.GetFullPath(path);
         using var pathMutex = new FilePathLock(path);
+        Directory.CreateDirectory(backupDirectory);
+        var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff");
+        var suffix = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path)))[..10];
+        var backup = Path.Combine(backupDirectory, $"{stamp}-{suffix}-{Guid.NewGuid():N}.bak");
+        var staged = TemporaryPath(path, "stage");
+        System.IO.File.Copy(path, backup, false);
         try
         {
-            Directory.CreateDirectory(backupDirectory);
-            var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff");
-            var suffix = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path)))[..10];
-            var backup = Path.Combine(backupDirectory, $"{stamp}-{suffix}-{Guid.NewGuid():N}.bak");
-            var staged = TemporaryPath(path, "stage");
-            System.IO.File.Copy(path, backup, false);
-            try
+            System.IO.File.Copy(path, staged, false);
+            using (var media = TagLib.File.Create(staged))
             {
-                System.IO.File.Copy(path, staged, false);
-                using (var media = TagLib.File.Create(staged))
-                {
-                    var tag = media.Tag;
-                    if (edit.Title is not null) tag.Title = edit.Title;
-                    if (edit.Artist is not null) tag.Performers = Split(edit.Artist);
-                    if (edit.Album is not null) tag.Album = edit.Album;
-                    if (edit.AlbumArtist is not null) tag.AlbumArtists = Split(edit.AlbumArtist);
-                    if (edit.Genre is not null) tag.Genres = Split(edit.Genre);
-                    if (edit.Year.HasValue) tag.Year = edit.Year.Value;
-                    if (edit.TrackNumber.HasValue) tag.Track = edit.TrackNumber.Value;
-                    if (edit.Lyrics is not null) tag.Lyrics = edit.Lyrics;
-                    if (edit.ArtworkPath is not null) tag.Pictures = [new Picture(edit.ArtworkPath)];
-                    ApplyAdditionalFields(tag, edit.AdditionalFields);
-                    ApplyCustomFields(media, path, edit.CustomFields);
-                    media.Save();
-                }
-                // Same-directory replacement keeps the original intact until the fully written staged file is ready.
-                System.IO.File.Move(staged, path, true);
-                return new(path, backup, DateTime.UtcNow);
+                var tag = media.Tag;
+                if (edit.Title is not null) tag.Title = edit.Title;
+                if (edit.Artist is not null) tag.Performers = Split(edit.Artist);
+                if (edit.Album is not null) tag.Album = edit.Album;
+                if (edit.AlbumArtist is not null) tag.AlbumArtists = Split(edit.AlbumArtist);
+                if (edit.Genre is not null) tag.Genres = Split(edit.Genre);
+                if (edit.Year.HasValue) tag.Year = edit.Year.Value;
+                if (edit.TrackNumber.HasValue) tag.Track = edit.TrackNumber.Value;
+                if (edit.Lyrics is not null) tag.Lyrics = edit.Lyrics;
+                if (edit.ArtworkPath is not null) tag.Pictures = [new Picture(edit.ArtworkPath)];
+                ApplyAdditionalFields(tag, edit.AdditionalFields);
+                ApplyCustomFields(media, path, edit.CustomFields);
+                media.Save();
             }
-            catch
-            {
-                if (System.IO.File.Exists(staged)) System.IO.File.Delete(staged);
-                throw;
-            }
+            // Same-directory replacement keeps the original intact until the fully written staged file is ready.
+            System.IO.File.Move(staged, path, true);
+            return new(path, backup, DateTime.UtcNow);
         }
-        finally { pathMutex.ReleaseMutex(); }
+        catch
+        {
+            if (System.IO.File.Exists(staged)) System.IO.File.Delete(staged);
+            throw;
+        }
     }
 
     public void Restore(TagBackup backup)
@@ -117,13 +113,9 @@ public sealed class TagEditor(string backupDirectory)
         if (!System.IO.File.Exists(backup.BackupPath)) throw new FileNotFoundException("The saved tag backup is missing.", backup.BackupPath);
         var original = Path.GetFullPath(backup.OriginalPath);
         using var pathMutex = new FilePathLock(original);
-        try
-        {
-            var restore = TemporaryPath(original, "restore");
-            try { System.IO.File.Copy(backup.BackupPath, restore, false); System.IO.File.Move(restore, original, true); }
-            finally { if (System.IO.File.Exists(restore)) System.IO.File.Delete(restore); }
-        }
-        finally { pathMutex.ReleaseMutex(); }
+        var restore = TemporaryPath(original, "restore");
+        try { System.IO.File.Copy(backup.BackupPath, restore, false); System.IO.File.Move(restore, original, true); }
+        finally { if (System.IO.File.Exists(restore)) System.IO.File.Delete(restore); }
     }
 
     private static string TemporaryPath(string path, string purpose) => Path.Combine(Path.GetDirectoryName(path)!,
