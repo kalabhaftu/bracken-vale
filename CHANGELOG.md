@@ -4,10 +4,6 @@ All notable changes to Bracken Vale are documented here.
 
 ## [Unreleased]
 
-- Expose additional standard metadata fields and show them in track details.
-- Preserve the current track while shuffling the upcoming queue, and honor repeat modes during timed crossfades.
-- Skip and log a corrupt saved playback session so it cannot block app startup.
-
 ## [0.1.0-preview.1]
 
 - Add the initial native Windows music player, local library, playback, playlist, metadata and lyrics features.
@@ -34,3 +30,6 @@ All notable changes to Bracken Vale are documented here.
 - Honor the weekly update-check interval when saving Settings while keeping manual checks immediate.
 - Display plain lyrics in Now Playing when timed LRC lines are unavailable.
 - Prevent an early sort-selection event from crashing the window during XAML initialization.
+- Expose additional standard metadata fields and show them in track details.
+- Preserve the current track while shuffling the upcoming queue, and honor repeat modes during timed crossfades.
+- Skip and log a corrupt saved playback session so it cannot block app startup.
