@@ -34,6 +34,7 @@ public static class LyricsFiles
     public static void SaveSidecar(string trackPath, string lyrics)
     {
         var destination = SidecarPath(trackPath);
+        using var pathLock = new FilePathLock(destination);
         var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {

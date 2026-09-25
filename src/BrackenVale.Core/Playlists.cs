@@ -32,6 +32,7 @@ public static class Playlists
     public static void WriteM3u8(string playlistPath, IEnumerable<string> trackPaths)
     {
         var fullPlaylistPath = Path.GetFullPath(playlistPath);
+        using var pathLock = new FilePathLock(fullPlaylistPath);
         var directory = Path.GetDirectoryName(fullPlaylistPath)!;
         Directory.CreateDirectory(directory);
         var temporary = fullPlaylistPath + "." + Guid.NewGuid().ToString("N") + ".tmp";

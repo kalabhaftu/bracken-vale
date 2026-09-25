@@ -71,7 +71,7 @@ public sealed class TagEditor(string backupDirectory)
     public TagBackup Save(string path, TagEdit edit)
     {
         path = Path.GetFullPath(path);
-        using var pathMutex = AcquirePathMutex(path);
+        using var pathMutex = new FilePathLock(path);
         try
         {
             Directory.CreateDirectory(backupDirectory);
@@ -116,7 +116,7 @@ public sealed class TagEditor(string backupDirectory)
     {
         if (!System.IO.File.Exists(backup.BackupPath)) throw new FileNotFoundException("The saved tag backup is missing.", backup.BackupPath);
         var original = Path.GetFullPath(backup.OriginalPath);
-        using var pathMutex = AcquirePathMutex(original);
+        using var pathMutex = new FilePathLock(original);
         try
         {
             var restore = TemporaryPath(original, "restore");
@@ -124,17 +124,6 @@ public sealed class TagEditor(string backupDirectory)
             finally { if (System.IO.File.Exists(restore)) System.IO.File.Delete(restore); }
         }
         finally { pathMutex.ReleaseMutex(); }
-    }
-
-    private static Mutex AcquirePathMutex(string path)
-    {
-        var canonical = OperatingSystem.IsWindows() ? path.ToUpperInvariant() : path;
-        var name = "BrackenVale.TagEdit." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
-        var mutex = new Mutex(false, name);
-        try { mutex.WaitOne(); }
-        catch (AbandonedMutexException) { }
-        catch { mutex.Dispose(); throw; }
-        return mutex;
     }
 
     private static string TemporaryPath(string path, string purpose) => Path.Combine(Path.GetDirectoryName(path)!,
