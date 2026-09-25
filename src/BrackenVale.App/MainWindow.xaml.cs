@@ -599,6 +599,26 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void ExportLogs_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileSavePicker();
+        picker.FileTypeChoices.Add("Bracken Vale diagnostic logs", [".zip"]);
+        picker.SuggestedFileName = $"BrackenVale-logs-{DateTime.Now:yyyyMMdd-HHmmss}";
+        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+        var file = await picker.PickSaveFileAsync();
+        if (file is null) return;
+        try
+        {
+            LocalAppLog.Shared.ExportTo(file.Path);
+            await ShowNoticeAsync("Logs exported. Review the ZIP for local file paths before sharing.");
+        }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Error("logs", "Could not export diagnostic logs.", ex);
+            await ShowNoticeAsync($"Could not export logs: {ex.Message}", InfoBarSeverity.Error);
+        }
+    }
+
     private Track? TrackFromSender(object sender)
     {
         var path = (sender as FrameworkElement)?.Tag?.ToString(); return path is null ? null : _store.GetTrack(path);
@@ -674,6 +694,9 @@ public sealed partial class MainWindow : Window
         content.Children.Add(new TextBlock { Text = $"Crash and error logs stay on this PC:\n{LocalAppLog.Shared.FolderPath}", TextWrapping = TextWrapping.Wrap });
         var openLogs = new Button { Content = "Open log folder", HorizontalAlignment = HorizontalAlignment.Left };
         openLogs.Click += OpenLogsFolder_Click; content.Children.Add(openLogs);
+        var exportLogs = new Button { Content = "Export diagnostic logs…", HorizontalAlignment = HorizontalAlignment.Left };
+        exportLogs.Click += ExportLogs_Click; content.Children.Add(exportLogs);
+        content.Children.Add(new TextBlock { Text = "Log archives may contain local file paths. Review before sharing.", TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] });
         content.Children.Add(new TextBlock { Text = "Library navigation · reorder with arrows, hide optional panels", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"], Margin = new Thickness(0, 12, 0, 0) });
         var navigationWidth = new Slider { Minimum = 180, Maximum = 360, StepFrequency = 10, Value = ReadPanelWidth("navigation-pane-width", 224, 180, 360) };
         var browseWidth = new Slider { Minimum = 160, Maximum = 400, StepFrequency = 10, Value = ReadPanelWidth("browse-pane-width", 240, 160, 400) };

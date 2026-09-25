@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 
 namespace BrackenVale.Core;
@@ -22,6 +23,32 @@ public sealed class LocalAppLog
     public void Info(string area, string message) => Write("INFO", area, message, null);
     public void Warning(string area, string message, Exception? exception = null) => Write("WARN", area, message, exception);
     public void Error(string area, string message, Exception exception) => Write("ERROR", area, message, exception);
+
+    public void ExportTo(string destination)
+    {
+        var fullPath = Path.GetFullPath(destination);
+        if (!Path.GetExtension(fullPath).Equals(".zip", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Diagnostic logs must be exported to a ZIP file.", nameof(destination));
+        var directory = Path.GetDirectoryName(fullPath)!;
+        lock (_gate)
+        {
+            string[] files = Directory.Exists(_folder)
+                ? Directory.GetFiles(_folder, "bracken-vale-*.log").Concat(Directory.GetFiles(_folder, "bracken-vale-*.log.1")).ToArray()
+                : [];
+            if (files.Length == 0) throw new FileNotFoundException("There are no Bracken Vale logs to export.", _folder);
+            var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            if (files.Contains(fullPath, pathComparer)) throw new ArgumentException("Choose a ZIP destination outside the log files.", nameof(destination));
+            Directory.CreateDirectory(directory);
+            var temporary = Path.Combine(directory, $".bracken-vale-logs-{Guid.NewGuid():N}.tmp");
+            try
+            {
+                using (var archive = ZipFile.Open(temporary, ZipArchiveMode.Create))
+                    foreach (var file in files) archive.CreateEntryFromFile(file, Path.GetFileName(file), CompressionLevel.Optimal);
+                File.Move(temporary, fullPath, true);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+    }
 
     private void Write(string level, string area, string message, Exception? exception)
     {

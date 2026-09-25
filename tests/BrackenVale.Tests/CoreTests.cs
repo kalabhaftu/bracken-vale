@@ -1,4 +1,5 @@
 using BrackenVale.Core;
+using System.IO.Compression;
 using Microsoft.Data.Sqlite;
 using TagLib;
 using Xunit;
@@ -26,6 +27,24 @@ public sealed class CoreTests : IDisposable
         var contents = System.IO.File.ReadAllText(file);
         Assert.Contains("[ERROR] [tag-editor] Could not save tags.", contents);
         Assert.Contains("System.IO.IOException: file is read-only", contents);
+    }
+
+    [Fact]
+    public void Local_log_exports_entries_as_a_shareable_zip()
+    {
+        var folder = Path.Combine(_root, "ExportLogs");
+        var log = new LocalAppLog(folder);
+        log.Error("playback", "Could not decode track.", new InvalidDataException("bad frame"));
+        var archivePath = Path.Combine(_root, "BrackenVale-logs.zip");
+
+        log.ExportTo(archivePath);
+
+        using var archive = ZipFile.OpenRead(archivePath);
+        var entry = Assert.Single(archive.Entries);
+        using var reader = new StreamReader(entry.Open());
+        var contents = reader.ReadToEnd();
+        Assert.Contains("[ERROR] [playback] Could not decode track.", contents);
+        Assert.Contains("System.IO.InvalidDataException: bad frame", contents);
     }
 
     [Fact]

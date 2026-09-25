@@ -36,7 +36,7 @@ For ARM64, use `-p:Platform=ARM64 -p:RuntimeIdentifier=win-arm64`. More packagin
 
 There are no accounts, streaming, telemetry or cloud sync. The weekly update check can be disabled. LRCLIB is contacted only after you request a search, and only the track title and artist are sent. No audio files or file paths are sent to either service.
 
-Crash and error logs are stored locally at `%LOCALAPPDATA%\BrackenVale\Logs`. Open the folder from Settings. Logs may contain local file paths and error details; review them before sharing.
+Crash and error logs are stored locally at `%LOCALAPPDATA%\BrackenVale\Logs`. Open the folder or export a ZIP from Settings. Logs may contain local file paths and error details; review them before sharing.
 
 ## License
 
