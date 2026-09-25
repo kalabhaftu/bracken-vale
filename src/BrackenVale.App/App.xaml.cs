@@ -8,7 +8,6 @@ public partial class App : Application
     private Window? _window;
     public App()
     {
-        InitializeComponent();
         UnhandledException += (_, args) => LocalAppLog.Shared.Error("ui-crash", "Unhandled WinUI exception.", args.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, args) => LocalAppLog.Shared.Error("process-crash", "Unhandled process exception.", args.ExceptionObject as Exception ?? new InvalidOperationException(args.ExceptionObject?.ToString()));
         TaskScheduler.UnobservedTaskException += (_, args) =>
@@ -16,6 +15,7 @@ public partial class App : Application
             LocalAppLog.Shared.Error("background-task", "Unobserved background-task exception.", args.Exception);
             args.SetObserved();
         };
+        InitializeComponent();
         LocalAppLog.Shared.Info("app", $"Starting Bracken Vale {GetType().Assembly.GetName().Version}.");
     }
 

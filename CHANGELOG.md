@@ -4,6 +4,8 @@ All notable changes to Bracken Vale are documented here.
 
 ## [Unreleased]
 
+- Register crash logging before app resource initialization to capture more startup failures.
+
 ## [0.1.0-preview.1]
 
 - Add the initial native Windows music player, local library, playback, playlist, metadata and lyrics features.
