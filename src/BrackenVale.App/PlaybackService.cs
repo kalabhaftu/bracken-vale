@@ -15,13 +15,14 @@ public sealed class PlaybackService : IDisposable
     private Track? _crossfadeTarget;
     private CancellationTokenSource? _crossfadeCancellation;
     private string? _reportedFailurePath;
+    private string? _audioOutputDeviceId;
     private float _volume = 75;
     private long _restorePosition;
 
     public PlaybackService()
     {
         LibVLCSharp.Shared.Core.Initialize();
-        _libVlc = new LibVLC();
+        _libVlc = new LibVLC("--aout=mmdevice");
         _libVlc.Log += (_, args) =>
         {
             if (args.Level is LogLevel.Warning or LogLevel.Error)
@@ -42,9 +43,17 @@ public sealed class PlaybackService : IDisposable
     public long Duration => _active.Length;
     public int Volume { get => (int)_volume; set { _volume = Math.Clamp(value, 0, 100); _active.Volume = (int)_volume; _next.Volume = (int)_volume; } }
 
+    public void SelectAudioOutputDevice(string? deviceId)
+    {
+        _audioOutputDeviceId = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId;
+        ApplyAudioOutputDevice(_active);
+        ApplyAudioOutputDevice(_next);
+    }
+
     public void LoadPaused(Track track, long positionMilliseconds)
     {
         SetMedia(_active, ref _activeMedia, track.Path);
+        ApplyAudioOutputDevice(_active);
         _active.Time = Math.Max(0, positionMilliseconds);
         _restorePosition = Math.Max(0, positionMilliseconds);
         CurrentTrack = track;
@@ -60,6 +69,7 @@ public sealed class PlaybackService : IDisposable
         CancelCrossfade();
         _active.Stop();
         SetMedia(_active, ref _activeMedia, track.Path);
+        ApplyAudioOutputDevice(_active);
         _restorePosition = 0;
         CurrentTrack = track;
         _reportedFailurePath = null;
@@ -70,6 +80,7 @@ public sealed class PlaybackService : IDisposable
     public void PlayLoaded()
     {
         if (_activeMedia is null) return;
+        ApplyAudioOutputDevice(_active);
         _reportedFailurePath = null;
         if (!_active.Play()) { ReportPlaybackFailure(CurrentTrack); return; }
         if (_restorePosition > 0) _ = SeekAfterStartAsync(_active, _restorePosition);
@@ -117,7 +128,7 @@ public sealed class PlaybackService : IDisposable
         var steps = Math.Max(1, milliseconds / 40);
         try
         {
-            incoming.Stop(); SetMedia(incoming, ref _nextMedia, nextTrack.Path); incoming.Volume = 0;
+            incoming.Stop(); SetMedia(incoming, ref _nextMedia, nextTrack.Path); ApplyAudioOutputDevice(incoming); incoming.Volume = 0;
             if (!incoming.Play()) throw new InvalidOperationException($"LibVLC refused to play '{nextTrack.Path}'. {_libVlc.LastLibVLCError}");
             for (var step = 1; step <= steps; step++)
             {
@@ -181,6 +192,13 @@ public sealed class PlaybackService : IDisposable
         media?.Dispose();
         media = new Media(_libVlc, new Uri(path));
         player.Media = media;
+    }
+
+    private void ApplyAudioOutputDevice(MediaPlayer player)
+    {
+        var deviceId = _audioOutputDeviceId ?? string.Empty;
+        player.SetOutputDevice(deviceId, "mmdevice");
+        player.SetOutputDevice(deviceId);
     }
 
     private void EndReached(object? sender, EventArgs e)

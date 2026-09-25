@@ -12,8 +12,10 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
+using Windows.Devices.Enumeration;
 using Windows.Graphics.Imaging;
 using Windows.Media;
+using Windows.Media.Devices;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
@@ -62,6 +64,7 @@ public sealed partial class MainWindow : Window
         if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) SystemBackdrop = new MicaBackdrop();
         var volume = int.TryParse(_store.GetSetting("volume"), out var savedVolume) ? Math.Clamp(savedVolume, 0, 100) : 75;
         VolumeSlider.Value = volume; _playback.Volume = volume;
+        _playback.SelectAudioOutputDevice(_store.GetSetting("audio-output-device"));
         ApplyStoredEqualizer();
         TrackList.ItemsSource = _tracks;
         PlaylistTrackList.ItemsSource = _tracks;
@@ -682,6 +685,53 @@ public sealed partial class MainWindow : Window
         foreach (var value in new[] { "Off", "2 seconds", "3 seconds", "5 seconds", "8 seconds", "10 seconds" }) crossfade.Items.Add(value);
         var oldCrossfade = int.TryParse(_store.GetSetting("crossfade-seconds"), out var seconds) ? seconds : 0;
         crossfade.SelectedIndex = oldCrossfade switch { 2 => 1, 3 => 2, 5 => 3, 8 => 4, 10 => 5, _ => 0 };
+        var audioOutput = new ComboBox { Header = "Audio output", MinWidth = 300 };
+        var audioOutputStatus = new TextBlock { TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
+        async Task RefreshAudioOutputsAsync()
+        {
+            var previousSelection = audioOutput.SelectedItem as ComboBoxItem;
+            var selectedId = previousSelection?.Tag?.ToString() ?? _store.GetSetting("audio-output-device");
+            var previousName = previousSelection?.Content?.ToString()?.Replace(" (not connected)", "", StringComparison.Ordinal)
+                ?? _store.GetSetting("audio-output-name") ?? "Saved output";
+            try
+            {
+                var devices = await DeviceInformation.FindAllAsync(MediaDevice.GetAudioRenderSelector());
+                audioOutput.Items.Clear();
+                var defaultOutput = new ComboBoxItem { Content = "System default", Tag = "" };
+                audioOutput.Items.Add(defaultOutput);
+                foreach (var device in devices.Where(device => device.IsEnabled && !string.IsNullOrWhiteSpace(device.Id))
+                             .GroupBy(device => device.Id, StringComparer.OrdinalIgnoreCase).Select(group => group.First())
+                             .OrderBy(device => device.Name, StringComparer.CurrentCultureIgnoreCase))
+                    audioOutput.Items.Add(new ComboBoxItem { Content = device.Name, Tag = device.Id });
+                var selected = audioOutput.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag?.ToString() == selectedId);
+                if (selected is null && !string.IsNullOrWhiteSpace(selectedId))
+                {
+                    selected = new ComboBoxItem { Content = $"{previousName} (not connected)", Tag = selectedId };
+                    audioOutput.Items.Add(selected);
+                    audioOutputStatus.Text = "The saved device is unavailable. Windows will use its default output until that device reconnects.";
+                }
+                else audioOutputStatus.Text = "Choose a connected Windows output, including Bluetooth headphones or speakers. Refresh after connecting a device.";
+                audioOutput.SelectedItem = selected ?? defaultOutput;
+            }
+            catch (Exception ex)
+            {
+                LocalAppLog.Shared.Warning("audio-devices", "Could not enumerate Windows audio output devices.", ex);
+                audioOutput.Items.Clear();
+                var defaultOutput = new ComboBoxItem { Content = "System default", Tag = "" };
+                audioOutput.Items.Add(defaultOutput);
+                if (!string.IsNullOrWhiteSpace(selectedId))
+                {
+                    var savedOutput = new ComboBoxItem { Content = $"{previousName} (device list unavailable)", Tag = selectedId };
+                    audioOutput.Items.Add(savedOutput);
+                    audioOutput.SelectedItem = savedOutput;
+                }
+                else audioOutput.SelectedItem = defaultOutput;
+                audioOutputStatus.Text = "Could not list audio devices. The selected device is retained; see the local log for details.";
+            }
+        }
+        var refreshAudioOutputs = new Button { Content = "Refresh devices", VerticalAlignment = VerticalAlignment.Bottom };
+        refreshAudioOutputs.Click += async (_, _) => await RefreshAudioOutputsAsync();
+        await RefreshAudioOutputsAsync();
         var ignored = new TextBox { Header = "Ignored folders (one full path per line)", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 84, Text = string.Join(Environment.NewLine, ReadJsonSetting("ignored-directories", Array.Empty<string>())) };
         content.Children.Add(theme); content.Children.Add(accentMode); content.Children.Add(updateCheck); content.Children.Add(minimizeToTray);
         var updateNow = new Button { Content = "Check for updates now" };
@@ -690,7 +740,7 @@ public sealed partial class MainWindow : Window
         content.Children.Add(updateNow); content.Children.Add(updateStatus);
         content.Children.Add(manualAccent);
         content.Children.Add(new TextBlock { Text = "Custom accent", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
-        content.Children.Add(colorPicker); content.Children.Add(crossfade); content.Children.Add(ignored);
+        content.Children.Add(colorPicker); content.Children.Add(crossfade); content.Children.Add(audioOutput); content.Children.Add(refreshAudioOutputs); content.Children.Add(audioOutputStatus); content.Children.Add(ignored);
         content.Children.Add(new TextBlock { Text = $"Crash and error logs stay on this PC:\n{LocalAppLog.Shared.FolderPath}", TextWrapping = TextWrapping.Wrap });
         var openLogs = new Button { Content = "Open log folder", HorizontalAlignment = HorizontalAlignment.Left };
         openLogs.Click += OpenLogsFolder_Click; content.Children.Add(openLogs);
@@ -733,6 +783,10 @@ public sealed partial class MainWindow : Window
         var chosenTheme = theme.SelectedItem?.ToString() ?? "System";
         var chosenAccent = accentMode.SelectedIndex == 1 ? "Artwork" : "Native";
         var crossfadeSeconds = crossfade.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 5, 4 => 8, 5 => 10, _ => 0 };
+        var selectedAudioOutput = audioOutput.SelectedItem as ComboBoxItem;
+        var audioOutputId = selectedAudioOutput?.Tag?.ToString() ?? "";
+        var audioOutputName = selectedAudioOutput?.Content?.ToString()?.Replace(" (not connected)", "", StringComparison.Ordinal)
+            .Replace(" (device list unavailable)", "", StringComparison.Ordinal) ?? "System default";
         var navigationPaneWidth = (int)Math.Round(navigationWidth.Value);
         var browsePaneWidth = (int)Math.Round(browseWidth.Value);
         string[] ignoredPaths;
@@ -746,6 +800,8 @@ public sealed partial class MainWindow : Window
         _store.SetSetting("theme", chosenTheme); _store.SetSetting("accent-mode", chosenAccent);
         _store.SetSetting("accent-manual", manualAccent.IsOn ? "true" : "false"); _store.SetSetting("accent-color", $"#{colorPicker.Color.R:X2}{colorPicker.Color.G:X2}{colorPicker.Color.B:X2}");
         _store.SetSetting("check-updates", updateCheck.IsOn ? "true" : "false"); _store.SetSetting("crossfade-seconds", crossfadeSeconds.ToString());
+        _store.SetSetting("audio-output-device", audioOutputId); _store.SetSetting("audio-output-name", audioOutputName);
+        _playback.SelectAudioOutputDevice(audioOutputId);
         _store.SetSetting("minimize-to-tray", minimizeToTray.IsOn ? "true" : "false"); ApplyTraySetting();
         _store.SetSetting("ignored-directories", JsonSerializer.Serialize(ignoredPaths));
         _store.SetSetting("navigation-pane-width", navigationPaneWidth.ToString(CultureInfo.InvariantCulture));

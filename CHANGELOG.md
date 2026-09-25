@@ -4,6 +4,8 @@ All notable changes to Bracken Vale are documented here.
 
 ## [Unreleased]
 
+- Select connected Windows audio outputs, including Bluetooth headphones and speakers, and retain the choice across restarts.
+
 ## [0.1.0-preview.1]
 
 - Serialize concurrent tag, lyric-sidecar and playlist writes per file, with unique staged files and backups.
