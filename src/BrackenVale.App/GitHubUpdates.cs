@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using BrackenVale.Core;
 
 namespace BrackenVale.App;
 
@@ -22,11 +23,15 @@ internal static class GitHubUpdates
         return client;
     }
 
-    public static async Task<GitHubRelease?> GetLatestAsync(CancellationToken cancellationToken = default)
+    public static async Task<GitHubRelease?> GetLatestAsync(bool includePrerelease, CancellationToken cancellationToken = default)
     {
         var releases = await Client.GetFromJsonAsync<GitHubRelease[]>("https://api.github.com/repos/kalabhaftu/bracken-vale/releases?per_page=10", cancellationToken).ConfigureAwait(false);
-        return releases?.Where(release => !release.Draft && !release.Prerelease)
-            .OrderByDescending(release => Version.TryParse(release.Tag.TrimStart('v'), out var version) ? version : new Version())
+        return releases?
+            .Where(release => !release.Draft && (includePrerelease || !release.Prerelease))
+            .Select(release => (Release: release, Valid: ReleaseVersion.TryParse(release.Tag, out var version), Version: version))
+            .Where(item => item.Valid)
+            .OrderByDescending(item => item.Version)
+            .Select(item => item.Release)
             .FirstOrDefault();
     }
 }

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
 using BrackenVale.Core;
 using Microsoft.UI;
@@ -742,9 +743,12 @@ public sealed partial class MainWindow : Window
         try
         {
             _store.SetSetting("last-update-check", DateTime.UtcNow.ToString("O"));
-            var release = await GitHubUpdates.GetLatestAsync();
-            var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 1, 0);
-            if (release is null || !Version.TryParse(release.Tag.TrimStart('v'), out var latest) || latest <= current)
+            var assembly = typeof(MainWindow).Assembly;
+            var currentVersionText = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? assembly.GetName().Version?.ToString(3);
+            var current = ReleaseVersion.TryParse(currentVersionText, out var parsedCurrent) ? parsedCurrent : new ReleaseVersion(0, 1, 0, null);
+            var release = await GitHubUpdates.GetLatestAsync(current.IsPrerelease);
+            if (release is null || !ReleaseVersion.TryParse(release.Tag, out var latest) || latest.CompareTo(current) <= 0)
             {
                 if (force)
                 {

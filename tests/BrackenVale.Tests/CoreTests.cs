@@ -247,6 +247,21 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void Release_versions_order_preview_and_stable_tags_correctly()
+    {
+        Assert.True(ReleaseVersion.TryParse("v0.1.0-preview.2+abcdef", out var secondPreview));
+        Assert.True(ReleaseVersion.TryParse("0.1.0-preview.1", out var firstPreview));
+        Assert.True(ReleaseVersion.TryParse("0.1.0", out var stable));
+        Assert.True(ReleaseVersion.TryParse("0.2.0-preview.1", out var newerPreview));
+        Assert.True(secondPreview.IsPrerelease);
+        Assert.True(secondPreview.CompareTo(firstPreview) > 0);
+        Assert.True(stable.CompareTo(secondPreview) > 0);
+        Assert.True(newerPreview.CompareTo(stable) > 0);
+        Assert.False(ReleaseVersion.TryParse("0.1.0-rc.1", out _));
+        Assert.False(ReleaseVersion.TryParse("0.1-preview.1", out _));
+    }
+
+    [Fact]
     public void Lrc_parser_keeps_milliseconds_multiple_timestamps_and_offset()
     {
         var document = Lyrics.Parse("[offset:250]\n[00:01.25][00:02.50]First\n[00:04.00]Second\n");

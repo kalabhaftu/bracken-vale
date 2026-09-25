@@ -7,6 +7,7 @@ All notable changes to Bracken Vale are documented here.
 ## [0.1.0-preview.1]
 
 - Serialize concurrent tag, lyric-sidecar and playlist writes per file, with unique staged files and backups.
+- Compare stable and preview release tags correctly so preview users can see newer previews.
 - Stream directory scans for responsive cancellation and skip access-denied paths without aborting the library scan.
 - Register crash logging before app resource initialization to capture more startup failures.
 - Keep A–B repeat stable while paused and prevent automatic crossfades from interrupting the marked passage.
