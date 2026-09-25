@@ -261,6 +261,7 @@ public sealed partial class MainWindow : Window
         {
             _queue.Clear(); _queue.AddRange(_tracks);
             _queueIndex = _queue.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
+            if (_shuffle) QueueNavigation.ShuffleUpcoming(_queue, Math.Clamp(_queueIndex + 1, 0, _queue.Count));
         }
         else if (queueIndex is { } requestedIndex && requestedIndex >= 0 && requestedIndex < _queue.Count) _queueIndex = requestedIndex;
         else
@@ -293,19 +294,14 @@ public sealed partial class MainWindow : Window
 
     private void AdvanceQueue(bool automatic)
     {
-        if (_queue.Count == 0) { if (_tracks.Count > 0) { _queue.AddRange(_tracks); _queueIndex = -1; } }
+        var wasEmpty = _queue.Count == 0;
+        EnsureQueueInitialized();
+        if (wasEmpty && _shuffle) QueueNavigation.ShuffleUpcoming(_queue, Math.Clamp(_queueIndex + 1, 0, _queue.Count));
         if (_queue.Count == 0) return;
-        if (automatic && _repeatMode == "Track" && _queueIndex >= 0) { PlayTrack(_queue[_queueIndex], false, _queueIndex); return; }
-        int next;
-        if (_shuffle && _queue.Count > 1)
+        var next = QueueNavigation.NextIndex(_queue.Count, _queueIndex, automatic, _repeatMode);
+        if (next < 0)
         {
-            do next = Random.Shared.Next(_queue.Count); while (next == _queueIndex);
-        }
-        else next = _queueIndex + 1;
-        if (next >= _queue.Count)
-        {
-            if (_repeatMode != "Queue") { _playback.Stop(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped; PlayPauseButton.Content = "Play"; return; }
-            next = 0;
+            _playback.Stop(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped; PlayPauseButton.Content = "Play"; return;
         }
         var track = _queue[next];
         if (_playback.IsPlaying && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && int.TryParse(_store.GetSetting("crossfade-seconds"), out var seconds) && seconds > 0)
@@ -318,8 +314,18 @@ public sealed partial class MainWindow : Window
 
     private void Shuffle_Click(object sender, RoutedEventArgs e)
     {
-        _shuffle = !_shuffle; if (_queue.Count == 0) _queue.AddRange(_tracks);
+        _shuffle = !_shuffle; EnsureQueueInitialized();
+        if (_shuffle) QueueNavigation.ShuffleUpcoming(_queue, Math.Clamp(_queueIndex + 1, 0, _queue.Count));
         SaveSession(); _ = ShowNoticeAsync(_shuffle ? "Shuffle is on." : "Shuffle is off.");
+    }
+
+    private void EnsureQueueInitialized()
+    {
+        if (_queue.Count > 0) return;
+        _queue.AddRange(_tracks); _queueIndex = -1;
+        if (_playback.CurrentTrack is not { } current) return;
+        _queueIndex = _queue.FindIndex(item => SameTrack(item.Path, current.Path));
+        if (_queueIndex < 0) { _queue.Insert(0, current); _queueIndex = 0; }
     }
 
     private void Repeat_Click(object sender, RoutedEventArgs e)
@@ -340,9 +346,10 @@ public sealed partial class MainWindow : Window
     private async void PlayNext_Click(object sender, RoutedEventArgs e)
     {
         if (TrackFromSender(sender) is not { } track) return;
-        if (_queue.Count == 0) _queue.AddRange(_tracks);
+        EnsureQueueInitialized();
         var insertAt = Math.Clamp(_queueIndex + 1, 0, _queue.Count);
         _queue.Insert(insertAt, track); if (_queueIndex >= 0 && insertAt <= _queueIndex) _queueIndex++;
+        if (_shuffle) QueueNavigation.ShuffleUpcoming(_queue, insertAt + 1);
         await ShowNoticeAsync($"{track.Title} will play next."); SaveSession();
     }
 
@@ -397,10 +404,11 @@ public sealed partial class MainWindow : Window
         {
             _store.RecordPlayed(track.Path, DateTime.UtcNow); _countedCurrentPlay = true;
         }
-        if (_playback.IsPlaying && !_crossfadeInProgress && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && _queueIndex + 1 < _queue.Count &&
+        var automaticNext = QueueNavigation.NextIndex(_queue.Count, _queueIndex, true, _repeatMode);
+        if (_playback.IsPlaying && !_crossfadeInProgress && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && automaticNext >= 0 &&
             int.TryParse(_store.GetSetting("crossfade-seconds"), out var crossfade) && crossfade > 0 && duration > 0 && duration - position <= crossfade * 1000)
         {
-            _queueIndex++; _crossfadeInProgress = true; _ = _playback.CrossfadeToAsync(_queue[_queueIndex], crossfade * 1000);
+            _queueIndex = automaticNext; _crossfadeInProgress = true; _ = _playback.CrossfadeToAsync(_queue[_queueIndex], crossfade * 1000);
         }
         if (DateTime.UtcNow - _lastSessionSave > TimeSpan.FromSeconds(5)) SaveSession();
         if (_playback.CurrentTrack is not null && _currentLyrics.Lines.Count > 0)
@@ -885,14 +893,15 @@ public sealed partial class MainWindow : Window
         fields.Children.Add(new TextBlock { Text = track.Path, TextWrapping = TextWrapping.Wrap, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] });
         foreach (var field in new[] { title, artist, album, albumArtist, genre, year, number, artwork }) fields.Children.Add(field);
         var additionalFields = new Dictionary<string, TextBox>(StringComparer.OrdinalIgnoreCase);
-        fields.Children.Add(new TextBlock { Text = "Additional standard tags", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"], Margin = new Thickness(0, 10, 0, 0) });
-        fields.Children.Add(new TextBlock { Text = "Fields unsupported by this file format are ignored. Use custom tags below for format-specific text fields.", TextWrapping = TextWrapping.Wrap, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] });
+        var additionalTagFields = new StackPanel { Spacing = 8, Margin = new Thickness(2) };
+        additionalTagFields.Children.Add(new TextBlock { Text = "Fields unsupported by this file format are ignored. Use custom tags below for format-specific text fields.", TextWrapping = TextWrapping.Wrap, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] });
         foreach (var field in TagEditor.AdditionalStandardFields)
         {
             var editor = AddTextField(field.Label, additionalValues[field.Key]);
             additionalFields[field.Key] = editor;
-            fields.Children.Add(editor);
+            additionalTagFields.Children.Add(editor);
         }
+        fields.Children.Add(new Expander { Header = "Additional standard tags", IsExpanded = false, Content = additionalTagFields });
         fields.Children.Add(artPicker); fields.Children.Add(artworkPreview); fields.Children.Add(custom);
         var scroll = new ScrollViewer { Content = fields, MaxHeight = 620, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var dialog = new ContentDialog { Title = "Preview and edit tags", Content = scroll, PrimaryButtonText = "Save tags", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };

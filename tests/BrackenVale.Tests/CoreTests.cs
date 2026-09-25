@@ -177,6 +177,24 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void Queue_navigation_respects_repeat_modes_and_shuffles_only_upcoming_tracks()
+    {
+        Assert.Equal(0, QueueNavigation.NextIndex(4, -1, false, "Off"));
+        Assert.Equal(2, QueueNavigation.NextIndex(4, 1, true, "Off"));
+        Assert.Equal(-1, QueueNavigation.NextIndex(4, 3, true, "Off"));
+        Assert.Equal(0, QueueNavigation.NextIndex(4, 3, true, "Queue"));
+        Assert.Equal(2, QueueNavigation.NextIndex(4, 2, true, "Track"));
+        Assert.Equal(3, QueueNavigation.NextIndex(4, 2, false, "Track"));
+        Assert.Equal(-1, QueueNavigation.NextIndex(0, -1, false, "Queue"));
+
+        var queue = new[] { "heard", "playing", "one", "two", "three" };
+        QueueNavigation.ShuffleUpcoming(queue, 2);
+        Assert.Equal(["heard", "playing"], queue[..2]);
+        Assert.Equal(new[] { "one", "two", "three" }, queue[2..].OrderBy(value => value, StringComparer.Ordinal));
+        Assert.Throws<ArgumentOutOfRangeException>(() => QueueNavigation.ShuffleUpcoming(queue, queue.Length + 1));
+    }
+
+    [Fact]
     public void Lrc_parser_keeps_milliseconds_multiple_timestamps_and_offset()
     {
         var document = Lyrics.Parse("[offset:250]\n[00:01.25][00:02.50]First\n[00:04.00]Second\n");
@@ -223,7 +241,7 @@ public sealed class CoreTests : IDisposable
         Assert.Equal("ID3v2 text frames and user text", TagEditor.CustomFieldFormat(path));
         Assert.Equal(initial, TagEditor.ReadCustomFields(path));
 
-        var updated = new Dictionary<string, string> { ["MOOD"] = "quiet", ["ID3:TCOM"] = "Ludwig" };
+        var updated = new Dictionary<string, string> { ["MOOD"] = "quiet", ["ID3:TLAN"] = "fra" };
         editor.Save(path, new TagEdit(CustomFields: updated));
         Assert.Equal(updated, TagEditor.ReadCustomFields(path));
     }

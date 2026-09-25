@@ -5,6 +5,7 @@ All notable changes to Bracken Vale are documented here.
 ## [Unreleased]
 
 - Expose additional standard metadata fields and show them in track details.
+- Preserve the current track while shuffling the upcoming queue, and honor repeat modes during timed crossfades.
 
 ## [0.1.0-preview.1]
 
