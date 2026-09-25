@@ -6,6 +6,7 @@ All notable changes to Bracken Vale are documented here.
 
 - Register crash logging before app resource initialization to capture more startup failures.
 - Keep A–B repeat stable while paused and prevent automatic crossfades from interrupting the marked passage.
+- Save completed tracks from the current database batch when a library scan is cancelled.
 
 ## [0.1.0-preview.1]
 

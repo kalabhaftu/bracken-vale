@@ -81,7 +81,7 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
                 {
                     await onAudioFile(entry, control.Token).ConfigureAwait(false);
                     filesFound++;
-                    if ((filesFound & 63) == 0) progress?.Report(new(filesFound, directoriesVisited, entry));
+                    if (filesFound % 16 == 0) progress?.Report(new(filesFound, directoriesVisited, entry));
                 }
             }
         }

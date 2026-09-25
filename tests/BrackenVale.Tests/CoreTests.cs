@@ -78,6 +78,20 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Indexer_cancellation_saves_tracks_from_the_incomplete_batch()
+    {
+        var root = Path.Combine(_root, "partial-scan"); Directory.CreateDirectory(root);
+        for (var index = 0; index < 20; index++) WriteWave(Path.Combine(root, $"track-{index:D2}.wav"));
+        using var control = new ScanControl();
+        var progress = new InlineProgress<ScanProgress>(value => { if (value.FilesFound >= 16) control.Cancel(); });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new LibraryIndexer(_store, Path.Combine(_root, "artwork"), new LocalAppLog(Path.Combine(_root, "Logs"))).ScanAsync([root], [], control, progress));
+
+        Assert.Equal(16, _store.GetTracks().Count);
+    }
+
+    [Fact]
     public async Task Scanner_skips_unavailable_roots()
     {
         var found = new List<string>();
@@ -316,6 +330,11 @@ public sealed class CoreTests : IDisposable
         writer.Write(System.Text.Encoding.ASCII.GetBytes("fmt ")); writer.Write(16); writer.Write((short)1); writer.Write((short)channels);
         writer.Write(sampleRate); writer.Write(sampleRate * channels * bits / 8); writer.Write((short)(channels * bits / 8)); writer.Write((short)bits);
         writer.Write(System.Text.Encoding.ASCII.GetBytes("data")); writer.Write(dataLength); writer.Write(new byte[dataLength]);
+    }
+
+    private sealed class InlineProgress<T>(Action<T> callback) : IProgress<T>
+    {
+        public void Report(T value) => callback(value);
     }
 
     public void Dispose()
