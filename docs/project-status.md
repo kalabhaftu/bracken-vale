@@ -1,7 +1,7 @@
 # Project status and completion tracker
 
 Updated: 2026-10-04  
-Reviewed revision: local `main` based on `c4a0379` (implementation changes are not committed yet)
+Reviewed revision: implementation PR #1, commit `baf48c4` (verification-documentation follow-up is in progress)
 
 This tracker keeps source implementation separate from verified behavior. A checked item under “Implemented” means the behavior is present in the code. A checked item under “Verified” records an executed check and its result.
 
@@ -23,13 +23,14 @@ This tracker keeps source implementation separate from verified behavior. A chec
 ## Verified
 
 - [x] Core suite on this Windows x64 machine: **36 passed, 0 failed** (`dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj -c Release`).
-- [x] Deterministic 100,000-track first-page search on this Windows x64 machine: **p95 14.2 ms, maximum 20.1 ms**, below the 250 ms target. GitHub-hosted CI has not run this change yet.
+- [x] Deterministic 100,000-track first-page search: **local Windows x64 p95 14.2 ms, maximum 20.1 ms**, below the 250 ms target; the Windows x64 CI job also passed the same asserted benchmark.
 - [x] `git diff --check` completed without whitespace errors.
-- [ ] Windows WinUI app build/launch. **Not verified:** `dotnet build` could not restore Windows App SDK and LibVLC packages; NuGet downloads timed out and then failed DNS/network resolution. This is an environment dependency-restore failure, not a successful build.
+- [x] Required PR checks passed on commit `baf48c4`: `Core tests · Linux`, `x64`, and `ARM64` ([run 37217758699](https://github.com/kalabhaftu/bracken-vale/actions/runs/37217758699)).
+- [x] Windows x64 and native ARM64 source builds and portable publishes succeeded; both passed the workflow's eight-second startup smoke test.
+- [ ] Local `dotnet build`/`dotnet run`. **Not verified on this workstation:** NuGet package downloads timed out and then failed DNS resolution, including through the public mirror. The Windows CI build passed, but this is still a local dependency-restore failure.
 - [ ] Manual UI use: library scan/playback, restart persistence, playlists, tag edit/restore, lyrics, tray/media controls, audio devices, keyboard/screen-reader operation, and narrow/high-DPI layout.
 - [ ] Supported format/device matrix. `docs/format-matrix.md` remains pending until actual Windows playback tests are completed.
 - [x] `main` branch protection requires a pull request plus `Core tests · Linux`, `x64`, and `ARM64` with up-to-date branch checks. No reviewer approval is required; administrators are included.
-- [ ] GitHub Actions results for the implementation pull request. The remote checks have not run yet.
 - [ ] Signing preflight against the configured repository secrets. Secret presence does not establish certificate trust, publisher match, validity or working private-key access. No release has been published by this work.
 - [ ] Signed installer/MSIX installation and upgrade/uninstall. Stable release stays blocked until the preflight succeeds.
 
