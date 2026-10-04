@@ -1,50 +1,40 @@
-# Project status and checklist
+# Project status and completion tracker
 
 Updated: 2026-10-04  
-Reviewed revision: `main` at `a5b7d26`
+Reviewed revision: local `main` based on `c4a0379` (implementation changes are not committed yet)
 
-This is an implementation review from the source code. “Implemented” means the behavior is present in code; it does not mean the Windows app has been manually tested. The local `dotnet run` attempt has not produced a runnable app in the checkout.
+This tracker keeps source implementation separate from verified behavior. A checked item under “Implemented” means the behavior is present in the code. A checked item under “Verified” records an executed check and its result.
 
-## Current snapshot
+## Implemented
 
-- [x] Core library and WinUI app have substantial working implementations; this is not an empty starter app.
-- [x] Core unit tests are present in `tests/BrackenVale.Tests/CoreTests.cs`.
-- [ ] Confirm the local app restore/build finishes and the window starts. **Not complete:** the `dotnet` process is no longer running, NuGet's app-project cache records failed package downloads, and no app executable is present under `src/BrackenVale.App/bin`.
-- [ ] Check current GitHub Actions results. **Not checked:** GitHub API was unreachable during this review.
-- [ ] Choose the next product feature with the user; no user-prioritized feature request is recorded here yet.
+- [x] SQLite v1 to v2 migration makes a database backup, adds trigram FTS5 indexes and scan-generation tables, and preserves tracks, settings, playlists, playback session and tag-backup rows.
+- [x] Search retains the previous short-query `LIKE` behavior, uses FTS5 substring candidates for queries of three or more characters, returns stable database pages, and limits each visible library or playlist page to 200 rows. The UI debounces search changes and cancels/discards stale query results.
+- [x] Scan generations record seen, excluded and completed paths in SQLite. Cleanup runs only after complete roots; offline, interrupted, inaccessible, system and reparse-point paths are preserved. User-configured ignored folders keep their previous remove-from-index behavior after a complete root scan.
+- [x] Playlist selection, duplicate-preserving page display, play, export, rename, delete and removal actions are wired to the selected playlist entry. Root management adds and removes library folders without deleting media or playlist paths.
+- [x] Scan UI displays elapsed time, counts and current path, with pause/resume/cancel feedback. First launch still discovers mounted fixed drives.
+- [x] Shuffle and A–B repeat expose their active state. The player, navigation and Now Playing layout adapt below 980/900/760 px, keep Queue and Equalizer controls reachable, use accessible names for compact icons, and follow the existing Fluent/Segoe UI style.
+- [x] Search pages cap visible track rows, artwork decodes to thumbnail size and uses an LRU cache estimated at 64 MB, and successful scans/root removal delete only artwork files no longer referenced by the index.
+- [x] Tag edits and restores copy in cancellable chunks, retain an undo copy on restore, and keep the newest five backup files and history records per exact track path.
+- [x] Playback state mutations are serialized, the second LibVLC player is lazy-created for crossfade, stale restore seeks are guarded by media generation, volume writes are debounced, and crossfade settings are cached.
+- [x] LRCLIB and GitHub update requests have bounded timeouts. Logs rotate at 4 MB, retain 14 days, and enforce a 50 MB total cap.
+- [x] GitHub Actions keeps the check names `Core tests · Linux`, `x64` and `ARM64`; actions are pinned to commit SHAs, permissions are restricted by job, and ARM64 uses the native `windows-11-arm` runner. Release signing preflights the certificate and a disposable signature; invalid/missing signing blocks stable tags while previews can publish unsigned portable ZIPs.
+- [x] Focused core tests cover migration, search compatibility and paging, root removal, playlist occurrences, interrupted/excluded scans, backup retention and restore/cancel, and artwork cleanup. A deterministic 100,000-track search benchmark is included for Windows x64.
 
-## Implemented in source
+## Verified
 
-- [x] **Library and scanning:** SQLite index, metadata extraction, search, sort, album/artist/genre/folder views, favorites, ratings, and scan pause/resume/cancel. See `src/BrackenVale.Core/LibraryStore.cs`, `LibraryScanner.cs`, `LibraryIndexer.cs`, and `src/BrackenVale.App/MainWindow.xaml.cs` (`StartScan`, `RefreshLibrary`).
-- [x] **Playlists:** core CRUD and M3U/M3U8 import/export, with order and duplicate entries preserved. See `LibraryStore.cs`, `Playlists.cs`, and `MainWindow.xaml.cs` (`NewPlaylist_Click`, `ImportPlaylist_Click`, `ExportPlaylist_Click`, `DeletePlaylist_Click`). The selected-playlist UI has a confirmed bug listed below.
-- [x] **Playback:** LibVLC playback, queue controls, seek, repeat, shuffle, A–B repeat, crossfade, volume, equalizer, and saved playback session. See `src/BrackenVale.App/PlaybackService.cs` and `MainWindow.xaml.cs` (`AdvanceQueue`, `ShowQueueAsync`, `Equalizer_Click`, `SaveSession`, `RestoreSession`).
-- [x] **Music management:** tag editing with recoverable backup/restore, lyrics editing and LRC sidecars, favorites, ratings, details, and reveal-in-Explorer actions. See `src/BrackenVale.Core/TagEditor.cs`, `Lyrics.cs`, `LyricsFiles.cs` and `MainWindow.xaml.cs` (`EditTags_Click`, `RestoreTags_Click`, `EditLyricsAsync`).
-- [x] **Settings and Windows integrations:** themes/materials, tray behavior, audio-output selection, Windows media controls, optional weekly release checks, and local logs. See `MainWindow.xaml.cs` (`ShowSettingsAsync`, `InitializeSystemMediaControls`, `CheckForUpdatesAsync`), `TrayIconService.cs`, `GitHubUpdates.cs`, and `LocalAppLog.cs`.
-- [x] **Build/release automation:** CI source builds and publishes x64/ARM64 portable ZIPs; tagged releases can also create signed setup EXEs and an MSIX bundle when signing secrets are configured. See `.github/workflows/ci.yml` and `.github/workflows/release.yml`. This confirms workflow code exists, not that a recent run or installation passed.
+- [x] Core suite on this Windows x64 machine: **36 passed, 0 failed** (`dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj -c Release`).
+- [x] Deterministic 100,000-track first-page search on this Windows x64 machine: **p95 14.2 ms, maximum 20.1 ms**, below the 250 ms target. GitHub-hosted CI has not run this change yet.
+- [x] `git diff --check` completed without whitespace errors.
+- [ ] Windows WinUI app build/launch. **Not verified:** `dotnet build` could not restore Windows App SDK and LibVLC packages; NuGet downloads timed out and then failed DNS/network resolution. This is an environment dependency-restore failure, not a successful build.
+- [ ] Manual UI use: library scan/playback, restart persistence, playlists, tag edit/restore, lyrics, tray/media controls, audio devices, keyboard/screen-reader operation, and narrow/high-DPI layout.
+- [ ] Supported format/device matrix. `docs/format-matrix.md` remains pending until actual Windows playback tests are completed.
+- [x] `main` branch protection requires a pull request plus `Core tests · Linux`, `x64`, and `ARM64` with up-to-date branch checks. No reviewer approval is required; administrators are included.
+- [ ] GitHub Actions results for the implementation pull request. The remote checks have not run yet.
+- [ ] Signing preflight against the configured repository secrets. Secret presence does not establish certificate trust, publisher match, validity or working private-key access. No release has been published by this work.
+- [ ] Signed installer/MSIX installation and upgrade/uninstall. Stable release stays blocked until the preflight succeeds.
 
-## Confirmed fixes and validation work
+## Known limits
 
-- [ ] **Fix playlist selection view.** Selecting a playlist makes `PlaylistView` hidden and `LibraryView` visible (`MainWindow.xaml.cs`, `RefreshLibrary`). The playlist action buttons and `PlaylistTrackList` are inside that hidden view (`MainWindow.xaml`, `PlaylistView`), so export/delete and playlist-row playback are inaccessible there.
-- [ ] **Fix playlist removal.** `RemoveFromPlaylist_Click` asks `PlaylistTrackList` for the row index even when called from the generic `TrackList` context menu. The playlist list is hidden when a playlist is selected, so neither removal route currently works as intended (`MainWindow.xaml.cs`, `RemoveFromPlaylist_Click`).
-- [ ] **Add library-root management.** The UI can add roots and configure ignored folders, but has no action to remove a previously added root (`MainWindow.xaml.cs`, `StartStartupScan`, `AddFolder_Click`, `ShowSettingsAsync`).
-- [ ] **Improve scan progress feedback.** The scan bar is indeterminate; the core also reports file count, directory count, and current path, but the UI does not expose a percentage, elapsed time, or current path (`MainWindow.xaml`, `ScanProgress`; `LibraryScanner.cs`, `ScanProgress`).
-- [ ] **Validate first-run and normal use on this PC:** finish restore/build, open the app, add a music folder, scan, play a real track, and restart to confirm library/session persistence.
-- [ ] **Validate playback formats and devices on Windows.** Every format in `docs/format-matrix.md` is marked “Pending Windows validation”; include actual audio output and Bluetooth device switching.
-- [ ] **Exercise Windows-only integrations:** media keys, tray minimize/restore, crossfade and A–B repeat, scaling/accessibility settings, and Windows 10/11 behavior. CI starts the x64 app for an 8-second smoke check; it does not cover these interactions.
-- [ ] **Exercise release packaging and installation:** check x64 and ARM64 artifacts, and test signed setup/MSIX install, launch, upgrade/uninstall when release credentials are available.
-- [ ] **Run the existing core test suite and review its CI result.** Tests are present, but they were not run as part of this source audit.
-
-## Smaller polish opportunities
-
-- [ ] Show persistent active states for Shuffle and A–B repeat; the current controls report changes through notices but do not show their active state.
-- [ ] Check search responsiveness with a large library; it refreshes on each text change, and no large-library runtime measurement is recorded.
-- [ ] Add UI/integration coverage for the app screens and playback wiring; the current automated suite targets `BrackenVale.Core`.
-
-## Suggested order to discuss
-
-1. Finish the current local restore and make sure the app opens.
-2. Fix the playlist screen and removal behavior, since those are confirmed broken paths.
-3. Use the app with your library and report the incomplete behavior you want changed next.
-4. Validate audio/device behavior, then choose any new features and release work.
-
-No feature beyond these verified issues is assumed to be required. Add the next user-approved task here when we agree on it, then update its checkbox as we implement and verify it.
+- NuGet connectivity prevented a local WinUI build and launch during this pass. Retry restore when `api.nuget.org` is reachable, then run the manual Windows checks above.
+- A new trusted signature may still receive SmartScreen warnings while publisher reputation develops. Third-party antivirus results are outside the release workflow's control.
+- No format or audio-device combination is marked verified without a real Windows playback check.

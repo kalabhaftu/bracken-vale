@@ -53,60 +53,107 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
         ScanControl control,
         Func<string, CancellationToken, ValueTask> onAudioFile,
         IProgress<ScanProgress>? progress = null,
-        Action<string>? directoryVisited = null)
+        Action<string>? directoryVisited = null,
+        Action<string, bool>? rootCompleted = null,
+        Action<string>? pathExcluded = null)
     {
         var ignored = ignoredDirectories.Select(path => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path))).ToHashSet(PathComparer);
-        var pending = new Stack<string>(roots.Reverse().Select(Normalize));
         var filesFound = 0;
         var directoriesVisited = 0;
-        while (pending.TryPop(out var directory))
+        foreach (var suppliedRoot in roots)
         {
             control.Token.ThrowIfCancellationRequested();
             await control.WaitIfPausedAsync().ConfigureAwait(false);
-            if (ignored.Contains(directory) || IsSystemDirectory(directory) || IsReparsePoint(directory)) continue;
-            IEnumerator<string> entries;
-            try { entries = Directory.EnumerateFileSystemEntries(directory).GetEnumerator(); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+            var root = Normalize(suppliedRoot);
+            var completeRoot = true;
+            if (!Directory.Exists(root))
             {
-                _log.Warning("scanner", $"Could not enumerate directory '{directory}'.", ex);
+                _log.Warning("scanner", $"Could not enumerate missing or unavailable root '{root}'.");
+                rootCompleted?.Invoke(root, false);
                 continue;
             }
-            var complete = true;
-            using (entries)
+
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.TryPop(out var directory))
             {
-                while (true)
+                control.Token.ThrowIfCancellationRequested();
+                await control.WaitIfPausedAsync().ConfigureAwait(false);
+                if (!TryGetAttributes(directory, out var directoryAttributes))
                 {
-                    string entry;
-                    try
+                    completeRoot = false;
+                    continue;
+                }
+                if ((directoryAttributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    pathExcluded?.Invoke(directory);
+                    continue;
+                }
+                if (ignored.Contains(directory)) continue;
+                if (IsSystemDirectory(directory))
+                {
+                    pathExcluded?.Invoke(directory);
+                    continue;
+                }
+                IEnumerator<string> entries;
+                try { entries = Directory.EnumerateFileSystemEntries(directory).GetEnumerator(); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+                {
+                    _log.Warning("scanner", $"Could not enumerate directory '{directory}'.", ex);
+                    completeRoot = false;
+                    continue;
+                }
+                var completeDirectory = true;
+                using (entries)
+                {
+                    while (true)
                     {
-                        if (!entries.MoveNext()) break;
-                        entry = entries.Current;
-                    }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
-                    {
-                        _log.Warning("scanner", $"Could not completely enumerate directory '{directory}'.", ex);
-                        complete = false;
-                        break;
-                    }
-                    control.Token.ThrowIfCancellationRequested();
-                    await control.WaitIfPausedAsync().ConfigureAwait(false);
-                    if (IsReparsePoint(entry)) continue;
-                    if (Directory.Exists(entry))
-                    {
-                        var normalized = Normalize(entry);
-                        if (!ignored.Contains(normalized) && !IsSystemDirectory(normalized)) pending.Push(normalized);
-                    }
-                    else if (AudioExtensions.Contains(Path.GetExtension(entry)))
-                    {
-                        await onAudioFile(entry, control.Token).ConfigureAwait(false);
-                        filesFound++;
-                        if (filesFound % 16 == 0) progress?.Report(new(filesFound, directoriesVisited, entry));
+                        string entry;
+                        try
+                        {
+                            if (!entries.MoveNext()) break;
+                            entry = entries.Current;
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+                        {
+                            _log.Warning("scanner", $"Could not completely enumerate directory '{directory}'.", ex);
+                            completeDirectory = false;
+                            completeRoot = false;
+                            break;
+                        }
+                        control.Token.ThrowIfCancellationRequested();
+                        await control.WaitIfPausedAsync().ConfigureAwait(false);
+                        if (!TryGetAttributes(entry, out var attributes))
+                        {
+                            completeDirectory = false;
+                            completeRoot = false;
+                            continue;
+                        }
+                        if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        {
+                            pathExcluded?.Invoke(entry);
+                            continue;
+                        }
+                        if ((attributes & FileAttributes.Directory) != 0)
+                        {
+                            var normalized = Normalize(entry);
+                            if (ignored.Contains(normalized)) continue;
+                            if (IsSystemDirectory(normalized)) pathExcluded?.Invoke(normalized);
+                            else pending.Push(normalized);
+                        }
+                        else if (AudioExtensions.Contains(Path.GetExtension(entry)))
+                        {
+                            await onAudioFile(entry, control.Token).ConfigureAwait(false);
+                            filesFound++;
+                            if (filesFound % 16 == 0) progress?.Report(new(filesFound, directoriesVisited, entry));
+                        }
                     }
                 }
+                if (!completeDirectory) continue;
+                directoriesVisited++;
+                directoryVisited?.Invoke(directory);
             }
-            if (!complete) continue;
-            directoriesVisited++;
-            directoryVisited?.Invoke(directory);
+            rootCompleted?.Invoke(root, completeRoot);
         }
         progress?.Report(new(filesFound, directoriesVisited, string.Empty));
     }
@@ -123,10 +170,15 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
             Path.TrimEndingDirectorySeparator(parent), Path.TrimEndingDirectorySeparator(root), comparison);
     }
 
-    private static bool IsReparsePoint(string path)
+    private bool TryGetAttributes(string path, out FileAttributes attributes)
     {
-        try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException) { return true; }
+        try { attributes = File.GetAttributes(path); return true; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            attributes = default;
+            _log.Warning("scanner", $"Could not inspect filesystem entry '{path}'.", ex);
+            return false;
+        }
     }
 
     private static string Normalize(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));

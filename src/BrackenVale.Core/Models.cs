@@ -37,6 +37,8 @@ public sealed record LyricsDocument(IReadOnlyList<LyricsLine> Lines, TimeSpan Of
 }
 
 public sealed record Playlist(string Id, string Name, IReadOnlyList<string> Paths, DateTime CreatedUtc);
+public sealed record PlaylistSummary(string Id, string Name, DateTime CreatedUtc, int TrackCount);
+public sealed record PlaylistEntry(int Position, string Path, Track? Track);
 public sealed record PlaybackSession(
     string? TrackPath,
     long PositionMilliseconds,

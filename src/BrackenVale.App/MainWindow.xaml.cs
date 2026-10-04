@@ -33,9 +33,12 @@ public sealed partial class MainWindow : Window
     private readonly LibraryStore _store = LibraryStore.InAppData();
     private readonly string _appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BrackenVale");
     private readonly ObservableCollection<Track> _tracks = [];
-    private readonly ObservableCollection<Playlist> _playlists = [];
-    private readonly List<Track> _queue = [];
+    private readonly ObservableCollection<PlaylistTrackRow> _playlistRows = [];
+    private readonly ObservableCollection<PlaylistSummary> _playlists = [];
+    private readonly List<string> _queue = [];
+    private const int LibraryPageSize = 200;
     private readonly PlaybackService _playback = new();
+    private readonly ArtworkImageCache _artworkCache = new(64L * 1024 * 1024);
     private readonly UISettings _uiSettings = new();
     private SystemMediaTransportControls? _systemControls;
     private TrayIconService? _tray;
@@ -48,6 +51,12 @@ public sealed partial class MainWindow : Window
     private bool _windowClosed;
     private bool _updatingPosition;
     private bool _countedCurrentPlay;
+    private DateTimeOffset? _scanStartedUtc;
+    private DateTimeOffset _lastScanStatusUpdateUtc;
+    private string _scanCurrentPath = "";
+    private int _scanFilesFound;
+    private int _scanDirectoriesVisited;
+    private bool _scanPaused;
     private long _heardMilliseconds;
     private long _lastPlayCountPosition;
     private bool _crossfadeInProgress;
@@ -55,8 +64,18 @@ public sealed partial class MainWindow : Window
     private int? _crossfadeSourceQueueIndex;
     private int _queueIndex = -1;
     private string _view = "Songs";
+    private int _pageIndex;
+    private int _totalTrackCount;
+    private DispatcherQueueTimer? _searchDebounce;
+    private CancellationTokenSource? _librarySearchCancellation;
+    private long _librarySearchRevision;
+    private DispatcherQueueTimer? _volumeSaveDebounce;
+    private int? _pendingVolumeSetting;
+    private int _persistedVolume;
+    private int _crossfadeSeconds;
+    private bool _suppressVolumePersistence;
     private string _repeatMode = "Off";
-    private Playlist? _selectedPlaylist;
+    private PlaylistSummary? _selectedPlaylist;
     private TimeSpan? _repeatA;
     private TimeSpan? _repeatB;
     private DateTime _lastSessionSave = DateTime.UtcNow;
@@ -67,12 +86,20 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         _uiReady = true;
         Title = "Bracken Vale";
+        _volumeSaveDebounce = DispatcherQueue.CreateTimer();
+        _volumeSaveDebounce.Interval = TimeSpan.FromMilliseconds(250);
+        _volumeSaveDebounce.IsRepeating = false;
+        _volumeSaveDebounce.Tick += (_, _) => PersistPendingVolumeSetting();
         var volume = int.TryParse(_store.GetSetting("volume"), out var savedVolume) ? Math.Clamp(savedVolume, 0, 100) : 75;
+        _persistedVolume = volume;
+        _crossfadeSeconds = ReadCrossfadeSeconds();
+        _suppressVolumePersistence = true;
         VolumeSlider.Value = volume; _playback.Volume = volume;
+        _suppressVolumePersistence = false;
         _playback.SelectAudioOutputDevice(_store.GetSetting("audio-output-device"));
         ApplyStoredEqualizer();
         TrackList.ItemsSource = _tracks;
-        PlaylistTrackList.ItemsSource = _tracks;
+        PlaylistTrackList.ItemsSource = _playlistRows;
         PlaylistList.ItemsSource = _playlists;
         ApplyStoredNavigation();
         NavView.SelectedItem = NavView.MenuItems.FirstOrDefault();
@@ -84,9 +111,15 @@ public sealed partial class MainWindow : Window
         ApplyTraySetting();
         _clock.Tick += Clock_Tick;
         _clock.Start();
+        _searchDebounce = DispatcherQueue.CreateTimer();
+        _searchDebounce.Interval = TimeSpan.FromMilliseconds(275);
+        _searchDebounce.IsRepeating = false;
+        _searchDebounce.Tick += (_, _) => _ = RefreshLibraryFromSearchAsync();
         Closed += MainWindow_Closed;
         ApplyStoredAppearance();
         RestoreSession();
+        UpdatePlaybackModeControls();
+        UpdateResponsiveLayout(ShellRoot.ActualWidth);
         RefreshLibrary();
         RefreshPlaylists();
         StartStartupScan();
@@ -96,10 +129,11 @@ public sealed partial class MainWindow : Window
     private void StartStartupScan()
     {
         var roots = ReadJsonSetting("library-roots", Array.Empty<string>()).ToList();
-        if (roots.Count == 0)
+        if (roots.Count == 0 && _store.GetSetting("library-roots-configured") != "true")
         {
             roots = LibraryScanner.DefaultRoots().ToList();
             _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
+            _store.SetSetting("library-roots-configured", "true");
         }
         if (roots.Count > 0) StartScan(roots);
     }
@@ -111,9 +145,17 @@ public sealed partial class MainWindow : Window
         if (scanRoots.Length == 0) return;
         var control = new ScanControl();
         _scanControl = control;
+        _scanStartedUtc = DateTimeOffset.UtcNow;
+        _lastScanStatusUpdateUtc = DateTimeOffset.MinValue;
+        _scanCurrentPath = "Preparing scan…";
+        _scanFilesFound = 0;
+        _scanDirectoriesVisited = 0;
+        _scanPaused = false;
         AddFolderButton.IsEnabled = ScanLibraryButton.IsEnabled = false;
+        ManageRootsButton.IsEnabled = false;
         ScanStatus.Visibility = Visibility.Visible; ScanPauseButton.Visibility = Visibility.Visible; ScanPauseButton.Content = "Pause scan";
-        ScanProgress.IsIndeterminate = true; ScanStatusText.Text = "Preparing library scan…";
+        ScanCancelButton.IsEnabled = true;
+        ScanProgress.IsIndeterminate = true; UpdateScanStatusText();
         try
         {
             var ignored = ReadJsonSetting("ignored-directories", Array.Empty<string>());
@@ -122,21 +164,29 @@ public sealed partial class MainWindow : Window
             var progress = new Progress<ScanProgress>(value =>
             {
                 if (_windowClosed) return;
-                ScanStatusText.Text = $"{value.FilesFound:N0} tracks · {value.DirectoriesVisited:N0} folders";
+                _scanFilesFound = value.FilesFound;
+                _scanDirectoriesVisited = value.DirectoriesVisited;
+                if (!string.IsNullOrWhiteSpace(value.CurrentPath)) _scanCurrentPath = value.CurrentPath;
+                UpdateScanStatusText();
                 if (value.FilesFound >= nextLibraryRefresh) { RefreshLibrary(); nextLibraryRefresh = value.FilesFound + 256; }
             });
             var result = await Task.Run(() => indexer.ScanAsync(scanRoots, ignored, control, progress));
-            if (!_windowClosed) ScanStatusText.Text = $"Indexed {result.Indexed:N0} · removed {result.Removed:N0} · skipped {result.Skipped:N0}";
+            if (!_windowClosed)
+            {
+                _scanCurrentPath = "Scan complete";
+                ScanStatusText.Text = $"Scan complete · indexed {result.Indexed:N0} · removed {result.Removed:N0} · skipped {result.Skipped:N0} · {FormatElapsed(_scanStartedUtc)}";
+                ToolTipService.SetToolTip(ScanStatusText, ScanStatusText.Text);
+            }
         }
         catch (OperationCanceledException)
         {
             LocalAppLog.Shared.Info("scanner", "Library scan cancelled; completed tracks were retained.");
-            if (!_windowClosed) ScanStatusText.Text = "Scan cancelled; completed tracks are saved.";
+            if (!_windowClosed) { _scanCurrentPath = "Scan cancelled"; ScanStatusText.Text = $"Scan cancelled · saved completed tracks · {FormatElapsed(_scanStartedUtc)}"; }
         }
         catch (Exception ex)
         {
             LocalAppLog.Shared.Error("scanner", "Library scan failed.", ex);
-            if (!_windowClosed) ScanStatusText.Text = $"Scan stopped: {ex.Message}";
+            if (!_windowClosed) { _scanCurrentPath = "Scan stopped"; ScanStatusText.Text = $"Scan stopped: {ex.Message} · {FormatElapsed(_scanStartedUtc)}"; }
         }
         finally
         {
@@ -144,7 +194,7 @@ public sealed partial class MainWindow : Window
             if (ReferenceEquals(_scanControl, control)) _scanControl = null;
             if (!_windowClosed)
             {
-                AddFolderButton.IsEnabled = ScanLibraryButton.IsEnabled = true; ScanPauseButton.Visibility = Visibility.Collapsed;
+                AddFolderButton.IsEnabled = ScanLibraryButton.IsEnabled = ManageRootsButton.IsEnabled = true; ScanPauseButton.Visibility = Visibility.Collapsed;
                 ConfigureGroupView();
                 _ = Task.Delay(4500).ContinueWith(_ => DispatcherQueue.TryEnqueue(() =>
                 {
@@ -164,13 +214,97 @@ public sealed partial class MainWindow : Window
         var roots = ReadJsonSetting("library-roots", Array.Empty<string>()).ToList();
         if (!roots.Contains(folder.Path, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)) roots.Add(folder.Path);
         _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
+        _store.SetSetting("library-roots-configured", "true");
         StartScan([folder.Path]);
+    }
+
+    private async void ManageRoots_Click(object sender, RoutedEventArgs e) => await ManageLibraryRootsAsync();
+
+    private async Task ManageLibraryRootsAsync()
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var originalRoots = ReadJsonSetting("library-roots", Array.Empty<string>())
+            .Select(NormalizeRoot).Where(path => path is not null).Cast<string>().Distinct(comparer).ToArray();
+        var roots = new ObservableCollection<string>(originalRoots);
+        var list = new ListView { ItemsSource = roots, SelectionMode = ListViewSelectionMode.Single, MinHeight = 160, MaxHeight = 320 };
+        AutomationProperties.SetName(list, "Folders included in the music library");
+        var add = new Button { Content = "Add folder…" };
+        var remove = new Button { Content = "Remove selected", IsEnabled = false };
+        var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
+        list.SelectionChanged += (_, _) => remove.IsEnabled = list.SelectedItem is string;
+        add.Click += async (_, _) =>
+        {
+            var picker = new FolderPicker(); picker.FileTypeFilter.Add("*");
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is null) return;
+            var fullPath = NormalizeRoot(folder.Path);
+            if (fullPath is null) return;
+            if (roots.Contains(fullPath, comparer)) { status.Text = "That folder is already included."; return; }
+            roots.Add(fullPath); list.SelectedItem = fullPath; status.Text = "Folder added. Save to include it in the library.";
+        };
+        remove.Click += (_, _) =>
+        {
+            if (list.SelectedItem is not string selected) return;
+            roots.Remove(selected);
+            status.Text = "Saving will remove this folder from future scans and remove unshared indexed tracks. Music files are never deleted; playlist entries remain saved.";
+        };
+        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        controls.Children.Add(add); controls.Children.Add(remove);
+        var body = new StackPanel { Spacing = 10, MinWidth = 420 };
+        body.Children.Add(new TextBlock { Text = "Bracken Vale scans these locations for music. Removing a folder only changes the library index; it never deletes files.", TextWrapping = TextWrapping.Wrap });
+        body.Children.Add(list); body.Children.Add(controls); body.Children.Add(status);
+        var dialog = new ContentDialog
+        {
+            Title = "Library folders", Content = body, PrimaryButtonText = "Save", CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var remainingRoots = roots.ToArray();
+        var removedRoots = originalRoots.Where(oldRoot => !remainingRoots.Contains(oldRoot, comparer)).ToArray();
+        var addedRoots = remainingRoots.Where(newRoot => !originalRoots.Contains(newRoot, comparer)).ToArray();
+        if (removedRoots.Length > 0)
+        {
+            var confirm = new ContentDialog
+            {
+                Title = "Remove folders from the library?",
+                Content = $"Bracken Vale will stop scanning these folders and remove unshared tracks from its index:\n\n{string.Join("\n", removedRoots)}\n\nMusic files will not be deleted, and saved playlist entries will remain.",
+                PrimaryButtonText = "Remove from library", CloseButtonText = "Keep folders",
+                DefaultButton = ContentDialogButton.Close, XamlRoot = ShellRoot.XamlRoot
+            };
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+        }
+        try
+        {
+            if (removedRoots.Length > 0)
+                await Task.Run(() => _store.RemoveTracksUnderUnselectedRoots(removedRoots, remainingRoots));
+            if (removedRoots.Length > 0)
+                await Task.Run(() => _store.PruneUnreferencedArtwork(Path.Combine(_appData, "Artwork")));
+            _store.SetSetting("library-roots", JsonSerializer.Serialize(remainingRoots));
+            _store.SetSetting("library-roots-configured", "true");
+            ConfigureGroupView(); RefreshPlaylists(); RefreshLibrary();
+            if (addedRoots.Length > 0) StartScan(addedRoots);
+            else await ShowNoticeAsync("Library folders saved.");
+        }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Error("library-roots", "Could not apply library folder changes.", ex);
+            await ShowNoticeAsync($"Could not apply the library folder changes: {ex.Message}", InfoBarSeverity.Error);
+        }
+    }
+
+    private static string? NormalizeRoot(string path)
+    {
+        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        { LocalAppLog.Shared.Warning("library-roots", $"Ignored invalid saved library folder '{path}'.", ex); return null; }
     }
 
     private void Scan_Click(object sender, RoutedEventArgs e)
     {
         var roots = ReadJsonSetting("library-roots", Array.Empty<string>());
-        if (roots.Length == 0) roots = LibraryScanner.DefaultRoots().ToArray();
+        if (roots.Length == 0) { _ = ShowNoticeAsync("Add a music folder in Library folders before starting a scan."); return; }
         StartScan(roots);
     }
 
@@ -178,37 +312,143 @@ public sealed partial class MainWindow : Window
     {
         if (_scanControl is null) return;
         if (ScanPauseButton.Content?.ToString() == "Pause scan")
-        { _scanControl.Pause(); ScanPauseButton.Content = "Resume scan"; ScanStatusText.Text = "Scan paused"; }
-        else { _scanControl.Resume(); ScanPauseButton.Content = "Pause scan"; }
+        { _scanControl.Pause(); _scanPaused = true; ScanPauseButton.Content = "Resume scan"; UpdateScanStatusText(); }
+        else { _scanControl.Resume(); _scanPaused = false; ScanPauseButton.Content = "Pause scan"; UpdateScanStatusText(); }
     }
 
     private void ScanCancel_Click(object sender, RoutedEventArgs e) => _scanControl?.Cancel();
 
+    private void UpdateScanStatusText()
+    {
+        if (_scanControl is null || _windowClosed) return;
+        var path = _scanPaused ? "Paused" : string.IsNullOrWhiteSpace(_scanCurrentPath) ? "Finishing scan…" : _scanCurrentPath;
+        ScanStatusText.Text = $"{(_scanPaused ? "Paused · " : "")}{FormatElapsed(_scanStartedUtc)} · {_scanFilesFound:N0} tracks · {_scanDirectoriesVisited:N0} folders · {path}";
+        ToolTipService.SetToolTip(ScanStatusText, path);
+    }
+
+    private static string FormatElapsed(DateTimeOffset? startedUtc)
+    {
+        if (startedUtc is null) return "0:00";
+        var elapsed = DateTimeOffset.UtcNow - startedUtc.Value;
+        return elapsed.TotalHours >= 1 ? elapsed.ToString(@"h\:mm\:ss") : elapsed.ToString(@"m\:ss");
+    }
+
+    private sealed record LibraryQueryRequest(string? Search, string View, PlaylistSummary? SelectedPlaylist,
+        TrackSort Sort, bool Descending, string? GroupColumn, string? GroupValue, int Offset);
+    private sealed record LibraryPageResult(IReadOnlyList<Track> Tracks, IReadOnlyList<PlaylistTrackRow> PlaylistRows, int TotalCount, int PageIndex);
+
+    private LibraryQueryRequest CaptureLibraryQuery(string? search) => new(search, _view, _selectedPlaylist,
+        _sort, _descending, GroupColumn(), GroupList.SelectedItem?.ToString(), _pageIndex * LibraryPageSize);
+
+    private LibraryPageResult ReadLibraryPage(LibraryQueryRequest request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (request.View == "Playlists" && request.SelectedPlaylist is { } selected)
+        {
+            var entries = _store.GetPlaylistEntriesPage(selected.Id, request.Search, request.Offset, LibraryPageSize);
+            cancellationToken.ThrowIfCancellationRequested();
+            var total = _store.CountPlaylistEntries(selected.Id, request.Search);
+            return new(entries.Where(entry => entry.Track is not null).Select(entry => entry.Track!).ToArray(),
+                entries.Select(entry => new PlaylistTrackRow(entry)).ToArray(), total, request.Offset / LibraryPageSize);
+        }
+
+        var filter = request.View switch { "Favorites" => "favorites", "Most Played" => "most-played", "Recently Played" => "recent", _ => null };
+        var totalCount = _store.CountTracks(request.Search, request.Sort, request.Descending, filter, request.GroupColumn, request.GroupValue);
+        cancellationToken.ThrowIfCancellationRequested();
+        var tracks = _store.GetTracksPage(request.Search, request.Sort, request.Descending, filter, request.GroupColumn,
+            request.GroupValue, request.Offset, LibraryPageSize);
+        return new(tracks, Array.Empty<PlaylistTrackRow>(), totalCount, request.Offset / LibraryPageSize);
+    }
+
     private void RefreshLibrary()
     {
-        var search = SearchBox?.Text;
-        IReadOnlyList<Track> source;
-        if (_selectedPlaylist is not null)
+        CancelPendingLibrarySearch();
+        var result = ReadLibraryPage(CaptureLibraryQuery(SearchBox?.Text), CancellationToken.None);
+        ApplyLibraryPage(result);
+    }
+
+    private void CancelPendingLibrarySearch()
+    {
+        _librarySearchRevision++;
+        var pending = _librarySearchCancellation;
+        _librarySearchCancellation = null;
+        pending?.Cancel();
+    }
+
+    private async Task RefreshLibraryFromSearchAsync()
+    {
+        if (_windowClosed) return;
+        var request = CaptureLibraryQuery(SearchBox?.Text);
+        var revision = ++_librarySearchRevision;
+        var cancellation = new CancellationTokenSource();
+        var previous = _librarySearchCancellation;
+        _librarySearchCancellation = cancellation;
+        previous?.Cancel();
+        try
         {
-            source = _selectedPlaylist.Paths.Select(path => _store.GetTrack(path)).Where(track => track is not null).Cast<Track>().ToArray();
-            if (!string.IsNullOrWhiteSpace(search)) source = source.Where(track => Contains(track.Title, search) || Contains(track.Artist, search) || Contains(track.Album, search) || Contains(track.AlbumArtist, search) || Contains(track.Genre, search) || Contains(track.Path, search)).ToArray();
+            var result = await Task.Run(() => ReadLibraryPage(request, cancellation.Token), cancellation.Token);
+            if (!_windowClosed && !cancellation.IsCancellationRequested && revision == _librarySearchRevision)
+                ApplyLibraryPage(result);
         }
-        else
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception ex)
         {
-            var filter = _view switch { "Favorites" => "favorites", "Most Played" => "most-played", "Recently Played" => "recent", _ => null };
-            source = _store.GetTracks(search, _sort, _descending, filter, GroupColumn(), GroupList.SelectedItem?.ToString());
+            LocalAppLog.Shared.Warning("library-search", "Search refresh failed.", ex);
+            if (!_windowClosed && revision == _librarySearchRevision)
+                _ = ShowNoticeAsync("Search could not be completed. See the local log for details.", InfoBarSeverity.Error);
         }
-        _tracks.Clear(); foreach (var track in source) _tracks.Add(track);
-        TrackCountText.Text = $"{_tracks.Count:N0} {(_tracks.Count == 1 ? "track" : "tracks")}";
-        var activeView = _view == "Now Playing" ? NowPlayingView : _view == "Playlists" && _selectedPlaylist is null ? PlaylistView : LibraryView;
+        finally
+        {
+            if (ReferenceEquals(_librarySearchCancellation, cancellation)) _librarySearchCancellation = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private void ApplyLibraryPage(LibraryPageResult result)
+    {
+        _pageIndex = result.PageIndex;
+        _totalTrackCount = result.TotalCount;
+        _tracks.Clear(); foreach (var track in result.Tracks) _tracks.Add(track);
+        _playlistRows.Clear(); foreach (var entry in result.PlaylistRows) _playlistRows.Add(entry);
+        var firstTrack = _totalTrackCount == 0 ? 0 : _pageIndex * LibraryPageSize + 1;
+        var lastTrack = Math.Min((_pageIndex + 1) * LibraryPageSize, _totalTrackCount);
+        TrackCountText.Text = _view == "Playlists"
+            ? _selectedPlaylist is null ? $"{_playlists.Count:N0} playlists" : $"{_totalTrackCount:N0} entries"
+            : _totalTrackCount == 0 ? "No matching tracks" : $"{firstTrack:N0}–{lastTrack:N0} of {_totalTrackCount:N0} tracks";
+        PageStatusText.Text = _totalTrackCount == 0 ? "No tracks" : $"{firstTrack:N0}–{lastTrack:N0} of {_totalTrackCount:N0}";
+        PlaylistPageStatusText.Text = _totalTrackCount == 0 ? "No entries" : $"{firstTrack:N0}–{lastTrack:N0} of {_totalTrackCount:N0}";
+        PreviousPageButton.IsEnabled = _pageIndex > 0;
+        NextPageButton.IsEnabled = (_pageIndex + 1) * LibraryPageSize < _totalTrackCount;
+        PlaylistPager.Visibility = _view == "Playlists" && _selectedPlaylist is not null && _totalTrackCount > LibraryPageSize
+            ? Visibility.Visible : Visibility.Collapsed;
+        LibraryPager.Visibility = _view != "Playlists" && _view != "Now Playing" && _totalTrackCount > LibraryPageSize
+            ? Visibility.Visible : Visibility.Collapsed;
+        SortBox.Visibility = SortDirectionButton.Visibility = _view == "Playlists" ? Visibility.Collapsed : Visibility.Visible;
+        var playlistActive = _view == "Playlists";
+        var activeView = _view == "Now Playing" ? NowPlayingView : playlistActive ? PlaylistView : LibraryView;
         var enteringView = activeView.Visibility != Visibility.Visible;
-        EmptyState.Visibility = _tracks.Count == 0 && _selectedPlaylist is null ? Visibility.Visible : Visibility.Collapsed;
-        PlaylistView.Visibility = _view == "Playlists" && _selectedPlaylist is null ? Visibility.Visible : Visibility.Collapsed;
-        LibraryView.Visibility = _view != "Now Playing" && PlaylistView.Visibility != Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+        EmptyState.Visibility = _tracks.Count == 0 && !playlistActive ? Visibility.Visible : Visibility.Collapsed;
+        PlaylistView.Visibility = playlistActive ? Visibility.Visible : Visibility.Collapsed;
+        LibraryView.Visibility = _view != "Now Playing" && !playlistActive ? Visibility.Visible : Visibility.Collapsed;
         NowPlayingView.Visibility = _view == "Now Playing" ? Visibility.Visible : Visibility.Collapsed;
         if (enteringView) AnimateContentEntrance(activeView);
-        if (_selectedPlaylist is not null) ViewTitle.Text = _selectedPlaylist.Name;
+        if (_view == "Playlists") ViewTitle.Text = "Playlists";
         else ViewTitle.Text = GroupList.SelectedItem is string group ? $"{_view} · {group}" : _view;
+
+        var hasSelectedPlaylist = playlistActive && _selectedPlaylist is not null;
+        PlaylistDetailTitle.Text = _selectedPlaylist?.Name ?? "Choose a playlist";
+        PlaylistDetailCount.Text = _selectedPlaylist is null
+            ? $"{_playlists.Count:N0} {(_playlists.Count == 1 ? "playlist" : "playlists")} stored on this PC"
+            : $"{_totalTrackCount:N0} entries · page {_pageIndex + 1:N0}";
+        PlaylistTrackList.Visibility = hasSelectedPlaylist && _playlistRows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        PlaylistEmptyState.Visibility = !hasSelectedPlaylist || _playlistRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PlaylistEmptyTitle.Text = _selectedPlaylist is null ? (_playlists.Count == 0 ? "No playlists yet" : "Select a playlist") : "This playlist is empty";
+        PlaylistEmptyMessage.Text = _selectedPlaylist is null
+            ? (_playlists.Count == 0 ? "Create a playlist or import an M3U8 file to get started." : "Choose a playlist from the list to view and play its tracks.")
+            : "Playlist entries are kept locally. Tracks can be unavailable if their files were moved or removed.";
+        RenamePlaylistButton.IsEnabled = ExportPlaylistButton.IsEnabled = DeletePlaylistButton.IsEnabled = hasSelectedPlaylist;
+        PlayPlaylistButton.IsEnabled = hasSelectedPlaylist && _totalTrackCount > 0;
+        PlayPauseButton.IsEnabled = _playback.CurrentTrack is not null || _tracks.Count > 0;
     }
 
     private static bool Contains(string value, string query) => value.Contains(query, StringComparison.CurrentCultureIgnoreCase);
@@ -254,6 +494,7 @@ public sealed partial class MainWindow : Window
         if (next == "Playlists") { _selectedPlaylist = null; RefreshPlaylists(); }
         else _selectedPlaylist = null;
         _view = next;
+        _pageIndex = 0;
         GroupList.SelectedIndex = -1;
         ConfigureGroupView();
         _sort = next switch { "Albums" => TrackSort.Album, "Artists" => TrackSort.Artist, "Genres" => TrackSort.Genre, "Folders" => TrackSort.Path,
@@ -287,9 +528,27 @@ public sealed partial class MainWindow : Window
             GroupList.SelectedItem = selected;
     }
 
-    private void GroupList_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshLibrary();
+    private void GroupList_SelectionChanged(object sender, SelectionChangedEventArgs e) { _pageIndex = 0; RefreshLibrary(); }
 
-    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshLibrary();
+    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _pageIndex = 0;
+        CancelPendingLibrarySearch();
+        if (_searchDebounce is null) RefreshLibrary();
+        else { _searchDebounce.Stop(); _searchDebounce.Start(); }
+    }
+
+    private void PreviousPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pageIndex <= 0) return;
+        _pageIndex--; RefreshLibrary();
+    }
+
+    private void NextPage_Click(object sender, RoutedEventArgs e)
+    {
+        if ((_pageIndex + 1) * LibraryPageSize >= _totalTrackCount) return;
+        _pageIndex++; RefreshLibrary();
+    }
 
     private void SortBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -298,23 +557,42 @@ public sealed partial class MainWindow : Window
             _sort = SortBox.SelectedIndex switch { 0 => TrackSort.Title, 1 => TrackSort.Artist, 2 => TrackSort.Album, 3 => TrackSort.Genre,
                 4 => TrackSort.Year, 5 => TrackSort.Added, 6 => TrackSort.Duration, 7 => TrackSort.PlayCount,
                 8 => TrackSort.LastPlayed, 9 => TrackSort.Path, _ => TrackSort.Rating };
+            _pageIndex = 0;
             RefreshLibrary();
         }
     }
 
     private void SortDirection_Click(object sender, RoutedEventArgs e)
     {
-        _descending = !_descending; SortDirectionButton.Content = _descending ? "Descending" : "Ascending"; RefreshLibrary();
+        _descending = !_descending; _pageIndex = 0; SortDirectionButton.Content = _descending ? "Descending" : "Ascending"; RefreshLibrary();
     }
 
     private void TrackList_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
-        if (TrackList.SelectedItem is Track track) PlayTrack(track, true, TrackList.SelectedIndex);
+        if (TrackList.SelectedItem is Track track) PlayTrack(track, true, _pageIndex * LibraryPageSize + TrackList.SelectedIndex);
+    }
+
+    private void TrackList_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter || TrackList.SelectedItem is not Track track) return;
+        PlayTrack(track, true, _pageIndex * LibraryPageSize + TrackList.SelectedIndex);
+        e.Handled = true;
     }
 
     private void PlaylistTrackList_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
-        if (PlaylistTrackList.SelectedItem is Track track) PlayTrack(track, true, PlaylistTrackList.SelectedIndex);
+        if (PlaylistTrackList.SelectedItem is PlaylistTrackRow { Entry.Track: { } track } row && _selectedPlaylist is not null)
+        {
+            var index = _pageIndex * LibraryPageSize + PlaylistTrackList.SelectedIndex;
+            PlayTrack(track, true, index);
+        }
+    }
+
+    private void PlaylistTrackList_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter || PlaylistTrackList.SelectedItem is not PlaylistTrackRow { Entry.Track: { } track }) return;
+        PlayTrack(track, true, _pageIndex * LibraryPageSize + PlaylistTrackList.SelectedIndex);
+        e.Handled = true;
     }
 
     private void TrackList_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
@@ -323,38 +601,55 @@ public sealed partial class MainWindow : Window
     {
         if (resetQueue)
         {
-            _queue.Clear(); _queue.AddRange(_tracks);
-            _queueIndex = queueIndex is { } selectedIndex && selectedIndex >= 0 && selectedIndex < _queue.Count && SameTrack(_queue[selectedIndex].Path, track.Path)
+            _queue.Clear(); _queue.AddRange(GetCurrentQueuePaths());
+            _queueIndex = queueIndex is { } selectedIndex && selectedIndex >= 0 && selectedIndex < _queue.Count && SameTrack(_queue[selectedIndex], track.Path)
                 ? selectedIndex
-                : _queue.FindIndex(item => SameTrack(item.Path, track.Path));
+                : _queue.FindIndex(item => SameTrack(item, track.Path));
             if (_shuffle) QueueNavigation.ShuffleUpcoming(_queue, Math.Clamp(_queueIndex + 1, 0, _queue.Count));
         }
         else if (queueIndex is { } requestedIndex && requestedIndex >= 0 && requestedIndex < _queue.Count) _queueIndex = requestedIndex;
         else
         {
-            var matchingIndex = _queue.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
+            var matchingIndex = _queue.FindIndex(item => SameTrack(item, track.Path));
             if (matchingIndex >= 0) _queueIndex = matchingIndex;
         }
         _playback.Play(track); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0; _crossfadeInProgress = false; _crossfadeFailureSource = null; _crossfadeSourceQueueIndex = null; _repeatA = _repeatB = null;
-        UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); PlayPauseButton.Content = "Pause"; SeekSlider.IsEnabled = true; SaveSession();
+        UpdatePlaybackModeControls();
+        UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); SetPlayPauseVisual(true); SeekSlider.IsEnabled = true; SaveSession();
     }
+
+    private IReadOnlyList<string> GetCurrentQueuePaths()
+    {
+        if (_view == "Playlists" && _selectedPlaylist is not null) return _store.GetPlaylistPaths(_selectedPlaylist.Id, SearchBox.Text);
+        var filter = _view switch { "Favorites" => "favorites", "Most Played" => "most-played", "Recently Played" => "recent", _ => null };
+        return _store.GetTrackPaths(SearchBox.Text, _sort, _descending, filter, GroupColumn(), GroupList.SelectedItem?.ToString());
+    }
+
+    private Track? ResolveQueueTrack(int index) => index >= 0 && index < _queue.Count ? _store.GetTrack(_queue[index]) : null;
 
     private void PlayPause_Click(object sender, RoutedEventArgs e)
     {
         if (_playback.CurrentTrack is null)
         {
             if (_tracks.Count > 0) PlayTrack(_tracks[0], true);
+            else SetPlayPauseVisual(false);
             return;
         }
-        if (_playback.IsPlaying) { CancelCrossfadeAndRestoreQueue(); _playback.Pause(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; PlayPauseButton.Content = "Play"; }
-        else { _lastPlayCountPosition = _playback.Position; _playback.PlayLoaded(); UpdateSystemMediaControls(_playback.CurrentTrack, true); PlayPauseButton.Content = "Pause"; }
+        if (_playback.IsPlaying) { CancelCrossfadeAndRestoreQueue(); _playback.Pause(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; SetPlayPauseVisual(false); }
+        else { _lastPlayCountPosition = _playback.Position; _playback.PlayLoaded(); UpdateSystemMediaControls(_playback.CurrentTrack, true); SetPlayPauseVisual(true); }
     }
 
     private void Previous_Click(object sender, RoutedEventArgs e)
     {
         CancelCrossfadeAndRestoreQueue();
         if (_playback.Position > 3000) { _playback.Seek(0); return; }
-        if (_queueIndex > 0) { _queueIndex--; PlayTrack(_queue[_queueIndex], false, _queueIndex); }
+        for (var previousIndex = _queueIndex - 1; previousIndex >= 0; previousIndex--)
+        {
+            if (ResolveQueueTrack(previousIndex) is not { } previous) continue;
+            _queueIndex = previousIndex;
+            PlayTrack(previous, false, _queueIndex);
+            return;
+        }
     }
 
     private void Next_Click(object sender, RoutedEventArgs e) => AdvanceQueue(false);
@@ -365,24 +660,32 @@ public sealed partial class MainWindow : Window
         EnsureQueueInitialized();
         if (wasEmpty && _shuffle) QueueNavigation.ShuffleUpcoming(_queue, Math.Clamp(_queueIndex + 1, 0, _queue.Count));
         if (_queue.Count == 0) return;
-        var next = QueueNavigation.NextIndex(_queue.Count, _queueIndex, automatic, _repeatMode);
-        if (next < 0)
+        for (var attempt = 0; attempt <= _queue.Count; attempt++)
         {
-            CancelCrossfadeAndRestoreQueue();
-            _playback.Stop(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped; PlayPauseButton.Content = "Play"; return;
+            var next = QueueNavigation.NextIndex(_queue.Count, _queueIndex, automatic, _repeatMode);
+            if (next < 0) break;
+            if (ResolveQueueTrack(next) is not { } track)
+            {
+                if (next == _queueIndex) { _playback.Stop(); break; }
+                _queueIndex = next;
+                continue;
+            }
+            if (_playback.IsPlaying && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && _crossfadeSeconds > 0)
+                StartCrossfade(next, _crossfadeSeconds * 1000);
+            else PlayTrack(track, false, next);
+            return;
         }
-        var track = _queue[next];
-        if (_playback.IsPlaying && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && int.TryParse(_store.GetSetting("crossfade-seconds"), out var seconds) && seconds > 0)
-            StartCrossfade(next, seconds * 1000);
-        else PlayTrack(track, false, next);
+        CancelCrossfadeAndRestoreQueue();
+        _playback.Stop(); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped; SetPlayPauseVisual(false);
     }
 
     private void StartCrossfade(int targetIndex, int durationMilliseconds)
     {
         _crossfadeSourceQueueIndex = _crossfadeInProgress ? _crossfadeSourceQueueIndex ?? _queueIndex : _queueIndex;
+        if (ResolveQueueTrack(targetIndex) is not { } target) { AdvanceQueue(false); return; }
         _queueIndex = targetIndex;
         _crossfadeInProgress = true;
-        _ = _playback.CrossfadeToAsync(_queue[targetIndex], durationMilliseconds);
+        _ = _playback.CrossfadeToAsync(target, durationMilliseconds);
     }
 
     private void CancelCrossfadeAndRestoreQueue()
@@ -392,7 +695,7 @@ public sealed partial class MainWindow : Window
         _crossfadeInProgress = false;
         _queueIndex = _crossfadeSourceQueueIndex is { } sourceIndex && sourceIndex >= 0 && sourceIndex < _queue.Count
             ? sourceIndex
-            : _queue.FindIndex(item => SameTrack(item.Path, _playback.CurrentTrack?.Path));
+            : _queue.FindIndex(item => SameTrack(item, _playback.CurrentTrack?.Path));
         _crossfadeSourceQueueIndex = null;
     }
 
@@ -400,22 +703,23 @@ public sealed partial class MainWindow : Window
     {
         _shuffle = !_shuffle; EnsureQueueInitialized();
         if (_shuffle) QueueNavigation.ShuffleUpcoming(_queue, Math.Clamp(_queueIndex + 1, 0, _queue.Count));
-        SaveSession(); _ = ShowNoticeAsync(_shuffle ? "Shuffle is on." : "Shuffle is off.");
+        UpdatePlaybackModeControls(); SaveSession(); _ = ShowNoticeAsync(_shuffle ? "Shuffle is on." : "Shuffle is off.");
     }
 
     private void EnsureQueueInitialized()
     {
         if (_queue.Count > 0) return;
-        _queue.AddRange(_tracks); _queueIndex = -1;
+        _queue.AddRange(GetCurrentQueuePaths()); _queueIndex = -1;
         if (_playback.CurrentTrack is not { } current) return;
-        _queueIndex = _queue.FindIndex(item => SameTrack(item.Path, current.Path));
-        if (_queueIndex < 0) { _queue.Insert(0, current); _queueIndex = 0; }
+        _queueIndex = _queue.FindIndex(item => SameTrack(item, current.Path));
+        if (_queueIndex < 0) { _queue.Insert(0, current.Path); _queueIndex = 0; }
     }
 
     private void Repeat_Click(object sender, RoutedEventArgs e)
     {
         _repeatMode = _repeatMode switch { "Off" => "Queue", "Queue" => "Track", _ => "Off" };
         RepeatButton.Content = $"Repeat: {_repeatMode}"; SaveSession();
+        AutomationProperties.SetItemStatus(RepeatButton, _repeatMode);
     }
 
     private void AbRepeat_Click(object sender, RoutedEventArgs e)
@@ -426,7 +730,89 @@ public sealed partial class MainWindow : Window
         if (_repeatA is null) { _repeatA = position; _repeatB = null; _ = ShowNoticeAsync("A–B repeat: mark B at the end of the passage."); }
         else if (_repeatB is null && position > _repeatA) { _repeatB = position; _ = ShowNoticeAsync("A–B repeat is set. Press again to clear."); }
         else { _repeatA = _repeatB = null; _ = ShowNoticeAsync("A–B repeat cleared."); }
+        UpdatePlaybackModeControls();
         SaveSession();
+    }
+
+    private void UpdatePlaybackModeControls()
+    {
+        ShuffleButton.IsChecked = _shuffle;
+        AutomationProperties.SetItemStatus(ShuffleButton, _shuffle ? "On" : "Off");
+        ShuffleButton.Content = _shuffle ? "Shuffle: On" : "Shuffle";
+        AbRepeatButton.IsChecked = _repeatB is not null ? true : _repeatA is not null ? null : false;
+        AbRepeatButton.Content = _repeatB is not null ? "A–B: On" : _repeatA is not null ? "A–B: Set A" : "A–B";
+        AutomationProperties.SetItemStatus(AbRepeatButton, _repeatB is not null ? "On" : _repeatA is not null ? "Mark point B" : "Off");
+        AbRepeatButton.IsEnabled = _playback.CurrentTrack is not null;
+    }
+
+    private void SetPlayPauseVisual(bool playing)
+    {
+        PlayPauseButton.Content = playing ? "Pause" : "Play";
+        PlayPauseButton.IsChecked = playing;
+        AutomationProperties.SetName(PlayPauseButton, playing ? "Pause playback" : "Resume playback");
+        AutomationProperties.SetItemStatus(PlayPauseButton, playing ? "Playing" : "Paused");
+    }
+
+    private void ShellRoot_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateResponsiveLayout(e.NewSize.Width);
+
+    private void UpdateResponsiveLayout(double width)
+    {
+        if (PlayerBarGrid is null) return;
+        var compact = width < 980;
+        var narrow = width < 760;
+        NavView.PaneDisplayMode = width < 900
+            ? NavigationViewPaneDisplayMode.LeftCompact
+            : NavigationViewPaneDisplayMode.Left;
+        LibraryView.ColumnDefinitions[0].Width = new GridLength(compact ? 160 : ReadPanelWidth("browse-pane-width", 240, 160, 400));
+        PlaylistView.ColumnDefinitions[0].Width = new GridLength(compact ? 160 : ReadPanelWidth("browse-pane-width", 240, 160, 400));
+        PlayerBarGrid.ColumnDefinitions[0].Width = new GridLength(compact ? 150 : 200);
+        PlayerBarGrid.ColumnDefinitions[2].Width = new GridLength(compact ? 240 : 240);
+        PlayerBarGrid.RowDefinitions.Clear();
+        if (compact)
+        {
+            PlayerBarGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            PlayerBarGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(PlayerTrackInfo, 0); Grid.SetColumn(PlayerTrackInfo, 0); Grid.SetColumnSpan(PlayerTrackInfo, 1);
+            Grid.SetRow(TransportControlsGrid, 1); Grid.SetColumn(TransportControlsGrid, 0); Grid.SetColumnSpan(TransportControlsGrid, 3);
+            Grid.SetRow(PlayerUtilities, 0); Grid.SetColumn(PlayerUtilities, 1); Grid.SetColumnSpan(PlayerUtilities, 2);
+            PlayerArtist.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible;
+            VolumeSlider.Width = narrow ? 64 : 84;
+            QueueButton.Visibility = EqualizerButton.Visibility = Visibility.Visible;
+            QueueButtonLabel.Visibility = EqualizerButtonLabel.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible;
+            VolumeLabel.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible;
+            PlayerBarGrid.ColumnSpacing = 8;
+            ShellRoot.RowDefinitions[1].Height = new GridLength(112);
+
+            NowPlayingView.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            NowPlayingView.ColumnDefinitions[1].Width = new GridLength(0);
+            NowPlayingView.RowDefinitions.Clear();
+            NowPlayingView.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            NowPlayingView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            Grid.SetRow(NowPlayingArtworkPanel, 0); Grid.SetColumn(NowPlayingArtworkPanel, 0);
+            Grid.SetRow(NowPlayingLyricsPanel, 1); Grid.SetColumn(NowPlayingLyricsPanel, 0);
+            NowPlayingLyricsPanel.Margin = new Thickness(8, 12, 8, 0);
+            NowPlayingArtwork.Width = NowPlayingArtwork.Height = Math.Min(216, Math.Max(160, width * .28));
+        }
+        else
+        {
+            Grid.SetRow(PlayerTrackInfo, 0); Grid.SetColumn(PlayerTrackInfo, 0); Grid.SetColumnSpan(PlayerTrackInfo, 1);
+            Grid.SetRow(TransportControlsGrid, 0); Grid.SetColumn(TransportControlsGrid, 1); Grid.SetColumnSpan(TransportControlsGrid, 1);
+            Grid.SetRow(PlayerUtilities, 0); Grid.SetColumn(PlayerUtilities, 2); Grid.SetColumnSpan(PlayerUtilities, 1);
+            PlayerArtist.Visibility = Visibility.Visible;
+            QueueButton.Visibility = EqualizerButton.Visibility = Visibility.Visible;
+            QueueButtonLabel.Visibility = EqualizerButtonLabel.Visibility = VolumeLabel.Visibility = Visibility.Visible;
+            VolumeSlider.Width = 100;
+            PlayerBarGrid.ColumnSpacing = 12;
+            ShellRoot.RowDefinitions[1].Height = new GridLength(112);
+
+            NowPlayingView.RowDefinitions.Clear();
+            NowPlayingView.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            NowPlayingView.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
+            Grid.SetRow(NowPlayingArtworkPanel, 0); Grid.SetColumn(NowPlayingArtworkPanel, 0);
+            Grid.SetRow(NowPlayingLyricsPanel, 0); Grid.SetColumn(NowPlayingLyricsPanel, 1);
+            NowPlayingLyricsPanel.Margin = new Thickness(0, 36, 0, 0);
+            NowPlayingArtwork.Width = NowPlayingArtwork.Height = 320;
+        }
     }
 
     private async void PlayNext_Click(object sender, RoutedEventArgs e)
@@ -434,7 +820,7 @@ public sealed partial class MainWindow : Window
         if (TrackFromSender(sender) is not { } track) return;
         EnsureQueueInitialized();
         var insertAt = Math.Clamp(_queueIndex + 1, 0, _queue.Count);
-        _queue.Insert(insertAt, track); if (_queueIndex >= 0 && insertAt <= _queueIndex) _queueIndex++;
+        _queue.Insert(insertAt, track.Path); if (_queueIndex >= 0 && insertAt <= _queueIndex) _queueIndex++;
         if (_shuffle) QueueNavigation.ShuffleUpcoming(_queue, insertAt + 1);
         await ShowNoticeAsync($"{track.Title} will play next."); SaveSession();
     }
@@ -457,8 +843,40 @@ public sealed partial class MainWindow : Window
 
     private void VolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        _playback.Volume = (int)e.NewValue;
-        _store.SetSetting("volume", ((int)e.NewValue).ToString());
+        var volume = Math.Clamp((int)Math.Round(e.NewValue), 0, 100);
+        _playback.Volume = volume;
+        if (_suppressVolumePersistence || _windowClosed) return;
+        if (volume == _persistedVolume)
+        {
+            _pendingVolumeSetting = null;
+            _volumeSaveDebounce?.Stop();
+            return;
+        }
+        _pendingVolumeSetting = volume;
+        _volumeSaveDebounce?.Stop();
+        _volumeSaveDebounce?.Start();
+    }
+
+    private void PersistPendingVolumeSetting()
+    {
+        if (_pendingVolumeSetting is not int volume || volume == _persistedVolume) return;
+        try
+        {
+            _store.SetSetting("volume", volume.ToString(CultureInfo.InvariantCulture));
+            _persistedVolume = volume;
+            _pendingVolumeSetting = null;
+        }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Error("settings", "Could not save the volume setting.", ex);
+            _pendingVolumeSetting = null;
+        }
+    }
+
+    private int ReadCrossfadeSeconds()
+    {
+        if (!int.TryParse(_store.GetSetting("crossfade-seconds"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)) return 0;
+        return seconds is 2 or 3 or 5 or 8 or 10 ? seconds : 0;
     }
 
     private void SeekSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -473,6 +891,8 @@ public sealed partial class MainWindow : Window
     private void Clock_Tick(object? sender, object e)
     {
         var position = Math.Max(0, _playback.Position); var duration = Math.Max(0, _playback.Duration);
+        if (_scanControl is not null && DateTimeOffset.UtcNow - _lastScanStatusUpdateUtc >= TimeSpan.FromSeconds(1))
+        { _lastScanStatusUpdateUtc = DateTimeOffset.UtcNow; UpdateScanStatusText(); }
         if (_playback.IsPlaying && _repeatA is not null && _repeatB is not null && position >= _repeatB.Value.TotalMilliseconds)
         {
             _playback.Seek((long)_repeatA.Value.TotalMilliseconds);
@@ -500,8 +920,8 @@ public sealed partial class MainWindow : Window
         }
         var automaticNext = QueueNavigation.NextIndex(_queue.Count, _queueIndex, true, _repeatMode);
         if (_playback.IsPlaying && _repeatA is null && !_crossfadeInProgress && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && automaticNext >= 0 &&
-            int.TryParse(_store.GetSetting("crossfade-seconds"), out var crossfade) && crossfade > 0 && duration > 0 && duration - position <= crossfade * 1000)
-            StartCrossfade(automaticNext, crossfade * 1000);
+            _crossfadeSeconds > 0 && duration > 0 && duration - position <= _crossfadeSeconds * 1000)
+            StartCrossfade(automaticNext, _crossfadeSeconds * 1000);
         if (DateTime.UtcNow - _lastSessionSave > TimeSpan.FromSeconds(5)) SaveSession();
         if (_playback.CurrentTrack is not null && _currentLyrics.Lines.Count > 0)
             NowPlayingLyrics.Text = _currentLyrics.At(TimeSpan.FromMilliseconds(position));
@@ -517,19 +937,19 @@ public sealed partial class MainWindow : Window
     private void Playback_CrossfadeCompleted(Track track) => DispatcherQueue.TryEnqueue(() =>
     {
         _crossfadeInProgress = false; _crossfadeFailureSource = null; _crossfadeSourceQueueIndex = null; _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0;
-        UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); PlayPauseButton.Content = "Pause";
+        UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); SetPlayPauseVisual(true);
     });
 
     private static bool SameTrack(string? left, string? right) => left is not null && right is not null && left.Equals(right, StringComparison.OrdinalIgnoreCase);
 
     private void Playback_CrossfadeFailed(Track track) => DispatcherQueue.TryEnqueue(() =>
     {
-        if (!_crossfadeInProgress || _queueIndex < 0 || _queueIndex >= _queue.Count || !SameTrack(_queue[_queueIndex].Path, track.Path)) return;
+        if (!_crossfadeInProgress || _queueIndex < 0 || _queueIndex >= _queue.Count || !SameTrack(_queue[_queueIndex], track.Path)) return;
         _crossfadeInProgress = false;
         _crossfadeFailureSource = _playback.CurrentTrack?.Path;
         _queueIndex = _crossfadeSourceQueueIndex is { } sourceIndex && sourceIndex >= 0 && sourceIndex < _queue.Count
             ? sourceIndex
-            : _queue.FindIndex(item => SameTrack(item.Path, _playback.CurrentTrack?.Path));
+            : _queue.FindIndex(item => SameTrack(item, _playback.CurrentTrack?.Path));
         _crossfadeSourceQueueIndex = null;
         _ = ShowNoticeAsync($"Could not start {track.Title} during crossfade. Playback will continue; see the local log for details.", InfoBarSeverity.Error);
     });
@@ -538,7 +958,7 @@ public sealed partial class MainWindow : Window
     {
         if (!SameTrack(_playback.CurrentTrack?.Path, track.Path)) return;
         _crossfadeInProgress = false;
-        PlayPauseButton.Content = "Play";
+        SetPlayPauseVisual(false);
         if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped;
         _ = ShowNoticeAsync($"Could not play {track.Title}. See Settings → Open log folder for details.", InfoBarSeverity.Error);
     });
@@ -551,7 +971,7 @@ public sealed partial class MainWindow : Window
         _currentLyrics = Lyrics.Parse(rawLyrics);
         var currentLyrics = Lyrics.DisplayAt(_currentLyrics, rawLyrics, TimeSpan.FromMilliseconds(_playback.Position));
         NowPlayingLyrics.Text = currentLyrics.Length == 0 && _currentLyrics.Lines.Count == 0 ? "No lyrics. Open lyrics to add or search." : currentLyrics;
-        SetArtwork(NowPlayingArtwork, track.ArtworkPath);
+        SetArtwork(NowPlayingArtwork, track.ArtworkPath, 512);
         if (_store.GetSetting("accent-mode") == "Artwork" && _store.GetSetting("accent-manual") != "true") _ = ApplyArtworkAccentAsync(track.ArtworkPath);
     }
 
@@ -560,11 +980,14 @@ public sealed partial class MainWindow : Window
         if (sender is Image image) SetArtwork(image, image.Tag?.ToString());
     }
 
-    private static void SetArtwork(Image image, string? path)
+    private void SetArtwork(Image image, string? path, int? preferredDecodeSize = null)
     {
-        image.Source = !string.IsNullOrWhiteSpace(path) && File.Exists(path)
-            ? new BitmapImage(new Uri(path))
-            : null;
+        var scale = image.XamlRoot?.RasterizationScale ?? 1;
+        var displaySize = Math.Max(image.ActualWidth, image.ActualHeight);
+        if (!double.IsFinite(displaySize) || displaySize <= 0) displaySize = Math.Max(image.Width, image.Height);
+        if (!double.IsFinite(displaySize) || displaySize <= 0) displaySize = 96;
+        var decodeSize = preferredDecodeSize ?? (int)Math.Ceiling(displaySize * scale);
+        image.Source = _artworkCache.Get(path, decodeSize);
     }
 
     private void ApplyStoredEqualizer()
@@ -603,18 +1026,24 @@ public sealed partial class MainWindow : Window
         if (session.RepeatAMilliseconds is long repeatA && repeatA >= 0 && session.RepeatBMilliseconds is long repeatB && repeatB > repeatA)
         { _repeatA = TimeSpan.FromMilliseconds(repeatA); _repeatB = TimeSpan.FromMilliseconds(repeatB); }
         RepeatButton.Content = $"Repeat: {_repeatMode}";
-        _queue.AddRange(session.Queue.Select(path => _store.GetTrack(path)).Where(track => track is not null).Cast<Track>());
+        AutomationProperties.SetItemStatus(RepeatButton, _repeatMode);
+        _queue.AddRange(session.Queue);
         if (session.TrackPath is { } path && _store.GetTrack(path) is { } current)
         {
-            if (_queue.Count == 0) _queue.Add(current);
+            if (_queue.Count == 0) _queue.Add(current.Path);
             var savedIndex = session.QueueIndex;
             var occurrence = savedIndex >= 0 && savedIndex < session.Queue.Count && SameTrack(session.Queue[savedIndex], path)
                 ? session.Queue.Take(savedIndex + 1).Count(queuedPath => SameTrack(queuedPath, path)) - 1
                 : 0;
-            _queueIndex = Playlists.FindPathOccurrence(_queue.Select(track => track.Path).ToArray(), path, Math.Max(0, occurrence));
-            if (_queueIndex < 0) _queueIndex = _queue.FindIndex(track => SameTrack(track.Path, path));
+            _queueIndex = Playlists.FindPathOccurrence(_queue, path, Math.Max(0, occurrence));
+            if (_queueIndex < 0) _queueIndex = _queue.FindIndex(queuedPath => SameTrack(queuedPath, path));
+            if (_queueIndex < 0)
+            {
+                _queue.Insert(0, current.Path);
+                _queueIndex = 0;
+            }
             _playback.LoadPaused(current, session.PositionMilliseconds); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = session.PositionMilliseconds;
-            UpdateCurrentTrack(current); UpdateSystemMediaControls(current, false); SeekSlider.IsEnabled = true; PlayPauseButton.Content = "Play";
+            UpdateCurrentTrack(current); UpdateSystemMediaControls(current, false); SeekSlider.IsEnabled = true; SetPlayPauseVisual(false);
         }
     }
 
@@ -623,7 +1052,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var savedQueueIndex = _crossfadeInProgress ? _crossfadeSourceQueueIndex ?? _queueIndex : _queueIndex;
-            _store.SaveSession(new(_playback.CurrentTrack?.Path, Math.Max(0, _playback.Position), _queue.Select(track => track.Path).ToArray(), _shuffle, _repeatMode,
+            _store.SaveSession(new(_playback.CurrentTrack?.Path, Math.Max(0, _playback.Position), _queue.ToArray(), _shuffle, _repeatMode,
                 _repeatA is { } repeatA ? (long)repeatA.TotalMilliseconds : null,
                 _repeatB is { } repeatB ? (long)repeatB.TotalMilliseconds : null,
                 savedQueueIndex));
@@ -635,8 +1064,11 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _windowClosed = true;
+        CancelPendingLibrarySearch();
         LocalAppLog.Shared.Info("app", "Window closed.");
-        SaveSession(); _clock.Stop(); _playback.Dispose(); _scanControl?.Cancel();
+        _volumeSaveDebounce?.Stop();
+        PersistPendingVolumeSetting();
+        SaveSession(); _clock.Stop(); _searchDebounce?.Stop(); _playback.Dispose(); _scanControl?.Cancel(); _artworkCache.Clear();
         _tray?.Dispose();
     }
 
@@ -754,7 +1186,7 @@ public sealed partial class MainWindow : Window
         var colorPicker = new ColorPicker { Color = color, IsColorPreviewVisible = true, IsColorSliderVisible = true, IsColorChannelTextInputVisible = true, IsHexInputVisible = true };
         var crossfade = new ComboBox { Header = "Crossfade", MinWidth = 260 };
         foreach (var value in new[] { "Off", "2 seconds", "3 seconds", "5 seconds", "8 seconds", "10 seconds" }) crossfade.Items.Add(value);
-        var oldCrossfade = int.TryParse(_store.GetSetting("crossfade-seconds"), out var seconds) ? seconds : 0;
+        var oldCrossfade = _crossfadeSeconds;
         crossfade.SelectedIndex = oldCrossfade switch { 2 => 1, 3 => 2, 5 => 3, 8 => 4, 10 => 5, _ => 0 };
         var audioOutput = new ComboBox { Header = "Audio output", MinWidth = 300 };
         var audioOutputStatus = new TextBlock { TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
@@ -878,6 +1310,7 @@ public sealed partial class MainWindow : Window
         _store.SetSetting("window-material", chosenWindowMaterial); _store.SetSetting("motion-style", chosenMotionStyle);
         _store.SetSetting("accent-manual", manualAccent.IsOn ? "true" : "false"); _store.SetSetting("accent-color", $"#{colorPicker.Color.R:X2}{colorPicker.Color.G:X2}{colorPicker.Color.B:X2}");
         _store.SetSetting("check-updates", updateCheck.IsOn ? "true" : "false"); _store.SetSetting("crossfade-seconds", crossfadeSeconds.ToString());
+        _crossfadeSeconds = crossfadeSeconds;
         _store.SetSetting("audio-output-device", audioOutputId); _store.SetSetting("audio-output-name", audioOutputName);
         _playback.SelectAudioOutputDevice(audioOutputId);
         _store.SetSetting("minimize-to-tray", minimizeToTray.IsOn ? "true" : "false"); ApplyTraySetting();
@@ -1002,13 +1435,14 @@ public sealed partial class MainWindow : Window
     private void RefreshPlaylists()
     {
         var selectedId = _selectedPlaylist?.Id;
-        _playlists.Clear(); foreach (var playlist in _store.GetPlaylists()) _playlists.Add(playlist);
+        _playlists.Clear(); foreach (var playlist in _store.GetPlaylistSummaries()) _playlists.Add(playlist);
         if (selectedId is not null) PlaylistList.SelectedItem = _playlists.FirstOrDefault(item => item.Id == selectedId);
     }
 
     private void PlaylistList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        _selectedPlaylist = PlaylistList.SelectedItem as Playlist;
+        _selectedPlaylist = PlaylistList.SelectedItem as PlaylistSummary;
+        _pageIndex = 0;
         RefreshLibrary();
     }
 
@@ -1017,7 +1451,9 @@ public sealed partial class MainWindow : Window
         var name = new TextBox { PlaceholderText = "Playlist name", MinWidth = 280 };
         var dialog = new ContentDialog { Title = "Create playlist", Content = name, PrimaryButtonText = "Create", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(name.Text)) return;
-        _store.CreatePlaylist(name.Text); RefreshPlaylists();
+        var created = _store.CreatePlaylist(name.Text);
+        _selectedPlaylist = _store.GetPlaylistSummaries().FirstOrDefault(item => item.Id == created.Id);
+        RefreshPlaylists(); RefreshLibrary();
     }
 
     private async void ImportPlaylist_Click(object sender, RoutedEventArgs e)
@@ -1054,6 +1490,33 @@ public sealed partial class MainWindow : Window
         _store.DeletePlaylist(_selectedPlaylist.Id); _selectedPlaylist = null; RefreshPlaylists(); RefreshLibrary();
     }
 
+    private async void RenamePlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedPlaylist is null) return;
+        var name = new TextBox { Text = _selectedPlaylist.Name, MinWidth = 320, MaxLength = 120 };
+        AutomationProperties.SetName(name, "Playlist name");
+        var dialog = new ContentDialog { Title = "Rename playlist", Content = name, PrimaryButtonText = "Save", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(name.Text)) return;
+        try { _store.RenamePlaylist(_selectedPlaylist.Id, name.Text); RefreshPlaylists(); RefreshLibrary(); }
+        catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
+        { await ShowNoticeAsync($"Could not rename playlist: {ex.Message}", InfoBarSeverity.Warning); }
+    }
+
+    private void PlayPlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedPlaylist is null) return;
+        for (var offset = 0; offset < _totalTrackCount; offset += LibraryPageSize)
+        {
+            var entries = _store.GetPlaylistEntriesPage(_selectedPlaylist.Id, SearchBox.Text, offset, LibraryPageSize);
+            var playable = entries.Select((entry, localIndex) => (entry, localIndex)).FirstOrDefault(item => item.entry.Track is not null);
+            if (playable.entry?.Track is not { } track) continue;
+            var index = offset + playable.localIndex;
+            PlayTrack(track, true, index);
+            return;
+        }
+        _ = ShowNoticeAsync("None of this playlist’s saved files are currently in the indexed library.", InfoBarSeverity.Warning);
+    }
+
     private async void AddToPlaylist_Click(object sender, RoutedEventArgs e)
     {
         if (TrackFromSender(sender) is not { } track) return;
@@ -1061,7 +1524,7 @@ public sealed partial class MainWindow : Window
         if (_playlists.Count == 0) { await ShowNoticeAsync("Create a playlist first."); return; }
         var chooser = new ComboBox { ItemsSource = _playlists, DisplayMemberPath = "Name", SelectedIndex = 0, MinWidth = 280 };
         var dialog = new ContentDialog { Title = $"Add {track.Title} to playlist", Content = chooser, PrimaryButtonText = "Add", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary && chooser.SelectedItem is Playlist playlist)
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary && chooser.SelectedItem is PlaylistSummary playlist)
         {
             _store.AddToPlaylist(playlist.Id, [track.Path]); RefreshPlaylists(); await ShowNoticeAsync($"Added to {playlist.Name}.");
         }
@@ -1070,17 +1533,11 @@ public sealed partial class MainWindow : Window
     private void RemoveFromPlaylist_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedPlaylist is null) return;
-        DependencyObject? container = sender as DependencyObject;
-        while (container is not null && container is not ListViewItem) container = VisualTreeHelper.GetParent(container);
-        if (container is not ListViewItem row) return;
-        var rowIndex = PlaylistTrackList.IndexFromContainer(row);
-        if (rowIndex < 0 || rowIndex >= _tracks.Count) return;
-        var path = _tracks[rowIndex].Path;
-        var occurrence = _tracks.Take(rowIndex + 1).Count(track => track.Path.Equals(path, StringComparison.OrdinalIgnoreCase)) - 1;
-        var position = Playlists.FindPathOccurrence(_selectedPlaylist.Paths, path, occurrence);
-        if (position < 0) return;
+        if ((sender as FrameworkElement)?.Tag is not int position) return;
         _store.RemoveFromPlaylist(_selectedPlaylist.Id, position);
-        _selectedPlaylist = _store.GetPlaylists().FirstOrDefault(item => item.Id == _selectedPlaylist.Id);
+        _selectedPlaylist = _store.GetPlaylistSummaries().FirstOrDefault(item => item.Id == _selectedPlaylist.Id);
+        var remainingFilteredEntries = _selectedPlaylist is null ? 0 : _store.CountPlaylistEntries(_selectedPlaylist.Id, SearchBox.Text);
+        if (_pageIndex > 0 && _pageIndex * LibraryPageSize >= remainingFilteredEntries) _pageIndex--;
         RefreshLibrary(); RefreshPlaylists();
     }
 
@@ -1158,10 +1615,12 @@ public sealed partial class MainWindow : Window
                 ArtworkPath: string.IsNullOrWhiteSpace(artwork.Text) ? null : artwork.Text,
                 CustomFields: customFormat is null ? null : customFields,
                 AdditionalFields: additionalFields.ToDictionary(field => field.Key, field => field.Value.Text, StringComparer.OrdinalIgnoreCase));
-            backup = new TagEditor(Path.Combine(_appData, "TagBackups")).Save(track.Path, edit);
+            backup = await SaveTagsWithProgressAsync("Saving tag changes", (progress, token) =>
+                new TagEditor(Path.Combine(_appData, "TagBackups")).SaveAsync(track.Path, edit, progress, token));
+            if (backup is null) return;
             tagsWritten = true;
             _store.RecordTagBackup(backup);
-            RefreshEditedTrack(track.Path);
+            await RefreshEditedTrackAsync(track.Path);
         }
         catch (Exception ex)
         {
@@ -1178,10 +1637,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void RefreshEditedTrack(string path)
+    private async Task RefreshEditedTrackAsync(string path)
     {
-        var track = TrackReader.Read(path, Path.Combine(_appData, "Artwork"));
-        _store.UpsertTrack(track);
+        var track = await Task.Run(() =>
+        {
+            var scanned = TrackReader.Read(path, Path.Combine(_appData, "Artwork"));
+            _store.UpsertTrack(scanned);
+            return scanned;
+        });
         if (SameTrack(_playback.CurrentTrack?.Path, track.Path))
         {
             _playback.UpdateTrackMetadata(track);
@@ -1213,16 +1676,26 @@ public sealed partial class MainWindow : Window
     private async void RestoreTags_Click(object sender, RoutedEventArgs e)
     {
         var track = TrackFromSender(sender); if (track is null) return;
-        var backup = _store.GetLatestTagBackup(track.Path);
-        if (backup is null) { await ShowNoticeAsync("No tag backup is saved for this track."); return; }
-        var confirm = new ContentDialog { Title = "Restore previous tags?", Content = "The file will be replaced with the recoverable copy saved before the last tag edit.", PrimaryButtonText = "Restore", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = ShellRoot.XamlRoot };
-        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+        var backups = _store.GetTagBackups(track.Path).Where(item => File.Exists(item.BackupPath)).ToArray();
+        if (backups.Length == 0) { await ShowNoticeAsync("No saved tag backups are available for this track."); return; }
+        var backupOptions = backups.Select((backup, index) => new TagBackupOption(backup,
+            $"{backup.CreatedUtc.ToLocalTime():g} · {Path.GetFileName(backup.BackupPath)}{(index == 0 ? " · Latest" : "")}")).ToArray();
+        var chooser = new ListView { ItemsSource = backupOptions, DisplayMemberPath = nameof(TagBackupOption.Label), SelectedIndex = 0, MinHeight = 100, MaxHeight = 240 };
+        AutomationProperties.SetName(chooser, "Saved tag versions, newest first");
+        var body = new StackPanel { Spacing = 8, MinWidth = 420 };
+        body.Children.Add(new TextBlock { Text = "Choose one of the five most recent saved versions. Bracken Vale first saves the current file as a new undo snapshot.", TextWrapping = TextWrapping.Wrap });
+        body.Children.Add(chooser);
+        var confirm = new ContentDialog { Title = $"Restore tags for {track.Title}?", Content = body, PrimaryButtonText = "Restore selected version", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, XamlRoot = ShellRoot.XamlRoot };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary || chooser.SelectedItem is not TagBackupOption selected) return;
         var restored = false;
         try
         {
-            new TagEditor(Path.Combine(_appData, "TagBackups")).Restore(backup);
+            var currentSnapshot = await SaveTagsWithProgressAsync("Restoring saved tags", (progress, token) =>
+                new TagEditor(Path.Combine(_appData, "TagBackups")).RestoreAsync(selected.Backup, progress, token));
+            if (currentSnapshot is null) return;
+            _store.RecordTagBackup(currentSnapshot);
             restored = true;
-            RefreshEditedTrack(track.Path);
+            await RefreshEditedTrackAsync(track.Path);
         }
         catch (Exception ex)
         {
@@ -1239,13 +1712,53 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async Task<TagBackup?> SaveTagsWithProgressAsync(string title,
+        Func<IProgress<TagEditProgress>, CancellationToken, Task<TagBackup>> saveOperation)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var status = new TextBlock { Text = "Preparing…", TextWrapping = TextWrapping.Wrap };
+        var progressBar = new ProgressBar { IsIndeterminate = true, Minimum = 0, Maximum = 1, Height = 4 };
+        var content = new StackPanel { Spacing = 10, MinWidth = 360 };
+        content.Children.Add(status); content.Children.Add(progressBar);
+        var dialog = new ContentDialog { Title = title, Content = content, CloseButtonText = "Cancel", XamlRoot = ShellRoot.XamlRoot };
+        dialog.CloseButtonClick += (_, _) => cancellation.Cancel();
+        var progress = new Progress<TagEditProgress>(value =>
+        {
+            if (value.TotalBytes <= 0) { progressBar.IsIndeterminate = true; status.Text = value.Phase; return; }
+            progressBar.IsIndeterminate = false;
+            progressBar.Maximum = value.TotalBytes;
+            progressBar.Value = Math.Min(value.BytesCopied, value.TotalBytes);
+            status.Text = $"{value.Phase} · {value.BytesCopied:N0} of {value.TotalBytes:N0} bytes";
+        });
+        var dialogResult = dialog.ShowAsync();
+        try
+        {
+            var backup = await saveOperation(progress, cancellation.Token);
+            dialog.Hide();
+            await dialogResult;
+            return backup;
+        }
+        catch (OperationCanceledException)
+        {
+            dialog.Hide();
+            await dialogResult;
+            return null;
+        }
+        catch
+        {
+            dialog.Hide();
+            await dialogResult;
+            throw;
+        }
+    }
+
     private async void Details_Click(object sender, RoutedEventArgs e)
     {
         var track = TrackFromSender(sender); if (track is null) return;
         try
         {
             var details = TrackInformation.Read(track.Path);
-            var backup = _store.GetLatestTagBackup(track.Path);
+            var backups = _store.GetTagBackups(track.Path);
             var customTags = TagEditor.ReadCustomFields(track.Path);
             var additionalTags = TagEditor.ReadAdditionalStandardFields(track.Path);
             var additionalText = string.Join(Environment.NewLine, TagEditor.AdditionalStandardFields
@@ -1253,7 +1766,9 @@ public sealed partial class MainWindow : Window
                 .Select(field => $"{field.Label}: {additionalTags[field.Key]}"));
             if (string.IsNullOrWhiteSpace(additionalText)) additionalText = "None";
             var customText = customTags.Count == 0 ? "None" : string.Join(Environment.NewLine, customTags.Select(field => $"{field.Key}={field.Value}"));
-            var text = $"Title: {track.Title}\nArtist: {track.Artist}\nAlbum: {track.Album}\nAlbum artist: {track.AlbumArtist}\nGenre: {track.Genre}\nYear: {track.Year}\nTrack: {track.TrackNumber}\n\nAdditional standard tags\n{additionalText}\n\nCustom tags\n{customText}\n\nPath\n{details.Path}\n\nContainer\n{details.Container}\n\nDuration\n{details.Duration}\n\nBitrate\n{details.BitrateKbps} kbps\n\nSample rate\n{details.SampleRateHz:N0} Hz\n\nBit depth\n{details.BitsPerSample} bit\n\nFile size\n{details.FileSize:N0} bytes\n\nModified\n{details.ModifiedUtc:u}\n\nBackup\n{backup?.BackupPath ?? "No tag backup"}";
+            var backupText = backups.Count == 0 ? "No tag backups" : string.Join(Environment.NewLine,
+                backups.Select((backup, index) => $"{index + 1}. {backup.CreatedUtc.ToLocalTime():g} · {backup.BackupPath}"));
+            var text = $"Title: {track.Title}\nArtist: {track.Artist}\nAlbum: {track.Album}\nAlbum artist: {track.AlbumArtist}\nGenre: {track.Genre}\nYear: {track.Year}\nTrack: {track.TrackNumber}\n\nAdditional standard tags\n{additionalText}\n\nCustom tags\n{customText}\n\nPath\n{details.Path}\n\nContainer\n{details.Container}\n\nDuration\n{details.Duration}\n\nBitrate\n{details.BitrateKbps} kbps\n\nSample rate\n{details.SampleRateHz:N0} Hz\n\nBit depth\n{details.BitsPerSample} bit\n\nFile size\n{details.FileSize:N0} bytes\n\nModified\n{details.ModifiedUtc:u}\n\nRecent tag backups\n{backupText}";
             await ShowTextDialogAsync("Track details", text);
         }
         catch (Exception ex)
@@ -1325,7 +1840,9 @@ public sealed partial class MainWindow : Window
             if (mode.SelectedIndex == 0) LyricsFiles.SaveSidecar(track.Path, lyricsText);
             else
             {
-                backup = new TagEditor(Path.Combine(_appData, "TagBackups")).Save(track.Path, new TagEdit(Lyrics: lyricsText));
+                backup = await SaveTagsWithProgressAsync("Saving embedded lyrics", (progress, token) =>
+                    new TagEditor(Path.Combine(_appData, "TagBackups")).SaveAsync(track.Path, new TagEdit(Lyrics: lyricsText), progress, token));
+                if (backup is null) return;
             }
             lyricsWritten = true;
             _currentLyrics = Lyrics.Parse(lyricsText);
@@ -1333,7 +1850,7 @@ public sealed partial class MainWindow : Window
             NowPlayingLyrics.Text = currentLyrics.Length == 0 && _currentLyrics.Lines.Count == 0 ? "Lyrics saved." : currentLyrics;
             if (backup is not null)
             {
-                _store.RecordTagBackup(backup); _store.UpsertTrack(TrackReader.Read(track.Path, Path.Combine(_appData, "Artwork")));
+                _store.RecordTagBackup(backup); await RefreshEditedTrackAsync(track.Path);
             }
         }
         catch (Exception ex)
@@ -1376,47 +1893,70 @@ public sealed partial class MainWindow : Window
     private async Task ShowQueueAsync()
     {
         var queue = new ListView { Height = 360, SelectionMode = ListViewSelectionMode.Single };
-        var body = new StackPanel { Spacing = 8, MinWidth = 480 };
+        AutomationProperties.SetName(queue, "Playback queue page");
+        var body = new StackPanel { Spacing = 8, MinWidth = 360 };
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var up = new Button { Content = "Move up" }; var down = new Button { Content = "Move down" };
         var remove = new Button { Content = "Remove" }; var clear = new Button { Content = "Clear upcoming" };
+        var pageBack = new Button { Content = "Previous" }; var pageForward = new Button { Content = "Next" };
+        var pageStatus = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
         var queueStatus = new TextBlock { Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"], TextWrapping = TextWrapping.Wrap };
-        void RefreshQueue()
+        const int queuePageSize = 200;
+        var queueOffset = _queueIndex >= 0 ? _queueIndex / queuePageSize * queuePageSize : 0;
+        void RefreshQueue(int? selectIndex = null)
         {
-            queue.ItemsSource = _queue.Select((track, index) => $"{(index == _queueIndex ? "Playing · " : "")}{index + 1}. {track.Title} — {track.Artist}").ToArray();
-            if (_queueIndex >= 0 && _queueIndex < queue.Items.Count) queue.SelectedIndex = _queueIndex;
+            queueOffset = _queue.Count == 0 ? 0 : Math.Clamp(queueOffset, 0, ((_queue.Count - 1) / queuePageSize) * queuePageSize);
+            var visible = _queue.Skip(queueOffset).Take(queuePageSize).Select((path, visibleIndex) =>
+            {
+                var index = queueOffset + visibleIndex;
+                var track = _store.GetTrack(path);
+                var label = track is null ? $"{Path.GetFileNameWithoutExtension(path)} · unavailable" : $"{track.Title} — {track.Artist}";
+                return $"{(index == _queueIndex ? "Playing · " : "")}{index + 1}. {label}";
+            }).ToArray();
+            queue.ItemsSource = visible;
+            var selected = selectIndex ?? _queueIndex;
+            queue.SelectedIndex = selected >= queueOffset && selected < queueOffset + visible.Length ? selected - queueOffset : -1;
+            pageStatus.Text = _queue.Count == 0 ? "Empty queue" : $"{queueOffset + 1:N0}–{Math.Min(queueOffset + queuePageSize, _queue.Count):N0} of {_queue.Count:N0}";
+            pageBack.IsEnabled = queueOffset > 0;
+            pageForward.IsEnabled = queueOffset + queuePageSize < _queue.Count;
         }
         void Move(int direction)
         {
-            var index = queue.SelectedIndex; var next = index + direction;
+            if (queue.SelectedIndex < 0) return;
+            var index = queueOffset + queue.SelectedIndex; var next = index + direction;
             if (index < 0 || next < 0 || next >= _queue.Count) return;
             (_queue[index], _queue[next]) = (_queue[next], _queue[index]);
             if (_queueIndex == index) _queueIndex = next; else if (_queueIndex == next) _queueIndex = index;
-            RefreshQueue(); queue.SelectedIndex = next; SaveSession();
+            queueOffset = next / queuePageSize * queuePageSize;
+            RefreshQueue(next); SaveSession();
         }
+        pageBack.Click += (_, _) => { queueOffset = Math.Max(0, queueOffset - queuePageSize); RefreshQueue(); };
+        pageForward.Click += (_, _) => { queueOffset = Math.Min(Math.Max(0, _queue.Count - 1), queueOffset + queuePageSize) / queuePageSize * queuePageSize; RefreshQueue(); };
         up.Click += (_, _) => Move(-1); down.Click += (_, _) => Move(1);
-        remove.Click += async (_, _) =>
+        remove.Click += (_, _) =>
         {
-            var index = queue.SelectedIndex;
+            if (queue.SelectedIndex < 0) return;
+            var index = queueOffset + queue.SelectedIndex;
             if (index < 0 || index >= _queue.Count) return;
             if (index == _queueIndex) { queueStatus.Text = "The currently playing track cannot be removed from the queue."; return; }
             _queue.RemoveAt(index); if (index < _queueIndex) _queueIndex--;
-            RefreshQueue(); SaveSession();
+            RefreshQueue(Math.Min(index, _queue.Count - 1)); SaveSession();
         };
         clear.Click += (_, _) =>
         {
             var current = _playback.CurrentTrack;
             _queue.Clear();
-            if (current is not null) { _queue.Add(current); _queueIndex = 0; } else _queueIndex = -1;
-            RefreshQueue(); SaveSession();
+            if (current is not null) { _queue.Add(current.Path); _queueIndex = 0; } else _queueIndex = -1;
+            queueOffset = 0; RefreshQueue(); SaveSession();
         };
         queue.DoubleTapped += (_, _) =>
         {
-            var index = queue.SelectedIndex;
-            if (index >= 0 && index < _queue.Count) PlayTrack(_queue[index], false, index);
+            var index = queueOffset + queue.SelectedIndex;
+            if (index >= 0 && index < _queue.Count && ResolveQueueTrack(index) is { } track) PlayTrack(track, false, index);
             RefreshQueue();
         };
         controls.Children.Add(up); controls.Children.Add(down); controls.Children.Add(remove); controls.Children.Add(clear);
+        controls.Children.Add(pageBack); controls.Children.Add(pageStatus); controls.Children.Add(pageForward);
         body.Children.Add(queue); body.Children.Add(controls); body.Children.Add(queueStatus); RefreshQueue();
         var dialog = new ContentDialog { Title = "Playback queue", Content = body, CloseButtonText = "Done", XamlRoot = ShellRoot.XamlRoot };
         await dialog.ShowAsync();
@@ -1517,10 +2057,10 @@ public sealed partial class MainWindow : Window
             {
                 case SystemMediaTransportControlsButton.Play:
                     if (_playback.CurrentTrack is null && _tracks.Count > 0) PlayTrack(_tracks[0], true);
-                    else { _lastPlayCountPosition = _playback.Position; _playback.PlayLoaded(); PlayPauseButton.Content = "Pause"; }
+                    else { _lastPlayCountPosition = _playback.Position; _playback.PlayLoaded(); SetPlayPauseVisual(true); }
                     if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Playing;
                     break;
-                case SystemMediaTransportControlsButton.Pause: CancelCrossfadeAndRestoreQueue(); _playback.Pause(); PlayPauseButton.Content = "Play"; if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; break;
+                case SystemMediaTransportControlsButton.Pause: CancelCrossfadeAndRestoreQueue(); _playback.Pause(); SetPlayPauseVisual(false); if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Paused; break;
                 case SystemMediaTransportControlsButton.Next: AdvanceQueue(false); break;
                 case SystemMediaTransportControlsButton.Previous: Previous_Click(this, new RoutedEventArgs()); break;
             }

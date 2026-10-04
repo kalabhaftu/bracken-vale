@@ -15,10 +15,8 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         IProgress<ScanProgress>? progress = null)
     {
         var pending = new List<Track>(64);
-        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        var known = store.GetIndexedFileStates().ToDictionary(pair => pair.Key, pair => pair.Value, comparer);
-        var seen = new HashSet<string>(comparer);
-        var visitedDirectories = new HashSet<string>(comparer);
+        var scanRoots = roots.Select(Path.GetFullPath).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
+        using var scan = store.BeginScan(scanRoots);
         var ignored = ignoredDirectories.Select(Path.GetFullPath).ToArray();
         var indexed = 0;
         var skipped = 0;
@@ -32,18 +30,17 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         var scanner = new LibraryScanner(_log);
         try
         {
-            await scanner.ScanAsync(roots, ignored, control, (path, token) =>
+            await scanner.ScanAsync(scanRoots, ignored, control, (path, token) =>
             {
                 token.ThrowIfCancellationRequested();
                 var fullPath = Path.GetFullPath(path);
-                seen.Add(fullPath);
+                scan.MarkSeen(fullPath);
                 try
                 {
                     var info = new FileInfo(path);
-                    if (known.TryGetValue(fullPath, out var state) && state.Length == info.Length && state.ModifiedUtc == info.LastWriteTimeUtc)
+                    if (scan.IsUnchanged(fullPath, info.Length, info.LastWriteTimeUtc))
                         return ValueTask.CompletedTask;
                     pending.Add(TrackReader.Read(path, artworkCache));
-                    known[fullPath] = new(info.Length, info.LastWriteTimeUtc);
                     if (pending.Count >= 64) FlushPending();
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
@@ -52,7 +49,7 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
                     _log.Warning("indexer", $"Skipped audio file '{fullPath}'.", ex);
                 }
                 return ValueTask.CompletedTask;
-            }, progress, directory => visitedDirectories.Add(Path.GetFullPath(directory))).ConfigureAwait(false);
+            }, progress, rootCompleted: scan.MarkRootCompleted, pathExcluded: scan.MarkExcludedPath).ConfigureAwait(false);
         }
         catch
         {
@@ -60,15 +57,8 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
             throw;
         }
         FlushPending();
-        var removed = known.Keys.Where(path => !seen.Contains(path) &&
-            (visitedDirectories.Contains(Path.GetDirectoryName(path)!) || ignored.Any(folder => IsSameOrBelow(path, folder)))).ToArray();
-        store.RemoveTracks(removed);
-        return new(indexed, skipped, removed.Length);
-    }
-
-    private static bool IsSameOrBelow(string path, string folder)
-    {
-        var relative = Path.GetRelativePath(Path.GetFullPath(folder), Path.GetFullPath(path));
-        return relative == "." || (!Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+        var removed = scan.Complete();
+        store.PruneUnreferencedArtwork(artworkCache);
+        return new(indexed, skipped, removed);
     }
 }
