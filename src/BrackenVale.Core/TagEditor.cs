@@ -1,12 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
+using System.Buffers;
 using TagLib;
 
 namespace BrackenVale.Core;
 
 public sealed class TagEditor(string backupDirectory)
 {
+    private const int BackupRetentionPerTrack = 5;
+    private readonly string _backupDirectory = Path.GetFullPath(backupDirectory);
     private static readonly HashSet<string> CommonFields = new(StringComparer.OrdinalIgnoreCase)
     {
         "TITLE", "ARTIST", "ALBUM", "ALBUMARTIST", "ALBUM ARTIST", "GENRE", "DATE", "YEAR", "TRACK", "TRACKNUMBER", "LYRICS",
@@ -68,19 +71,47 @@ public sealed class TagEditor(string backupDirectory)
         return AdditionalStandardFields.ToDictionary(field => field.Key, field => ReadAdditionalField(media.Tag, field.Key), StringComparer.OrdinalIgnoreCase);
     }
 
-    public TagBackup Save(string path, TagEdit edit)
+    public TagBackup Save(string path, TagEdit edit) => SaveCore(path, edit, null, default);
+
+    /// <summary>Copies and edits the file away from the UI thread, checking cancellation between copy chunks and before replacement.</summary>
+    public Task<TagBackup> SaveAsync(string path, TagEdit edit, IProgress<TagEditProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        Task.Run(() => SaveCore(path, edit, progress, cancellationToken), cancellationToken);
+
+    public TagBackup Restore(TagBackup backup) => RestoreCore(backup, null, default);
+
+    /// <summary>Preserves the current file as a new undo snapshot before restoring the selected snapshot.</summary>
+    public Task<TagBackup> RestoreAsync(TagBackup backup, IProgress<TagEditProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        Task.Run(() => RestoreCore(backup, progress, cancellationToken), cancellationToken);
+
+    public IReadOnlyList<TagBackup> ListBackups(string path)
+    {
+        var original = Path.GetFullPath(path);
+        var suffix = BackupSuffix(original);
+        if (!Directory.Exists(_backupDirectory)) return [];
+        return Directory.EnumerateFiles(_backupDirectory, $"*-{suffix}-*.bak", SearchOption.TopDirectoryOnly)
+            .Select(file => new TagBackup(original, file, ParseBackupStamp(file)))
+            .OrderByDescending(item => item.CreatedUtc)
+            .Take(BackupRetentionPerTrack)
+            .ToArray();
+    }
+
+    private TagBackup SaveCore(string path, TagEdit edit, IProgress<TagEditProgress>? progress, CancellationToken cancellationToken)
     {
         path = Path.GetFullPath(path);
         using var pathMutex = new FilePathLock(path);
-        Directory.CreateDirectory(backupDirectory);
-        var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff");
-        var suffix = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path)))[..10];
-        var backup = Path.Combine(backupDirectory, $"{stamp}-{suffix}-{Guid.NewGuid():N}.bak");
+        cancellationToken.ThrowIfCancellationRequested();
+        Directory.CreateDirectory(_backupDirectory);
+        var backup = NewBackupPath(path);
+        var backupStage = backup + ".partial";
         var staged = TemporaryPath(path, "stage");
-        System.IO.File.Copy(path, backup, false);
+        var totalBytes = new FileInfo(path).Length;
         try
         {
-            System.IO.File.Copy(path, staged, false);
+            CopyCancellable(path, staged, "Preparing edit", totalBytes, progress, cancellationToken);
+            CopyCancellable(path, backupStage, "Preparing recovery copy", totalBytes, progress, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             using (var media = TagLib.File.Create(staged))
             {
                 var tag = media.Tag;
@@ -97,25 +128,123 @@ public sealed class TagEditor(string backupDirectory)
                 ApplyCustomFields(media, path, edit.CustomFields);
                 media.Save();
             }
-            // Same-directory replacement keeps the original intact until the fully written staged file is ready.
+            cancellationToken.ThrowIfCancellationRequested();
+            System.IO.File.Move(backupStage, backup, false);
+            // Same-directory replacement leaves the original intact until the edited copy is complete.
             System.IO.File.Move(staged, path, true);
-            return new(path, backup, DateTime.UtcNow);
+            PruneBackupFiles();
+            return new(path, backup, ParseBackupStamp(backup));
         }
-        catch
+        finally
         {
-            if (System.IO.File.Exists(staged)) System.IO.File.Delete(staged);
-            throw;
+            TryDelete(staged);
+            TryDelete(backupStage);
         }
     }
 
-    public void Restore(TagBackup backup)
+    private TagBackup RestoreCore(TagBackup selected, IProgress<TagEditProgress>? progress, CancellationToken cancellationToken)
     {
-        if (!System.IO.File.Exists(backup.BackupPath)) throw new FileNotFoundException("The saved tag backup is missing.", backup.BackupPath);
-        var original = Path.GetFullPath(backup.OriginalPath);
+        var original = Path.GetFullPath(selected.OriginalPath);
+        var source = Path.GetFullPath(selected.BackupPath);
+        if (!IsManagedBackup(original, source)) throw new InvalidDataException("The selected backup does not belong to this track's Bracken Vale backup history.");
+        if (!System.IO.File.Exists(source)) throw new FileNotFoundException("The saved tag backup is missing.", source);
         using var pathMutex = new FilePathLock(original);
-        var restore = TemporaryPath(original, "restore");
-        try { System.IO.File.Copy(backup.BackupPath, restore, false); System.IO.File.Move(restore, original, true); }
-        finally { if (System.IO.File.Exists(restore)) System.IO.File.Delete(restore); }
+        cancellationToken.ThrowIfCancellationRequested();
+        Directory.CreateDirectory(_backupDirectory);
+        var undoBackup = NewBackupPath(original);
+        var backupStage = undoBackup + ".partial";
+        var restoreStage = TemporaryPath(original, "restore");
+        var totalBytes = new FileInfo(original).Length;
+        try
+        {
+            CopyCancellable(original, backupStage, "Preparing undo copy", totalBytes, progress, cancellationToken);
+            CopyCancellable(source, restoreStage, "Preparing restore", new FileInfo(source).Length, progress, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            System.IO.File.Move(backupStage, undoBackup, false);
+            System.IO.File.Move(restoreStage, original, true);
+            PruneBackupFiles();
+            return new(original, undoBackup, ParseBackupStamp(undoBackup));
+        }
+        finally
+        {
+            TryDelete(restoreStage);
+            TryDelete(backupStage);
+        }
+    }
+
+    private string NewBackupPath(string original)
+    {
+        var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture);
+        return Path.Combine(_backupDirectory, $"{stamp}-{BackupSuffix(original)}-{Guid.NewGuid():N}.bak");
+    }
+
+    private static string BackupSuffix(string original) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(original))))[..10];
+
+    private bool IsManagedBackup(string original, string candidate)
+    {
+        var directory = Path.GetDirectoryName(candidate);
+        return directory is not null && Path.GetFullPath(directory).Equals(_backupDirectory, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+            && Path.GetFileName(candidate).Contains($"-{BackupSuffix(original)}-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void PruneBackupFiles()
+    {
+        try
+        {
+            if (!Directory.Exists(_backupDirectory)) return;
+            foreach (var group in Directory.EnumerateFiles(_backupDirectory, "*.bak", SearchOption.TopDirectoryOnly)
+                .Select(file => (File: file, Name: Path.GetFileName(file).Split('-')))
+                .Where(item => item.Name.Length == 4 && item.Name[3].EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                .GroupBy(item => item.Name[2], StringComparer.OrdinalIgnoreCase))
+            {
+                foreach (var old in group.OrderByDescending(item => item.Name[0] + "-" + item.Name[1] + "-" + item.Name[3])
+                    .Skip(BackupRetentionPerTrack)) TryDelete(old.File);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            LocalAppLog.Shared.Warning("tag-editor", "Could not prune old tag backups.", ex);
+        }
+    }
+
+    private static DateTime ParseBackupStamp(string path)
+    {
+        var stamp = Path.GetFileName(path);
+        return stamp.Length >= 18 && DateTime.TryParseExact(stamp[..18], "yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var created) ? created : System.IO.File.GetLastWriteTimeUtc(path);
+    }
+
+    private static void CopyCancellable(string source, string destination, string phase, long totalBytes,
+        IProgress<TagEditProgress>? progress, CancellationToken cancellationToken)
+    {
+        const int bufferSize = 128 * 1024;
+        var buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+        long copied = 0;
+        try
+        {
+            using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.SequentialScan);
+            using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize, FileOptions.SequentialScan);
+            progress?.Report(new(phase, 0, totalBytes));
+            int read;
+            while ((read = input.Read(buffer, 0, bufferSize)) > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                output.Write(buffer, 0, read);
+                copied += read;
+                if (copied == totalBytes || copied % (4 * 1024 * 1024) < read) progress?.Report(new(phase, copied, totalBytes));
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            output.Flush(flushToDisk: true);
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static string TemporaryPath(string path, string purpose) => Path.Combine(Path.GetDirectoryName(path)!,
@@ -310,3 +439,5 @@ public sealed class TagEditor(string backupDirectory)
 
     private enum CustomFormat { Unsupported, Xiph, Id3v2, Asf, Ape }
 }
+
+public sealed record TagEditProgress(string Phase, long BytesCopied, long TotalBytes);

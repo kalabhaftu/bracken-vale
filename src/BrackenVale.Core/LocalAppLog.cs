@@ -6,10 +6,11 @@ namespace BrackenVale.Core;
 public sealed class LocalAppLog
 {
     private const long MaxBytes = 4 * 1024 * 1024;
+    private const long MaxTotalBytes = 50 * 1024 * 1024;
     private const int RetentionDays = 14;
     private readonly string _folder;
     private readonly object _gate = new();
-    private bool _pruned;
+    private DateOnly? _lastPrunedDayUtc;
 
     public static LocalAppLog Shared { get; } = new();
     public string FolderPath => _folder;
@@ -52,6 +53,7 @@ public sealed class LocalAppLog
 
     private void Write(string level, string area, string message, Exception? exception)
     {
+        var now = DateTime.UtcNow;
         var entry = $"{DateTimeOffset.UtcNow:O} [{level}] [{area}] {message}" +
             (exception is null ? "" : Environment.NewLine + exception) + Environment.NewLine;
         if (Encoding.UTF8.GetByteCount(entry) > MaxBytes) entry = Truncate(entry);
@@ -60,20 +62,13 @@ public sealed class LocalAppLog
             try
             {
                 Directory.CreateDirectory(_folder);
-                if (!_pruned)
-                {
-                    _pruned = true;
-                    try
-                    {
-                        foreach (var file in Directory.EnumerateFiles(_folder, "bracken-vale-*.log*"))
-                            if (File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddDays(-RetentionDays)) File.Delete(file);
-                    }
-                    catch { }
-                }
-                var path = Path.Combine(_folder, $"bracken-vale-{DateTime.UtcNow:yyyy-MM-dd}.log");
+                var day = DateOnly.FromDateTime(now);
+                if (_lastPrunedDayUtc != day && PruneLogs(now, null)) _lastPrunedDayUtc = day;
+                var path = Path.Combine(_folder, $"bracken-vale-{now:yyyy-MM-dd}.log");
                 if (File.Exists(path) && new FileInfo(path).Length + Encoding.UTF8.GetByteCount(entry) > MaxBytes)
                     File.Move(path, path + ".1", true);
                 File.AppendAllText(path, entry, new UTF8Encoding(false));
+                EnforceTotalLimit(now, path);
             }
             catch
             {
@@ -81,6 +76,57 @@ public sealed class LocalAppLog
             }
         }
     }
+
+    private bool PruneLogs(DateTime now, string? protectedPath)
+    {
+        try
+        {
+            EnforceTotalLimit(now, protectedPath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void EnforceTotalLimit(DateTime now, string? protectedPath)
+    {
+        var files = Directory.EnumerateFiles(_folder, "bracken-vale-*.log*")
+            .Select(path => new FileInfo(path))
+            .Where(file => file.Exists)
+            .ToArray();
+        var cutoff = now.AddDays(-RetentionDays);
+        foreach (var file in files)
+        {
+            if (file.LastWriteTimeUtc < cutoff && !SamePath(file.FullName, protectedPath))
+            {
+                try { file.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+        }
+
+        files = Directory.EnumerateFiles(_folder, "bracken-vale-*.log*")
+            .Select(path => new FileInfo(path))
+            .Where(file => file.Exists)
+            .ToArray();
+        var total = files.Sum(file => file.Length);
+        foreach (var file in files.OrderBy(file => file.LastWriteTimeUtc))
+        {
+            if (total <= MaxTotalBytes) break;
+            if (SamePath(file.FullName, protectedPath)) continue;
+            try
+            {
+                var length = file.Length;
+                file.Delete();
+                total -= length;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool SamePath(string first, string? second) => second is not null &&
+        string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private static string Truncate(string value)
     {

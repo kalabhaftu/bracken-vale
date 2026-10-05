@@ -14,6 +14,8 @@ public sealed record LyricsSearchResult(
 
 public static class LyricsFiles
 {
+    private static readonly HttpClient LrclibClient = CreateLrclibClient();
+
     public static string SidecarPath(string trackPath) => Path.ChangeExtension(trackPath, ".lrc");
 
     public static string ReadRaw(string trackPath)
@@ -46,13 +48,18 @@ public static class LyricsFiles
 
     public static async Task<IReadOnlyList<LyricsSearchResult>> SearchLrclibAsync(string title, string artist, CancellationToken cancellationToken = default)
     {
-        using var client = new HttpClient();
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("BrackenVale/0.1 (+https://github.com/kalabhaftu/bracken-vale)");
         var url = "https://lrclib.net/api/search?track_name=" + Uri.EscapeDataString(title) + "&artist_name=" + Uri.EscapeDataString(artist);
-        using var response = await client.GetAsync(url, cancellationToken).ConfigureAwait(false);
+        using var response = await LrclibClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         return await JsonSerializer.DeserializeAsync<List<LyricsSearchResult>>(body, cancellationToken: cancellationToken).ConfigureAwait(false) ?? [];
+    }
+
+    private static HttpClient CreateLrclibClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("BrackenVale/0.1 (+https://github.com/kalabhaftu/bracken-vale)");
+        return client;
     }
 }
 

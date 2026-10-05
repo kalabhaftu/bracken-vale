@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
@@ -9,10 +10,11 @@ public sealed record IndexedFileState(long Length, DateTime ModifiedUtc);
 
 public sealed class LibraryStore
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly LocalAppLog _log;
+    private sealed record TrackQuery(string Where, string OrderBy, string? EscapedSearch, string? NormalizedSearch, object GroupValue, object FolderPrefix);
 
     public LibraryStore(string databasePath, LocalAppLog? log = null)
     {
@@ -59,6 +61,91 @@ public sealed class LibraryStore
         transaction.Commit();
     }
 
+    /// <summary>Deletes index rows under a removed root unless another configured root still covers them.</summary>
+    /// <remarks>Media files and playlist path entries are never deleted.</remarks>
+    public int RemoveTracksUnderUnselectedRoot(string removedRoot, IEnumerable<string> remainingRoots) =>
+        RemoveTracksUnderUnselectedRoots([removedRoot], remainingRoots);
+
+    /// <summary>Atomically removes index rows under any removed root while preserving paths covered by remaining roots.</summary>
+    /// <remarks>Media files and playlist path entries are never deleted.</remarks>
+    public int RemoveTracksUnderUnselectedRoots(IEnumerable<string> removedRoots, IEnumerable<string> remainingRoots)
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var roots = removedRoots.Select(NormalizeRoot).Distinct(comparer).ToArray();
+        if (roots.Length == 0) return 0;
+        var remaining = remainingRoots.Select(NormalizeRoot).Distinct(comparer).ToArray();
+        using var connection = Open();
+        using var transaction = connection.BeginTransaction();
+        using (var create = connection.CreateCommand())
+        {
+            create.Transaction = transaction;
+            create.CommandText = "CREATE TEMP TABLE IF NOT EXISTS remaining_roots(path TEXT PRIMARY KEY, prefix TEXT NOT NULL) WITHOUT ROWID; DELETE FROM remaining_roots; CREATE TEMP TABLE IF NOT EXISTS removed_roots(path TEXT PRIMARY KEY, prefix TEXT NOT NULL) WITHOUT ROWID; DELETE FROM removed_roots;";
+            create.ExecuteNonQuery();
+        }
+        foreach (var (table, paths) in new[] { ("remaining_roots", remaining), ("removed_roots", roots) })
+        {
+            using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = $"INSERT OR IGNORE INTO {table}(path,prefix) VALUES($path,$prefix)";
+            var path = insert.Parameters.Add("$path", SqliteType.Text);
+            var prefix = insert.Parameters.Add("$prefix", SqliteType.Text);
+            foreach (var item in paths)
+            {
+                path.Value = item;
+                prefix.Value = RootPrefix(item);
+                insert.ExecuteNonQuery();
+            }
+        }
+        using var remove = connection.CreateCommand();
+        remove.Transaction = transaction;
+        var collation = OperatingSystem.IsWindows() ? " COLLATE NOCASE" : string.Empty;
+        remove.CommandText = $"""
+            DELETE FROM tracks
+            WHERE EXISTS (
+                SELECT 1 FROM removed_roots x
+                WHERE tracks.path{collation}=x.path OR substr(tracks.path,1,length(x.prefix)){collation}=x.prefix)
+              AND NOT EXISTS (
+                SELECT 1 FROM remaining_roots r
+                WHERE (tracks.path{collation}=r.path OR substr(tracks.path,1,length(r.prefix)){collation}=r.prefix))
+            """;
+        var removed = remove.ExecuteNonQuery();
+        transaction.Commit();
+        return removed;
+    }
+
+    /// <summary>Deletes only unreferenced artwork files from the flat artwork cache.</summary>
+    public int PruneUnreferencedArtwork(string artworkCache)
+    {
+        var directory = Path.GetFullPath(artworkCache);
+        if (!Directory.Exists(directory)) return 0;
+        var extensions = new HashSet<string>([".png", ".jpg", ".jpeg", ".webp", ".img"], StringComparer.OrdinalIgnoreCase);
+        var removed = 0;
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = OperatingSystem.IsWindows()
+            ? "SELECT 1 FROM tracks WHERE artwork_path COLLATE NOCASE=$path LIMIT 1"
+            : "SELECT 1 FROM tracks WHERE artwork_path=$path LIMIT 1";
+        command.Parameters.Add("$path", SqliteType.Text);
+        command.Prepare();
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (!extensions.Contains(Path.GetExtension(file))) continue;
+                command.Parameters["$path"].Value = Path.GetFullPath(file);
+                if (command.ExecuteScalar() is not null) continue;
+                try { System.IO.File.Delete(file); removed++; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+                { _log.Warning("artwork-cache", $"Could not remove unreferenced artwork '{file}'.", ex); }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+        { _log.Warning("artwork-cache", $"Could not enumerate artwork cache '{directory}'.", ex); }
+        catch (SqliteException ex)
+        { _log.Warning("artwork-cache", "Could not check artwork references while pruning the cache.", ex); }
+        return removed;
+    }
+
     private static void Upsert(SqliteConnection connection, SqliteTransaction? transaction, Track track)
     {
         using var command = connection.CreateCommand();
@@ -94,7 +181,74 @@ public sealed class LibraryStore
         return states;
     }
 
+    public LibraryScanSession BeginScan(IEnumerable<string> roots)
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var normalized = roots.Select(NormalizeRoot).Distinct(comparer).ToArray();
+        return new LibraryScanSession(_connectionString, normalized);
+    }
+
     public IReadOnlyList<Track> GetTracks(string? search = null, TrackSort sort = TrackSort.Title, bool descending = false, string? filter = null, string? groupColumn = null, string? groupValue = null)
+    {
+        return QueryTracks(search, sort, descending, filter, groupColumn, groupValue, null, 0, false).Tracks;
+    }
+
+    /// <summary>Returns a bounded stable page of matching tracks.</summary>
+    public IReadOnlyList<Track> GetTracksPage(
+        string? search = null, TrackSort sort = TrackSort.Title, bool descending = false,
+        string? filter = null, string? groupColumn = null, string? groupValue = null,
+        int offset = 0, int pageSize = 200)
+    {
+        if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (pageSize is < 1 or > 800) throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be between 1 and 800 tracks.");
+        return QueryTracks(search, sort, descending, filter, groupColumn, groupValue, offset, pageSize, false).Tracks;
+    }
+
+    public int CountTracks(string? search = null, TrackSort sort = TrackSort.Title, bool descending = false,
+        string? filter = null, string? groupColumn = null, string? groupValue = null) =>
+        QueryTracks(search, sort, descending, filter, groupColumn, groupValue, null, 0, true).Count;
+
+    /// <summary>Returns path-only queue entries in the same stable order as the matching track query.</summary>
+    public IReadOnlyList<string> GetTrackPaths(string? search = null, TrackSort sort = TrackSort.Title, bool descending = false,
+        string? filter = null, string? groupColumn = null, string? groupValue = null, int offset = 0, int? pageSize = null)
+    {
+        if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (pageSize is < 1 or > 800) throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be between 1 and 800 paths.");
+        var query = BuildTrackQuery(search, sort, descending, filter, groupColumn, groupValue);
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT path FROM tracks WHERE {query.Where} ORDER BY {query.OrderBy}" +
+            (pageSize.HasValue ? " LIMIT $limit OFFSET $offset" : offset > 0 ? " LIMIT -1 OFFSET $offset" : string.Empty);
+        BindTrackQuery(command, query);
+        if (pageSize.HasValue) Add(command, "$limit", pageSize.Value);
+        if (pageSize.HasValue || offset > 0) Add(command, "$offset", offset);
+        using var reader = command.ExecuteReader();
+        var paths = new List<string>(pageSize ?? 0);
+        while (reader.Read()) paths.Add(reader.GetString(0));
+        return paths;
+    }
+
+    private (IReadOnlyList<Track> Tracks, int Count) QueryTracks(string? search, TrackSort sort, bool descending, string? filter,
+        string? groupColumn, string? groupValue, int? offset, int pageSize, bool countOnly)
+    {
+        var query = BuildTrackQuery(search, sort, descending, filter, groupColumn, groupValue);
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = countOnly
+            ? $"SELECT COUNT(*) FROM tracks WHERE {query.Where}"
+            : $"SELECT * FROM tracks WHERE {query.Where} ORDER BY {query.OrderBy}" +
+              (offset.HasValue ? " LIMIT $limit OFFSET $offset" : string.Empty);
+        BindTrackQuery(command, query);
+        if (offset.HasValue) { Add(command, "$limit", pageSize); Add(command, "$offset", offset.Value); }
+        if (countOnly) return (Array.Empty<Track>(), Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture));
+        using var reader = command.ExecuteReader();
+        var result = new List<Track>(offset.HasValue ? pageSize : 0);
+        while (reader.Read()) result.Add(ReadTrack(reader));
+        return (result, 0);
+    }
+
+    private static TrackQuery BuildTrackQuery(string? search, TrackSort sort, bool descending, string? filter,
+        string? groupColumn, string? groupValue)
     {
         var orderBy = sort switch
         {
@@ -113,13 +267,14 @@ public sealed class LibraryStore
             "genre" => "($group IS NULL OR genre=$group)", "folder" => "($folderPrefix IS NULL OR path LIKE $folderPrefix ESCAPE '\\')",
             null => "1=1", _ => throw new ArgumentOutOfRangeException(nameof(groupColumn))
         };
-        using var connection = Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT * FROM tracks WHERE {predicate} AND {groupPredicate} AND ($search IS NULL OR title LIKE $pattern ESCAPE '\\' OR artist LIKE $pattern ESCAPE '\\' OR album LIKE $pattern ESCAPE '\\' OR album_artist LIKE $pattern ESCAPE '\\' OR genre LIKE $pattern ESCAPE '\\' OR path LIKE $pattern ESCAPE '\\') ORDER BY {orderBy} {(descending ? "DESC" : "ASC")}, title COLLATE NOCASE";
-        Add(command, "$search", string.IsNullOrWhiteSpace(search) ? DBNull.Value : search.Trim());
-        var escaped = search?.Trim().Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
-        Add(command, "$pattern", string.IsNullOrWhiteSpace(escaped) ? DBNull.Value : $"%{escaped}%");
-        Add(command, "$group", string.IsNullOrWhiteSpace(groupValue) || groupColumn == "folder" ? DBNull.Value : groupValue);
+        var normalizedSearch = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+        var escaped = normalizedSearch?.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
+        var searchPredicate = normalizedSearch is null ? "1=1" : normalizedSearch.Length >= 3
+            ? "rowid IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH $ftsPhrase) AND (title LIKE $pattern ESCAPE '\\' OR artist LIKE $pattern ESCAPE '\\' OR album LIKE $pattern ESCAPE '\\' OR album_artist LIKE $pattern ESCAPE '\\' OR genre LIKE $pattern ESCAPE '\\' OR path LIKE $pattern ESCAPE '\\')"
+            : "(title LIKE $pattern ESCAPE '\\' OR artist LIKE $pattern ESCAPE '\\' OR album LIKE $pattern ESCAPE '\\' OR album_artist LIKE $pattern ESCAPE '\\' OR genre LIKE $pattern ESCAPE '\\' OR path LIKE $pattern ESCAPE '\\')";
+        var where = $"{predicate} AND {groupPredicate} AND {searchPredicate}";
+        var fullOrderBy = $"{orderBy} {(descending ? "DESC" : "ASC")}, title COLLATE NOCASE, path COLLATE NOCASE, path";
+        object groupParameter = string.IsNullOrWhiteSpace(groupValue) || groupColumn == "folder" ? DBNull.Value : groupValue;
         string? folderPrefix = null;
         if (groupColumn == "folder" && !string.IsNullOrWhiteSpace(groupValue))
         {
@@ -127,11 +282,17 @@ public sealed class LibraryStore
             var prefix = Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
             folderPrefix = EscapeLike(prefix) + "%";
         }
-        Add(command, "$folderPrefix", folderPrefix is null ? DBNull.Value : folderPrefix);
-        using var reader = command.ExecuteReader();
-        var result = new List<Track>();
-        while (reader.Read()) result.Add(ReadTrack(reader));
-        return result;
+        return new(where, fullOrderBy, escaped, normalizedSearch, groupParameter,
+            folderPrefix is null ? DBNull.Value : folderPrefix);
+    }
+
+    private static void BindTrackQuery(SqliteCommand command, TrackQuery query)
+    {
+        Add(command, "$pattern", query.EscapedSearch is null ? DBNull.Value : $"%{query.EscapedSearch}%");
+        if (query.NormalizedSearch is { Length: >= 3 })
+            Add(command, "$ftsPhrase", "\"" + query.NormalizedSearch.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"");
+        Add(command, "$group", query.GroupValue);
+        Add(command, "$folderPrefix", query.FolderPrefix);
     }
 
     public IReadOnlyList<string> GetGroups(string column)
@@ -225,16 +386,39 @@ public sealed class LibraryStore
 
     public void RecordTagBackup(TagBackup backup)
     {
+        using var connection = Open(); using var transaction = connection.BeginTransaction();
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO tag_backups(original_path,backup_path,created_utc) VALUES($path,$backup,$created)";
+            Add(command, "$path", Path.GetFullPath(backup.OriginalPath)); Add(command, "$backup", Path.GetFullPath(backup.BackupPath)); Add(command, "$created", Stamp(backup.CreatedUtc));
+            command.ExecuteNonQuery();
+        }
+        using (var prune = connection.CreateCommand())
+        {
+            prune.Transaction = transaction;
+            prune.CommandText = "DELETE FROM tag_backups WHERE original_path=$path AND id NOT IN (SELECT id FROM tag_backups WHERE original_path=$path ORDER BY created_utc DESC,id DESC LIMIT 5)";
+            Add(prune, "$path", Path.GetFullPath(backup.OriginalPath));
+            prune.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
+
+    public IReadOnlyList<TagBackup> GetTagBackups(string path)
+    {
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO tag_backups(original_path,backup_path,created_utc) VALUES($path,$backup,$created)";
-        Add(command, "$path", Path.GetFullPath(backup.OriginalPath)); Add(command, "$backup", Path.GetFullPath(backup.BackupPath)); Add(command, "$created", Stamp(backup.CreatedUtc));
-        command.ExecuteNonQuery();
+        command.CommandText = "SELECT original_path,backup_path,created_utc FROM tag_backups WHERE original_path=$path ORDER BY created_utc DESC,id DESC LIMIT 5";
+        Add(command, "$path", Path.GetFullPath(path));
+        using var reader = command.ExecuteReader();
+        var backups = new List<TagBackup>(5);
+        while (reader.Read()) backups.Add(new(reader.GetString(0), reader.GetString(1), ParseStamp(reader.GetString(2))));
+        return backups;
     }
 
     public TagBackup? GetLatestTagBackup(string path)
     {
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = "SELECT original_path,backup_path,created_utc FROM tag_backups WHERE original_path=$path ORDER BY id DESC LIMIT 1";
+        command.CommandText = "SELECT original_path,backup_path,created_utc FROM tag_backups WHERE original_path=$path ORDER BY created_utc DESC,id DESC LIMIT 1";
         Add(command, "$path", Path.GetFullPath(path));
         using var reader = command.ExecuteReader();
         return reader.Read() ? new(reader.GetString(0), reader.GetString(1), ParseStamp(reader.GetString(2))) : null;
@@ -291,6 +475,91 @@ public sealed class LibraryStore
         return result;
     }
 
+    public IReadOnlyList<PlaylistSummary> GetPlaylistSummaries()
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "SELECT p.id,p.name,p.created_utc,COUNT(pt.position) FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id=p.id GROUP BY p.id,p.name,p.created_utc ORDER BY p.name COLLATE NOCASE";
+        using var reader = command.ExecuteReader();
+        var summaries = new List<PlaylistSummary>();
+        while (reader.Read()) summaries.Add(new(reader.GetString(0), reader.GetString(1), ParseStamp(reader.GetString(2)), reader.GetInt32(3)));
+        return summaries;
+    }
+
+    public IReadOnlyList<PlaylistEntry> GetPlaylistEntriesPage(string playlistId, string? search = null, int offset = 0, int pageSize = 200)
+    {
+        if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (pageSize is < 1 or > 800) throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be between 1 and 800 playlist entries.");
+        var (match, pattern, ftsPhrase) = BuildPlaylistSearch(search);
+        var collation = OperatingSystem.IsWindows() ? " COLLATE NOCASE" : string.Empty;
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT p.position,p.track_path,t.path,t.title,t.artist,t.album,t.album_artist,t.genre,t.year,t.track_number,t.duration_ms,t.file_size,t.modified_utc,t.added_utc,t.favorite,t.rating,t.play_count,t.last_played_utc,t.artwork_path FROM playlist_tracks p LEFT JOIN tracks t ON t.path{collation}=p.track_path WHERE p.playlist_id=$id AND {match} ORDER BY p.position LIMIT $limit OFFSET $offset";
+        Add(command, "$id", playlistId); Add(command, "$pattern", pattern is null ? DBNull.Value : pattern);
+        if (ftsPhrase is not null) Add(command, "$ftsPhrase", ftsPhrase);
+        Add(command, "$limit", pageSize); Add(command, "$offset", offset);
+        using var reader = command.ExecuteReader();
+        var entries = new List<PlaylistEntry>(pageSize);
+        while (reader.Read())
+        {
+            var track = reader.IsDBNull(2) ? null : ReadTrack(reader);
+            entries.Add(new(reader.GetInt32(0), reader.GetString(1), track));
+        }
+        return entries;
+    }
+
+    public IReadOnlyList<string> GetPlaylistPaths(string playlistId, string? search = null, int offset = 0, int? pageSize = null)
+    {
+        if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (pageSize is < 1 or > 800) throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be between 1 and 800 playlist paths.");
+        var (match, pattern, ftsPhrase) = BuildPlaylistSearch(search);
+        var collation = OperatingSystem.IsWindows() ? " COLLATE NOCASE" : string.Empty;
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT p.track_path FROM playlist_tracks p LEFT JOIN tracks t ON t.path{collation}=p.track_path WHERE p.playlist_id=$id AND {match} ORDER BY p.position" +
+            (pageSize.HasValue ? " LIMIT $limit OFFSET $offset" : offset > 0 ? " LIMIT -1 OFFSET $offset" : string.Empty);
+        Add(command, "$id", playlistId); Add(command, "$pattern", pattern is null ? DBNull.Value : pattern);
+        if (ftsPhrase is not null) Add(command, "$ftsPhrase", ftsPhrase);
+        if (pageSize.HasValue) Add(command, "$limit", pageSize.Value);
+        if (pageSize.HasValue || offset > 0) Add(command, "$offset", offset);
+        using var reader = command.ExecuteReader();
+        var paths = new List<string>(pageSize ?? 0);
+        while (reader.Read()) paths.Add(reader.GetString(0));
+        return paths;
+    }
+
+    public int CountPlaylistEntries(string playlistId, string? search = null)
+    {
+        var (match, pattern, ftsPhrase) = BuildPlaylistSearch(search);
+        var collation = OperatingSystem.IsWindows() ? " COLLATE NOCASE" : string.Empty;
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM playlist_tracks p LEFT JOIN tracks t ON t.path{collation}=p.track_path WHERE p.playlist_id=$id AND {match}";
+        Add(command, "$id", playlistId); Add(command, "$pattern", pattern is null ? DBNull.Value : pattern);
+        if (ftsPhrase is not null) Add(command, "$ftsPhrase", ftsPhrase);
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    public int CountPlaylistPathOccurrencesBefore(string playlistId, string path, int position)
+    {
+        if (position < 0) throw new ArgumentOutOfRangeException(nameof(position));
+        using var connection = Open(); using var command = connection.CreateCommand();
+        var collation = OperatingSystem.IsWindows() ? " COLLATE NOCASE" : string.Empty;
+        command.CommandText = $"SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id=$id AND track_path{collation}=$path AND position<$position";
+        Add(command, "$id", playlistId); Add(command, "$path", Path.GetFullPath(path)); Add(command, "$position", position);
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    private static (string Match, string? Pattern, string? FtsPhrase) BuildPlaylistSearch(string? search)
+    {
+        var normalized = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+        if (normalized is null) return ("1=1", null, null);
+        var escaped = normalized.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
+        var pattern = $"%{escaped}%";
+        var metadata = "t.title LIKE $pattern ESCAPE '\\' OR t.artist LIKE $pattern ESCAPE '\\' OR t.album LIKE $pattern ESCAPE '\\' OR t.album_artist LIKE $pattern ESCAPE '\\' OR t.genre LIKE $pattern ESCAPE '\\' OR t.path LIKE $pattern ESCAPE '\\'";
+        var match = normalized.Length >= 3
+            ? $"(p.track_path LIKE $pattern ESCAPE '\\' OR (t.rowid IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH $ftsPhrase) AND ({metadata})))"
+            : $"(p.track_path LIKE $pattern ESCAPE '\\' OR {metadata})";
+        var phrase = normalized.Length >= 3 ? "\"" + normalized.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"" : null;
+        return (match, pattern, phrase);
+    }
+
     public void RenamePlaylist(string id, string name)
     {
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A playlist needs a name.", nameof(name));
@@ -318,8 +587,23 @@ public sealed class LibraryStore
     public void ImportM3u8(string playlistFile, string? name = null) => CreatePlaylist(name ?? Path.GetFileNameWithoutExtension(playlistFile), Playlists.ReadM3u8(playlistFile));
     public void ExportM3u8(string playlistId, string destination)
     {
-        var playlist = GetPlaylists().SingleOrDefault(item => item.Id == playlistId) ?? throw new KeyNotFoundException("Playlist not found.");
-        Playlists.WriteM3u8(destination, playlist.Paths);
+        using (var connection = Open())
+        using (var exists = connection.CreateCommand())
+        {
+            exists.CommandText = "SELECT 1 FROM playlists WHERE id=$id";
+            Add(exists, "$id", playlistId);
+            if (exists.ExecuteScalar() is null) throw new KeyNotFoundException("Playlist not found.");
+        }
+        Playlists.WriteM3u8(destination, ReadPlaylistPaths(playlistId));
+    }
+
+    private IEnumerable<string> ReadPlaylistPaths(string playlistId)
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "SELECT track_path FROM playlist_tracks WHERE playlist_id=$id ORDER BY position";
+        Add(command, "$id", playlistId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) yield return reader.GetString(0);
     }
 
     private void UpdateTrack(string path, string column, int value)
@@ -346,37 +630,85 @@ public sealed class LibraryStore
 
     private void Migrate()
     {
+        var hadDatabaseFile = System.IO.File.Exists(_databasePath);
         using var connection = Open();
         using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version";
         var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
         if (version > SchemaVersion) throw new InvalidDataException($"Database version {version} is newer than this app supports.");
-        if (version > 0 && version < SchemaVersion && System.IO.File.Exists(_databasePath))
+        if (version == 0)
         {
-            var backup = _databasePath + $".migration-{DateTime.UtcNow:yyyyMMdd-HHmmss}.bak";
-            using var destination = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = backup }.ToString());
-            destination.Open(); connection.BackupDatabase(destination);
+            using var transaction = connection.BeginTransaction();
+            using var createV1 = connection.CreateCommand();
+            createV1.Transaction = transaction;
+            createV1.CommandText = """
+                CREATE TABLE IF NOT EXISTS tracks(
+                  path TEXT PRIMARY KEY, title TEXT NOT NULL, artist TEXT NOT NULL DEFAULT '', album TEXT NOT NULL DEFAULT '', album_artist TEXT NOT NULL DEFAULT '',
+                  genre TEXT NOT NULL DEFAULT '', year INTEGER NOT NULL DEFAULT 0, track_number INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0,
+                  file_size INTEGER NOT NULL DEFAULT 0, modified_utc TEXT NOT NULL, added_utc TEXT NOT NULL, favorite INTEGER NOT NULL DEFAULT 0,
+                  rating INTEGER NOT NULL DEFAULT 0 CHECK(rating BETWEEN 0 AND 5), play_count INTEGER NOT NULL DEFAULT 0,
+                  last_played_utc TEXT NULL, artwork_path TEXT NULL);
+                CREATE INDEX IF NOT EXISTS ix_tracks_title ON tracks(title COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS ix_tracks_artist ON tracks(artist COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS ix_tracks_album ON tracks(album COLLATE NOCASE);
+                CREATE TABLE IF NOT EXISTS playlists(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_utc TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS playlist_tracks(playlist_id TEXT NOT NULL, position INTEGER NOT NULL, track_path TEXT NOT NULL,
+                  PRIMARY KEY(playlist_id,position), FOREIGN KEY(playlist_id) REFERENCES playlists(id) ON DELETE CASCADE);
+                CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS playback_session(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS tag_backups(id INTEGER PRIMARY KEY AUTOINCREMENT, original_path TEXT NOT NULL, backup_path TEXT NOT NULL, created_utc TEXT NOT NULL);
+                PRAGMA user_version=1;
+                """;
+            createV1.ExecuteNonQuery();
+            transaction.Commit();
+            version = 1;
         }
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            CREATE TABLE IF NOT EXISTS tracks(
-              path TEXT PRIMARY KEY, title TEXT NOT NULL, artist TEXT NOT NULL DEFAULT '', album TEXT NOT NULL DEFAULT '', album_artist TEXT NOT NULL DEFAULT '',
-              genre TEXT NOT NULL DEFAULT '', year INTEGER NOT NULL DEFAULT 0, track_number INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0,
-              file_size INTEGER NOT NULL DEFAULT 0, modified_utc TEXT NOT NULL, added_utc TEXT NOT NULL, favorite INTEGER NOT NULL DEFAULT 0,
-              rating INTEGER NOT NULL DEFAULT 0 CHECK(rating BETWEEN 0 AND 5), play_count INTEGER NOT NULL DEFAULT 0,
-              last_played_utc TEXT NULL, artwork_path TEXT NULL);
-            CREATE INDEX IF NOT EXISTS ix_tracks_title ON tracks(title COLLATE NOCASE);
-            CREATE INDEX IF NOT EXISTS ix_tracks_artist ON tracks(artist COLLATE NOCASE);
-            CREATE INDEX IF NOT EXISTS ix_tracks_album ON tracks(album COLLATE NOCASE);
-            CREATE TABLE IF NOT EXISTS playlists(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_utc TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS playlist_tracks(playlist_id TEXT NOT NULL, position INTEGER NOT NULL, track_path TEXT NOT NULL,
-              PRIMARY KEY(playlist_id,position), FOREIGN KEY(playlist_id) REFERENCES playlists(id) ON DELETE CASCADE);
-            CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS playback_session(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS tag_backups(id INTEGER PRIMARY KEY AUTOINCREMENT, original_path TEXT NOT NULL, backup_path TEXT NOT NULL, created_utc TEXT NOT NULL);
-            PRAGMA user_version=1;
-            """;
-        command.ExecuteNonQuery();
+        if (version == 1)
+        {
+            if (hadDatabaseFile)
+            {
+                var backup = _databasePath + $".migration-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.bak";
+                using var destination = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = backup }.ToString());
+                destination.Open();
+                connection.BackupDatabase(destination);
+            }
+            using var transaction = connection.BeginTransaction();
+            using var migrate = connection.CreateCommand();
+            migrate.Transaction = transaction;
+            migrate.CommandText = """
+                CREATE VIRTUAL TABLE tracks_fts USING fts5(
+                  title, artist, album, album_artist, genre, path,
+                  content='tracks', content_rowid='rowid', tokenize='trigram');
+                CREATE TRIGGER tracks_fts_insert AFTER INSERT ON tracks BEGIN
+                  INSERT INTO tracks_fts(rowid,title,artist,album,album_artist,genre,path)
+                  VALUES(new.rowid,new.title,new.artist,new.album,new.album_artist,new.genre,new.path);
+                END;
+                CREATE TRIGGER tracks_fts_delete AFTER DELETE ON tracks BEGIN
+                  INSERT INTO tracks_fts(tracks_fts,rowid,title,artist,album,album_artist,genre,path)
+                  VALUES('delete',old.rowid,old.title,old.artist,old.album,old.album_artist,old.genre,old.path);
+                END;
+                CREATE TRIGGER tracks_fts_update AFTER UPDATE OF title,artist,album,album_artist,genre,path ON tracks BEGIN
+                  INSERT INTO tracks_fts(tracks_fts,rowid,title,artist,album,album_artist,genre,path)
+                  VALUES('delete',old.rowid,old.title,old.artist,old.album,old.album_artist,old.genre,old.path);
+                  INSERT INTO tracks_fts(rowid,title,artist,album,album_artist,genre,path)
+                  VALUES(new.rowid,new.title,new.artist,new.album,new.album_artist,new.genre,new.path);
+                END;
+                INSERT INTO tracks_fts(tracks_fts) VALUES('rebuild');
+                CREATE TABLE scan_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, started_utc TEXT NOT NULL);
+                CREATE TABLE scan_roots(run_id INTEGER NOT NULL, root_path TEXT NOT NULL, root_prefix TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0,
+                  PRIMARY KEY(run_id,root_path), FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE);
+                CREATE TABLE scan_seen(run_id INTEGER NOT NULL, path TEXT NOT NULL, PRIMARY KEY(run_id,path),
+                  FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE);
+                CREATE TABLE scan_excluded(run_id INTEGER NOT NULL, path TEXT NOT NULL, prefix TEXT NOT NULL, PRIMARY KEY(run_id,path),
+                  FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE);
+                CREATE INDEX ix_playlist_tracks_path ON playlist_tracks(playlist_id,track_path,position);
+                CREATE INDEX ix_playlist_tracks_path_nocase ON playlist_tracks(playlist_id,track_path COLLATE NOCASE,position);
+                CREATE INDEX ix_tracks_artwork_path ON tracks(artwork_path COLLATE NOCASE);
+                PRAGMA user_version=2;
+                """;
+            migrate.ExecuteNonQuery();
+            transaction.Commit();
+        }
     }
 
     private SqliteConnection Open() { var connection = new SqliteConnection(_connectionString); connection.Open(); return connection; }
@@ -399,6 +731,8 @@ public sealed class LibraryStore
         r.IsDBNull(r.GetOrdinal("artwork_path")) ? null : r.GetString(r.GetOrdinal("artwork_path")));
 
     private static string Stamp(DateTime value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+    private static string NormalizeRoot(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+    private static string RootPrefix(string root) => Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
     private static string EscapeLike(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
     private static DateTime ParseStamp(string value) => DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
     private static void Add(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);

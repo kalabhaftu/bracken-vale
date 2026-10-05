@@ -3,114 +3,249 @@ name: Signed Windows release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: windows-2022
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.release.outputs.signed }}
+      preview: ${{ steps.release.outputs.preview }}
+      preflight_only: ${{ steps.release.outputs.preflight_only }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      # actions/checkout v7, pinned to the verified tag commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      # actions/setup-dotnet v6, pinned to the verified tag commit.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 10.0.x
-      - name: Validate release notes and signing secrets
+      - name: Validate release and privately preflight signing
         id: release
         shell: pwsh
         env:
           SIGNING_PFX: ${{ secrets.BRACKENVALE_SIGNING_PFX_BASE64 }}
           SIGNING_PASSWORD: ${{ secrets.BRACKENVALE_SIGNING_PFX_PASSWORD }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          $preflightOnly = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch'
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          if ($version -notmatch '^\d+\.\d+\.\d+(-preview\.\d+)?$') { throw "Tag must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-preview.N: $env:GITHUB_REF_NAME" }
-          $preview = $version -match '-preview\.\d+$'
+          $preview = $false
+          $notes = ''
+          if ($preflightOnly -and $env:GITHUB_REF_NAME -ne 'main') { throw 'Private signing preflight must run from main.' }
+          if (-not $preflightOnly) {
+            git fetch origin main --no-tags
+            if ($LASTEXITCODE -ne 0) { throw 'Could not verify the main branch before release.' }
+            git merge-base --is-ancestor HEAD origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'Release tags must point to a commit reachable from main.' }
+            if ($version -notmatch '^\d+\.\d+\.\d+(-preview\.\d+)?$') { throw "Tag must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-preview.N: $env:GITHUB_REF_NAME" }
+            $preview = $version -match '-preview\.\d+$'
+            $changelog = Get-Content CHANGELOG.md -Raw
+            if (-not $changelog.Contains("## [$version]")) { throw "CHANGELOG.md must contain a ## [$version] section before release." }
+            $notes = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($version))\].*?(?=^## \[|\z)").Value
+            if ([string]::IsNullOrWhiteSpace($notes)) { throw 'Could not extract release notes from CHANGELOG.md.' }
+          }
           $hasPfx = -not [string]::IsNullOrWhiteSpace($env:SIGNING_PFX)
           $hasPassword = -not [string]::IsNullOrWhiteSpace($env:SIGNING_PASSWORD)
-          if ($hasPfx -ne $hasPassword) { throw 'Configure both signing secrets, or leave both empty for an unsigned preview.' }
-          if (-not $preview -and -not $hasPfx) { throw 'Stable releases require BRACKENVALE_SIGNING_PFX_BASE64 and BRACKENVALE_SIGNING_PFX_PASSWORD repository secrets.' }
-          $changelog = Get-Content CHANGELOG.md -Raw
-          if (-not $changelog.Contains("## [$version]")) { throw "CHANGELOG.md must contain a ## [$version] section before release." }
-          if ($hasPfx) {
-            $pfx = [Convert]::FromBase64String($env:SIGNING_PFX)
-            [IO.File]::WriteAllBytes((Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx'), $pfx)
+
+          $signed = $false
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx'
+          $probePath = Join-Path $env:RUNNER_TEMP ('bracken-vale-signing-probe-' + [Guid]::NewGuid().ToString('N') + '.txt')
+          $preflightPassed = $false
+          if ($hasPfx -and $hasPassword) {
+            $certificate = $null
+            $chain = $null
+            try {
+              $pfxBytes = [Convert]::FromBase64String($env:SIGNING_PFX)
+              [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+              $pfxBytes = $null
+
+              $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+                $pfxPath,
+                $env:SIGNING_PASSWORD,
+                [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+              )
+              $now = [DateTime]::UtcNow
+              if ($certificate.NotBefore.ToUniversalTime() -gt $now -or $certificate.NotAfter.ToUniversalTime() -le $now) { throw 'Signing certificate is outside its validity period.' }
+              if (-not $certificate.HasPrivateKey) { throw 'Signing certificate has no private key.' }
+              if ($certificate.Subject -ne 'CN=Bracken Vale' -or $certificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne 'Bracken Vale') { throw 'Signing certificate subject does not match the MSIX publisher.' }
+              $codeSigningEku = $certificate.Extensions | Where-Object {
+                $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] -and
+                ($_.EnhancedKeyUsages | Where-Object { $_.Value -eq '1.3.6.1.5.5.7.3.3' })
+              } | Select-Object -First 1
+              if (-not $codeSigningEku) { throw 'Signing certificate lacks the Code Signing EKU.' }
+
+              $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
+              $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::Online
+              $chain.ChainPolicy.RevocationFlag = [System.Security.Cryptography.X509Certificates.X509RevocationFlag]::ExcludeRoot
+              $chain.ChainPolicy.UrlRetrievalTimeout = [TimeSpan]::FromSeconds(15)
+              $chain.ChainPolicy.ApplicationPolicy.Add([System.Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.3'))
+              if (-not $chain.Build($certificate)) { throw 'Signing certificate chain is not trusted or could not be validated.' }
+
+              $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+              $signtool = Get-ChildItem -Path (Join-Path $sdkRoot '*/x64/signtool.exe') -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+              if (-not $signtool) { throw 'Windows SDK signtool.exe was not found.' }
+
+              [IO.File]::WriteAllText($probePath, 'Bracken Vale signing preflight')
+              & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfxPath /p $env:SIGNING_PASSWORD $probePath
+              if ($LASTEXITCODE -ne 0) { throw 'Disposable signing probe failed.' }
+              & $signtool verify /pa /all $probePath
+              if ($LASTEXITCODE -ne 0) { throw 'Disposable signature verification failed.' }
+              $preflightPassed = $true
+            } catch {
+              $preflightPassed = $false
+            } finally {
+              if ($chain) { $chain.Dispose() }
+              if ($certificate) { $certificate.Dispose() }
+              Remove-Item -LiteralPath $probePath -Force -ErrorAction SilentlyContinue
+            }
           }
-          $notes = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($version))\].*?(?=^## \[|\z)").Value
-          if ([string]::IsNullOrWhiteSpace($notes)) { throw 'Could not extract release notes from CHANGELOG.md.' }
+
+          if ($hasPfx -ne $hasPassword -or (($hasPfx -or $hasPassword) -and -not $preflightPassed)) {
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+            if ($preflightOnly) { throw 'Private signing preflight failed. No release was created.' }
+            if (-not $preview) { throw 'Stable releases require a valid, trusted signing certificate and successful private signing preflight.' }
+            Write-Warning 'Signing preflight did not pass. This preview will be published with unsigned portable ZIPs only.'
+          } elseif (-not $hasPfx) {
+            if ($preflightOnly) { throw 'Private signing preflight failed because signing secrets are not configured. No release was created.' }
+            if (-not $preview) { throw 'Stable releases require BRACKENVALE_SIGNING_PFX_BASE64 and BRACKENVALE_SIGNING_PFX_PASSWORD secrets.' }
+            Write-Warning 'Signing secrets are not configured. This preview will be published with unsigned portable ZIPs only.'
+          } else {
+            $signed = $true
+          }
+
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          Set-Content -Path $notesPath -Value $notes -NoNewline
-          if ($preview -and -not $hasPfx) { Add-Content -Path $notesPath -Value "`n`n> Unsigned preview ZIPs only. Windows may show a security warning. Signed setup and MSIX packages are reserved for a later stable release." }
-          "signed=$($hasPfx.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if (-not $preflightOnly) {
+            Set-Content -Path $notesPath -Value $notes -NoNewline
+            if ($preview -and -not $signed) { Add-Content -Path $notesPath -Value "`n`n> Unsigned preview ZIPs only. Windows may show a security warning. Signed setup and MSIX packages are reserved for a later stable release." }
+          }
+          "signed=$($signed.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "preview=$($preview.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "preflight_only=$($preflightOnly.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($preflightOnly) { Write-Host 'Private signing preflight passed. No release will be built or published.'; exit 0 }
       - name: Restore and test
+        if: steps.release.outputs.preflight_only != 'true'
         run: |
           dotnet restore BrackenVale.sln
           dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj --configuration Release --no-restore
       - name: Install Inno Setup 7
-        if: steps.release.outputs.signed == 'true'
+        if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
         run: choco install innosetup --version=7.1.0 --yes --no-progress
       - name: Build portable packages and optional signed installers
+        if: steps.release.outputs.preflight_only != 'true'
+        shell: pwsh
+        env:
+          SIGNING_PASSWORD: ${{ secrets.BRACKENVALE_SIGNING_PFX_PASSWORD }}
+          RELEASE_SIGNED: ${{ steps.release.outputs.signed }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $signed = $env:RELEASE_SIGNED -eq 'true'
+          if ($signed) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx'
+            $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+            $signtool = Get-ChildItem -Path (Join-Path $sdkRoot '*/x64/signtool.exe') -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $signtool) { throw 'Windows SDK signtool.exe was not found.' }
+          }
+          New-Item artifacts -ItemType Directory -Force | Out-Null
+          try {
+            foreach ($arch in @(@{ name='x64'; rid='win-x64' }, @{ name='arm64'; rid='win-arm64' })) {
+              $out = Join-Path $PWD "artifacts/portable-$($arch.name)"
+              dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --runtime $arch.rid --self-contained true --output $out -p:Platform=$($arch.name) -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true -p:Version=$version
+              if ($LASTEXITCODE -ne 0) { throw "Portable publish failed for $($arch.name)." }
+              Copy-Item ThirdPartyNotices.md $out
+              if ($signed) {
+                $app = Join-Path $out 'BrackenVale.exe'
+                & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $app
+                if ($LASTEXITCODE -ne 0) { throw "Signing app binary failed for $($arch.name)." }
+                & $signtool verify /pa /all $app
+                if ($LASTEXITCODE -ne 0) { throw "App signature verification failed for $($arch.name)." }
+                $iscc = (Get-Command ISCC.exe -ErrorAction Stop).Source
+                & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" packaging/windows/BrackenVale.iss
+                if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $($arch.name)." }
+                $setup = Join-Path $PWD "artifacts/BrackenVale-Setup-$($arch.name).exe"
+                & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $setup
+                if ($LASTEXITCODE -ne 0) { throw "Signing installer failed for $($arch.name)." }
+                & $signtool verify /pa /all $setup
+                if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed for $($arch.name)." }
+              }
+              $zip = "artifacts/BrackenVale-$version-$($arch.name)-portable.zip"
+              Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
+            }
+            Copy-Item ThirdPartyNotices.md artifacts
+            Copy-Item (Join-Path $env:RUNNER_TEMP 'release-notes.md') artifacts/release-notes.md
+          } finally {
+            Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx') -Force -ErrorAction SilentlyContinue
+          }
+      - name: Build signed MSIX bundle
+        if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
         shell: pwsh
         env:
           SIGNING_PASSWORD: ${{ secrets.BRACKENVALE_SIGNING_PFX_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          $signed = '${{ steps.release.outputs.signed }}' -eq 'true'
-          if ($signed) {
-            $pfx = Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx'
-            $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
-            if (-not $signtool) { throw 'Windows SDK signtool.exe was not found.' }
-          }
-          New-Item artifacts -ItemType Directory -Force | Out-Null
-          foreach ($arch in @(@{ name='x64'; rid='win-x64' }, @{ name='arm64'; rid='win-arm64' })) {
-            $out = Join-Path $PWD "artifacts/portable-$($arch.name)"
-            dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --runtime $arch.rid --self-contained true --output $out -p:Platform=$($arch.name) -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true -p:Version=$version
-            if ($LASTEXITCODE -ne 0) { throw "Portable publish failed for $($arch.name)." }
-            Copy-Item ThirdPartyNotices.md $out
-            if ($signed) {
-              $app = Join-Path $out 'BrackenVale.exe'
-              & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $app
-              if ($LASTEXITCODE -ne 0) { throw "Signing app binary failed for $($arch.name)." }
-              $iscc = (Get-Command ISCC.exe -ErrorAction Stop).Source
-              & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" packaging/windows/BrackenVale.iss
-              if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $($arch.name)." }
-              $setup = Join-Path $PWD "artifacts/BrackenVale-Setup-$($arch.name).exe"
-              & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $setup
-              if ($LASTEXITCODE -ne 0) { throw "Signing installer failed for $($arch.name)." }
-            }
-            $zip = "artifacts/BrackenVale-$version-$($arch.name)-portable.zip"
-            Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
-          }
-          Copy-Item ThirdPartyNotices.md artifacts
-      - name: Build signed MSIX bundle
-        if: steps.release.outputs.signed == 'true'
-        shell: pwsh
-        env:
-          SIGNING_PASSWORD: ${{ secrets.BRACKENVALE_SIGNING_PFX_PASSWORD }}
-        run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $manifestVersion = "$($version.Split('-')[0]).0"
           dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:PackageCertificateKeyFile="$env:RUNNER_TEMP\bracken-vale-signing.pfx" -p:PackageCertificatePassword="$env:SIGNING_PASSWORD" -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
-          if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle packaging/signing failed. Verify the certificate subject matches CN=Bracken Vale.' }
+          if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle packaging/signing failed.' }
           $bundle = Get-ChildItem src/BrackenVale.App -Recurse -Filter *.msixbundle | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $bundle) { throw 'Windows packaging completed without producing an MSIX bundle.' }
+          $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+          $signtool = Get-ChildItem -Path (Join-Path $sdkRoot '*/x64/signtool.exe') -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw 'Windows SDK signtool.exe was not found.' }
+          & $signtool verify /pa /all $bundle.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle signature verification failed.' }
           Copy-Item $bundle.FullName "artifacts/BrackenVale-$version-x64-arm64.msixbundle"
+      # actions/upload-artifact v7, pinned to the verified tag commit.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.release.outputs.preflight_only != 'true'
+        with:
+          name: bracken-vale-release-assets
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Remove signing material
+        if: always()
+        shell: pwsh
+        run: Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx') -Force -ErrorAction SilentlyContinue
+
+  publish:
+    needs: build
+    if: needs.build.outputs.preflight_only != 'true'
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      # actions/download-artifact v7, pinned to the verified tag commit.
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: bracken-vale-release-assets
+          path: artifacts
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_PREVIEW: ${{ needs.build.outputs.preview }}
         shell: pwsh
         run: |
-          $assets = Get-ChildItem artifacts -File | ForEach-Object FullName
+          $ErrorActionPreference = 'Stop'
+          $assets = Get-ChildItem artifacts -File | Where-Object Name -ne 'release-notes.md' | ForEach-Object FullName
+          if (-not $assets) { throw 'No release assets were downloaded.' }
           $tag = $env:GITHUB_REF_NAME
           $title = "Bracken Vale $($tag.TrimStart('v'))"
-          $notes = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          $notes = Join-Path $PWD 'artifacts/release-notes.md'
+          if (-not (Test-Path $notes)) { throw 'Release notes artifact is missing.' }
           $null = gh release view $tag --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @assets --clobber
             if ($LASTEXITCODE -ne 0) { throw 'Could not replace the existing release assets.' }
             gh release edit $tag --title $title --notes-file $notes
-          } elseif ('${{ steps.release.outputs.preview }}' -eq 'true') {
+          } elseif ($env:RELEASE_PREVIEW -eq 'true') {
             gh release create $tag @assets --title $title --notes-file $notes --prerelease
           } else {
             gh release create $tag @assets --title $title --notes-file $notes

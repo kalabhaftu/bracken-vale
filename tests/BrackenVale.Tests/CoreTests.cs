@@ -382,7 +382,8 @@ public sealed class CoreTests : IDisposable
 
         var backups = await Task.WhenAll(saves);
         Assert.Equal(saves.Length, backups.Select(backup => backup.BackupPath).Distinct(StringComparer.Ordinal).Count());
-        Assert.All(backups, backup => Assert.True(System.IO.File.Exists(backup.BackupPath)));
+        Assert.Equal(5, backups.Count(backup => System.IO.File.Exists(backup.BackupPath)));
+        Assert.Equal(5, Directory.GetFiles(Path.Combine(_root, "backups"), "*.bak").Length);
         using var media = TagLib.File.Create(path);
         Assert.StartsWith("Concurrent edit ", media.Tag.Title);
         Assert.Empty(Directory.GetFiles(_root, ".parallel.bracken-stage-*.wav"));

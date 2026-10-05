@@ -2,7 +2,7 @@
 
 Bracken Vale is a native Windows music library and player built with WinUI 3, C# and .NET. It uses Segoe UI and Fluent controls, with switchable system and album-art accent styles. Your library, playlists, ratings, lyrics, settings and playback session stay on your PC.
 
-> **Development status:** this repository is under active development. The core library and automated tests run on macOS, but the WinUI application can only be built and visually/audio tested on Windows. Use GitHub Actions for the Windows build. No stable installer is available until Windows CI and hardware checks pass.
+> **Development status:** this repository is under active development. The core library and automated tests run cross-platform; the WinUI application must be built and visually/audio tested on Windows. The release workflow supports unsigned preview ZIPs and blocks stable releases until signing preflight passes. See [project status](docs/project-status.md) for verified results and [known limitations](docs/known-limitations.md).
 
 ## Current capabilities
 
@@ -20,7 +20,7 @@ The supported audio formats depend on the bundled LibVLC modules and the file co
 
 ## Get a Windows build
 
-Download the latest x64 or ARM64 portable ZIP from [GitHub Releases](https://github.com/kalabhaftu/bracken-vale/releases). Extract it and start `BrackenVale.exe`. These self-contained builds do not need a separate .NET or codec installation; they are unsigned previews and Windows may show a security warning. Signed setup installers and MSIX releases require signing credentials and Windows hardware validation.
+Download the latest x64 or ARM64 portable ZIP from [GitHub Releases](https://github.com/kalabhaftu/bracken-vale/releases). Extract it and start `BrackenVale.exe`. These self-contained builds do not need a separate .NET or codec installation. Preview ZIPs may be unsigned when signing preflight has not passed, and Windows may show a security warning. Signed setup installers and MSIX releases require a trusted certificate and Windows installation checks.
 
 ## Build from the command line
 
@@ -30,9 +30,10 @@ Use Windows 10 1809 or later with the .NET 10 SDK and Windows 10 SDK 10.0.26100 
 dotnet restore BrackenVale.sln
 dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj -c Release
 dotnet build src/BrackenVale.App/BrackenVale.App.csproj -c Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64
+dotnet run --project src/BrackenVale.App/BrackenVale.App.csproj
 ```
 
-For ARM64, use `-p:Platform=ARM64 -p:RuntimeIdentifier=win-arm64`. More packaging and development notes are in [docs/development.md](docs/development.md).
+`dotnet run` starts the app built from this checkout; it does not make release packages. For ARM64 builds, use `-p:Platform=ARM64 -p:RuntimeIdentifier=win-arm64`. More setup and release notes are in [development](docs/development.md) and [the GitHub release process](docs/release.md).
 
 ## Privacy and network use
 
