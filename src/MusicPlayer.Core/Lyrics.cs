@@ -6,50 +6,141 @@ namespace BrackenVale.Core;
 
 public static partial class Lyrics
 {
-    [GeneratedRegex(@"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\[(\d+):(\d{1,2})(?:[.:](\d+))?\]", RegexOptions.CultureInvariant)]
     private static partial Regex TimeStamp();
-    [GeneratedRegex(@"^\[offset:([+-]?\d+)\]$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex OffsetLine();
+
+    [GeneratedRegex(@"^\[([a-z][a-z0-9_-]*):([^\]]*)\]$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex MetadataTag();
 
     public static string DisplayAt(LyricsDocument document, string plainText, TimeSpan position)
         => document.Lines.Count == 0 ? plainText : document.At(position);
 
     public static LyricsDocument Parse(string text)
     {
+        ArgumentNullException.ThrowIfNull(text);
+
         var lines = new List<LyricsLine>();
+        var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var offset = TimeSpan.Zero;
-        foreach (var raw in text.Replace("\r", string.Empty, StringComparison.Ordinal).Split('\n'))
+        foreach (var raw in NormalizeNewlines(text).Split('\n'))
         {
-            var offsetMatch = OffsetLine().Match(raw.Trim());
-            if (offsetMatch.Success && int.TryParse(offsetMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var milliseconds))
+            var trimmed = raw.Trim();
+            var metadataMatch = MetadataTag().Match(trimmed);
+            if (metadataMatch.Success)
             {
-                offset = TimeSpan.FromMilliseconds(milliseconds);
+                var key = metadataMatch.Groups[1].Value;
+                var value = metadataMatch.Groups[2].Value.Trim();
+                if (key.Equals("offset", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var milliseconds)
+                        && milliseconds <= TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond
+                        && milliseconds >= TimeSpan.MinValue.Ticks / TimeSpan.TicksPerMillisecond)
+                    {
+                        offset = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond);
+                    }
+                }
+                else
+                {
+                    metadata[key] = value;
+                }
                 continue;
             }
+
             var timestamps = TimeStamp().Matches(raw);
             if (timestamps.Count == 0) continue;
+
             var lyric = raw[(timestamps[^1].Index + timestamps[^1].Length)..].Trim();
             foreach (Match timestamp in timestamps)
             {
-                if (!int.TryParse(timestamp.Groups[1].Value, out var minutes) || !int.TryParse(timestamp.Groups[2].Value, out var seconds)) continue;
-                var fraction = timestamp.Groups[3].Value;
-                var millis = fraction.Length switch { 1 => int.Parse(fraction, CultureInfo.InvariantCulture) * 100, 2 => int.Parse(fraction, CultureInfo.InvariantCulture) * 10, 3 => int.Parse(fraction, CultureInfo.InvariantCulture), _ => 0 };
-                lines.Add(new(TimeSpan.FromMinutes(minutes) + TimeSpan.FromSeconds(seconds) + TimeSpan.FromMilliseconds(millis), lyric));
+                if (!TryReadTimestamp(timestamp, out var time)) continue;
+                lines.Add(new(time, lyric));
             }
         }
-        return new(lines.OrderBy(line => line.Time).ToArray(), offset);
+
+        return new(lines.OrderBy(line => line.Time).ToArray(), offset, metadata);
+    }
+
+    /// <summary>Returns readable plain lyrics while removing LRC metadata and timestamp markers.</summary>
+    public static string PlainText(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var output = new List<string>();
+        foreach (var raw in NormalizeNewlines(text).Split('\n'))
+        {
+            var trimmed = raw.Trim();
+            if (MetadataTag().IsMatch(trimmed)) continue;
+            var lyric = TimeStamp().Replace(raw, string.Empty).Trim();
+            if (lyric.Length > 0) output.Add(lyric);
+        }
+        return string.Join(Environment.NewLine, output);
+    }
+
+    public static bool HasUsableContent(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var document = Parse(text);
+        return document.Lines.Any(line => !string.IsNullOrWhiteSpace(line.Text))
+            || !string.IsNullOrWhiteSpace(PlainText(text));
+    }
+
+    public static bool IsMalformedTimedText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || TimeStamp().Matches(text).Count == 0) return false;
+        return Parse(text).Lines.Count == 0;
     }
 
     public static string Format(LyricsDocument document)
     {
+        ArgumentNullException.ThrowIfNull(document);
         var output = new StringBuilder();
-        if (document.Offset != TimeSpan.Zero) output.Append("[offset:").Append((long)document.Offset.TotalMilliseconds).AppendLine("]");
+        if (document.Metadata is not null)
+        {
+            foreach (var pair in document.Metadata)
+            {
+                if (pair.Key.Equals("offset", StringComparison.OrdinalIgnoreCase)) continue;
+                output.Append('[').Append(pair.Key).Append(':').Append(pair.Value).AppendLine("]");
+            }
+        }
+        if (document.Offset != TimeSpan.Zero)
+            output.Append("[offset:").Append((long)document.Offset.TotalMilliseconds).AppendLine("]");
+
         foreach (var line in document.Lines)
         {
             var time = line.Time < TimeSpan.Zero ? TimeSpan.Zero : line.Time;
-            output.Append('[').Append((int)time.TotalMinutes).Append(':').Append(time.Seconds.ToString("00", CultureInfo.InvariantCulture))
-                .Append('.').Append((time.Milliseconds / 10).ToString("00", CultureInfo.InvariantCulture)).Append(']').AppendLine(line.Text);
+            var fraction = (time.Ticks % TimeSpan.TicksPerSecond).ToString("D7", CultureInfo.InvariantCulture).TrimEnd('0');
+            if (fraction.Length < 2) fraction = fraction.PadRight(2, '0');
+            output.Append('[').Append((long)time.TotalMinutes).Append(':').Append(time.Seconds.ToString("00", CultureInfo.InvariantCulture))
+                .Append('.').Append(fraction).Append(']').AppendLine(line.Text);
         }
         return output.ToString();
     }
+
+    private static bool TryReadTimestamp(Match match, out TimeSpan time)
+    {
+        time = TimeSpan.Zero;
+        if (!long.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minutes)
+            || !int.TryParse(match.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
+            || seconds is < 0 or >= 60)
+        {
+            return false;
+        }
+
+        var fraction = match.Groups[3].Value;
+        var fractionTicksText = fraction.Length > 7 ? fraction[..7] : fraction.PadRight(7, '0');
+        var fractionTicks = fractionTicksText.Length == 0
+            ? 0
+            : long.Parse(fractionTicksText, NumberStyles.None, CultureInfo.InvariantCulture);
+        try
+        {
+            var ticks = checked(minutes * TimeSpan.TicksPerMinute + seconds * TimeSpan.TicksPerSecond + fractionTicks);
+            time = TimeSpan.FromTicks(ticks);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+    }
+
+    private static string NormalizeNewlines(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 }

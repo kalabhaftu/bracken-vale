@@ -25,7 +25,8 @@ public static class TrackReader
             info.Length,
             info.LastWriteTimeUtc,
             DateTime.UtcNow,
-            ArtworkPath: artwork);
+            ArtworkPath: artwork,
+            HasLyrics: LyricsFiles.HasEmbeddedLyrics(media) || LyricsFiles.HasUsableSidecar(path));
     }
 
     private static string? SaveArtwork(IPicture? picture, string cache)
