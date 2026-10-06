@@ -49,7 +49,7 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
                         skipped++;
                         return ValueTask.CompletedTask;
                     }
-                    if (!forceRefresh && scan.IsUnchanged(fullPath, info.Length, info.LastWriteTimeUtc))
+                    if (!forceRefresh && scan.IsUnchanged(fullPath, info.Length, info.LastWriteTimeUtc, artworkCache))
                     {
                         scan.MarkSeen(fullPath);
                         return ValueTask.CompletedTask;

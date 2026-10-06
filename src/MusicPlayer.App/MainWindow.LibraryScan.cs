@@ -120,12 +120,28 @@ public sealed partial class MainWindow : Window
                     }
                     foreach (var path in _trackAvailability.ClearUnavailableTracksThatExist())
                         _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(path), fileUnavailable = false });
+
+                    // Reconcile every indexed path after a successful scan. This also
+                    // catches files deleted before the watcher started or outside the
+                    // currently selected roots, while the availability service retains
+                    // references whose containing drive or folder cannot be reached.
+                    var reconciliation = await Task.Run(_trackAvailability.ReconcileIndexedTracks);
+                    foreach (var path in reconciliation.RemovedPaths)
+                        _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(path), fileUnavailable = true });
+                    foreach (var path in _trackAvailability.ClearUnavailableTracksThatExist())
+                        _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(path), fileUnavailable = false });
+
                     var heading = forceRefresh ? "Index rebuilt" : "Scan complete";
-                    var message = $"{heading} · {result.Indexed:N0} tracks updated · {result.Removed:N0} missing tracks removed · {result.Skipped:N0} files skipped";
+                    var removedCount = result.Removed + reconciliation.RemovedPaths.Count;
+                    var message = $"{heading} · {result.Indexed:N0} tracks updated · {removedCount:N0} missing tracks removed · {result.Skipped:N0} files skipped";
+                    if (reconciliation.UnavailableCount > 0)
+                        message += $" · {reconciliation.UnavailableCount:N0} tracks retained because their locations are unavailable";
                     if (unavailableRoots.Count > 0)
                         message += $" · unavailable folders (tracks kept): {string.Join("; ", unavailableRoots)}";
                     if (result.IncompletePaths is { Count: > 0 } incompletePaths)
                         message += $" · {incompletePaths.Count:N0} folders could not be checked; their indexed tracks were kept";
+                    if (reconciliation.RemovedPaths.Count > 0)
+                        LocalAppLog.Shared.Info("library-availability", $"Reconciled {reconciliation.RemovedPaths.Count:N0} confirmed missing indexed track(s); retained {reconciliation.UnavailableCount:N0} unreachable track(s).");
                     SetScanOutcome("complete", message);
                 }
                 PublishLibraryChanged(); PublishScanState();

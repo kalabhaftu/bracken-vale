@@ -9,6 +9,38 @@ internal sealed class TrackAvailabilityService(
     LibraryQueryService queries,
     LibraryLocationService locations)
 {
+    public AvailabilityReconciliation ReconcileIndexedTracks()
+    {
+        const int pageSize = 800;
+        var paths = new List<string>();
+        for (var offset = 0; ; offset += pageSize)
+        {
+            var page = store.GetTrackPaths(offset: offset, pageSize: pageSize);
+            paths.AddRange(page);
+            if (page.Count < pageSize) break;
+        }
+
+        var removed = new List<string>();
+        var unavailable = 0;
+        var recovered = 0;
+        foreach (var path in paths)
+        {
+            if (File.Exists(path))
+            {
+                if (queries.SetTrackUnavailable(path, false)) recovered++;
+                continue;
+            }
+
+            queries.SetTrackUnavailable(path, true);
+            if (IsConfirmedMissingFile(path)) removed.Add(path);
+            else unavailable++;
+        }
+
+        if (removed.Count > 0)
+            store.RemoveTracks(removed);
+        return new(removed, unavailable, recovered);
+    }
+
     public bool MarkUnavailable(string path)
     {
         queries.SetTrackUnavailable(path, true);
@@ -111,3 +143,5 @@ internal sealed class TrackAvailabilityService(
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
     }
 }
+
+internal sealed record AvailabilityReconciliation(IReadOnlyList<string> RemovedPaths, int UnavailableCount, int RecoveredCount);

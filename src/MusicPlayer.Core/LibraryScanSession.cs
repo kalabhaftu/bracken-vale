@@ -64,8 +64,8 @@ public sealed class LibraryScanSession : IDisposable
 
         _stateCommand = _connection.CreateCommand();
         _stateCommand.CommandText = OperatingSystem.IsWindows()
-            ? "SELECT file_size,modified_utc,has_lyrics FROM tracks WHERE path COLLATE NOCASE=$path"
-            : "SELECT file_size,modified_utc,has_lyrics FROM tracks WHERE path=$path";
+            ? "SELECT file_size,modified_utc,has_lyrics,artwork_path FROM tracks WHERE path COLLATE NOCASE=$path"
+            : "SELECT file_size,modified_utc,has_lyrics,artwork_path FROM tracks WHERE path=$path";
         _stateCommand.Parameters.Add("$path", SqliteType.Text);
         _stateCommand.Prepare();
         _excludeCommand = _connection.CreateCommand();
@@ -88,16 +88,22 @@ public sealed class LibraryScanSession : IDisposable
         _incompleteCommand.Prepare();
     }
 
-    public bool IsUnchanged(string path, long length, DateTime modifiedUtc)
+    public bool IsUnchanged(string path, long length, DateTime modifiedUtc, string artworkCache)
     {
         ThrowIfDisposed();
         var parameter = _stateCommand.Parameters["$path"];
         parameter.Value = Path.GetFullPath(path);
         using var reader = _stateCommand.ExecuteReader();
         if (!reader.Read()) return false;
-        return reader.GetInt64(0) == length &&
-               DateTime.Parse(reader.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) == modifiedUtc &&
-               reader.GetInt64(2) >= 0;
+        if (reader.GetInt64(0) != length ||
+            DateTime.Parse(reader.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) != modifiedUtc ||
+            reader.GetInt64(2) < 0) return false;
+
+        if (reader.IsDBNull(3)) return true;
+        var artworkPath = reader.GetString(3);
+        var cacheRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(artworkCache)) + Path.DirectorySeparatorChar;
+        var pathComparer = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return artworkPath.StartsWith(cacheRoot, pathComparer) && File.Exists(artworkPath);
     }
 
     public void MarkSeen(string path)
