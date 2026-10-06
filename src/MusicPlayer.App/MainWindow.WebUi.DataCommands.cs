@@ -16,7 +16,9 @@ public sealed partial class MainWindow
                 var settingState = WebSettings();
                 return new
                 {
-                    view = _libraryQueries.CurrentView, track = currentTrack is null ? null : _libraryQueries.TrackDto(currentTrack, includePath: true),
+                    view = _libraryQueries.CurrentView, search = _libraryQueries.CurrentSearch,
+                    group = _libraryQueries.CurrentGroup, playlist = _libraryQueries.CurrentPlaylist,
+                    track = currentTrack is null ? null : _libraryQueries.TrackDto(currentTrack, includePath: true),
                     playing = _playback.IsPlaying, positionSeconds = _playback.Position / 1000d,
                     durationSeconds = _playback.Duration / 1000d, volume = _playback.Volume,
                     shuffle = _shuffle, repeat = _repeatMode,

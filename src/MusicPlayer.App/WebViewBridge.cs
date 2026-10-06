@@ -70,6 +70,7 @@ internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRou
     private async void MessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
         string? id = null;
+        string? safeCommandName = null;
         try
         {
             if (!Uri.TryCreate(args.Source, UriKind.Absolute, out var origin) || origin.Scheme != Uri.UriSchemeHttps || origin.Host != UiHost) return;
@@ -82,12 +83,15 @@ internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRou
             var name = nameValue.GetString();
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name) || !commandRouter.CanRoute(name))
                 throw new InvalidOperationException("This UI command is not available.");
+            safeCommandName = name;
             var payload = root.TryGetProperty("payload", out var value) ? value.Clone() : JsonDocument.Parse("{}").RootElement.Clone();
             var result = await commandRouter.RouteAsync(name, payload);
             Respond(id, true, result, null);
         }
         catch (Exception ex)
         {
+            if (safeCommandName is not null)
+                LocalAppLog.Shared.Warning("web-ui-command", $"The '{safeCommandName}' command failed ({ex.GetType().Name}).");
             if (id is not null) Respond(id, false, null, ex.Message);
         }
     }

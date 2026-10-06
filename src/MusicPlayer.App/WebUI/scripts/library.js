@@ -1,4 +1,6 @@
 export function createLibraryViews({state,$,$$,svg,paintIcons,esc,initials,cover,titleOf,subOf,fmtDuration,bytesLabel,call,toast,setTheme,applyNavigationSettings,openModal,updatePlayer,updatePanel}) {
+let renderRevision=0;
+let searchRevision=0;
 function trackRow(track,index) {
   const id=esc(track.id); const album=esc(track.album||""); const artist=esc(track.artist||"");
   const remove=state.view==="Playlist"&&Number.isInteger(track.position)?`<button class="ctrl" data-action="remove-playlist-track" data-position="${track.position}" aria-label="Remove from playlist">×</button>`:"";
@@ -53,11 +55,15 @@ async function navigate(view,push=true,query=undefined) {
   const content=$("#content"); content.scrollTop=0;
   if(["Songs","Albums","Artists","Genres","Folders","Favorites","Most Played","Recently Played","Recently Added","With Lyrics","Playlists","Queue","Audio","Settings","Duplicates","Lyrics","Now Playing"].includes(view)) state.search="";
   if(view!=="Search" && $("#globalSearch").value) { $("#globalSearch").value=""; state.search=""; }
-  await call("setView",{view,search:state.search,group:state.group,playlistId:state.playlist?.id||null});
+  const currentSearch=state.search,currentGroup=state.group,currentPlaylistId=state.playlist?.id||null;
+  await call("setView",{view,search:currentSearch,group:currentGroup,playlistId:currentPlaylistId});
+  if(state.view!==view||state.search!==currentSearch||state.group!==currentGroup||state.playlist?.id!==currentPlaylistId)return;
   await renderView();
 }
 
 async function renderView(append=false) {
+  const revision=++renderRevision;
+  const requestedView=state.view;
   const root=$("#routeView");
   if(!append) root.innerHTML=`<div class="empty-state"><b>Loading your library</b></div>`;
   try {
@@ -79,9 +85,10 @@ async function renderView(append=false) {
       case "Duplicates": html=await renderDuplicates(); break;
       default: html=await renderHome();
     }
+    if(revision!==renderRevision||requestedView!==state.view||html==null)return;
     if(append) root.insertAdjacentHTML("beforeend",html); else root.innerHTML=html;
     paintIcons(root); updatePanel(); updatePlayer();
-  } catch (error) { if(!append) root.innerHTML=`<div class="empty-state"><b>Could not load this view</b>${esc(error.message)}</div>`; }
+  } catch (error) { if(revision===renderRevision&&requestedView===state.view&&!append) root.innerHTML=`<div class="empty-state"><b>Could not load this view</b>${esc(error.message)}</div>`; }
 }
 
 async function renderHome() {
@@ -111,17 +118,26 @@ async function renderHome() {
 }
 
 async function renderSearch() {
+  const requestRevision=++searchRevision;
   const query=state.search.trim(),filter=state.filter;let html=viewHeader("Search",query?`Results in your local library for “${query}”`:"Find songs, artists, albums, and playlists.");
   if(!query) return html+`<div class="empty-state"><b>Search your library</b>Type in the single search field above to get started.</div>`;
   if(state.searchQuery!==query){state.searchQuery=query;state.searchPages={songs:0,albums:0,artists:0,playlists:0};state.searchResults={};}
   const definitions={songs:{filter:"song",label:"Songs",kind:"track",pageSize:40},albums:{filter:"album",label:"Albums",kind:"album",pageSize:24},artists:{filter:"artist",label:"Artists",kind:"artist",pageSize:24},playlists:{filter:"playlist",label:"Playlists",kind:"playlist",pageSize:20}};
   const selected=filter==="all"?Object.keys(definitions):[{song:"songs",album:"albums",artist:"artists",playlist:"playlists"}[filter]].filter(Boolean);
-  const pages=await Promise.all(selected.map(async key=>{const def=definitions[key],page=state.searchPages[key]||0;const data=await call("search",{query,filter:def.filter,offset:page*def.pageSize,pageSize:def.pageSize});return [key,data];}));
-  if(query!==state.search.trim()||filter!==state.filter||state.view!=="Search")return "";
-  for(const [key,data] of pages)state.searchResults[key]=data;
+  const pages=await Promise.all(selected.map(async key=>{const def=definitions[key],page=state.searchPages[key]||0;try{const result=await call("search",{query,filter:def.filter,offset:page*def.pageSize,pageSize:def.pageSize},false);if(!result||!Array.isArray(result.items))throw new Error("The library returned an invalid search response.");return [key,result];}catch(error){return [key,{error:error.message||"Search failed."}];}}));
+  if(requestRevision!==searchRevision||query!==state.search.trim()||filter!==state.filter||state.view!=="Search")return null;
+  for(const [key,data] of pages)if(!data.error)state.searchResults[key]=data;
   html+=`<div class="pill-row">${["all","song","album","artist","playlist"].map(f=>`<button class="chip ${filter===f?"active":""}" data-filter="${f}">${f==="all"?"All":`${f[0].toUpperCase()}${f.slice(1)}s`}</button>`).join("")}</div>`;
   let any=false;
-  for(const key of selected){const def=definitions[key],data=state.searchResults[key]||{items:[],totalCount:0},items=data.items||[],total=data.totalCount||0,page=state.searchPages[key]||0,totalPages=Math.max(1,Math.ceil(total/def.pageSize));if(!items.length)continue;any=true;
+  const failures=[];
+  for(const [key,data] of pages)if(data.error)failures.push(key);
+  if(failures.length) {
+    const label=failures.map(key=>definitions[key].label).join(", ");
+    html+=`<div class="empty-state search-error"><b>Could not search ${esc(label)}</b>The library query failed. Check the local log and try again.<button class="action" data-action="retry-search">Try again</button></div>`;
+    any=true;
+    toast("Search could not be completed. Check the local log for details.");
+  }
+  for(const key of selected){const def=definitions[key],fresh=pages.find(entry=>entry[0]===key)?.[1],data=fresh?.error?{items:[],totalCount:0}:state.searchResults[key]||{items:[],totalCount:0},items=data.items||[],total=data.totalCount||0,page=state.searchPages[key]||0,totalPages=Math.max(1,Math.ceil(total/def.pageSize));if(!items.length)continue;any=true;
     html+=`<section class="section"><div class="section-head"><h2>${def.label}</h2><span class="muted">${Number(total).toLocaleString()}</span></div>${key==="songs"?songTable(items,page*def.pageSize):cardGrid(items,def.kind)}${totalPages>1?`<div class="pagination"><button class="action" data-action="search-page" data-type="${key}" data-direction="-1" ${page===0?"disabled":""}>Previous</button><span class="muted">Page ${page+1} of ${totalPages}</span><button class="action" data-action="search-page" data-type="${key}" data-direction="1" ${page+1>=totalPages?"disabled":""}>Next</button></div>`:""}</section>`;
   }
   if(!any)html+=`<div class="empty-state"><b>No results for “${esc(query)}”</b>Try another song, artist, album, or playlist name.</div>`;
@@ -179,7 +195,7 @@ async function renderPlaylistDetail(append=false) {
 }
 
 async function renderGroupDetail(append=false) {
-  const group=state.group; if(!group) return navigate(state.view==="Album"?"Albums":state.view==="Artist"?"Artists":"Genres",false);
+  const group=state.group; if(!group) { await navigate(state.view==="Album"?"Albums":state.view==="Artist"?"Artists":state.view==="Folder"?"Folders":"Genres",false); return null; }
   const detailSort=group.column==="artist"?"PlayCount":group.column==="album"?"TrackNumber":state.sort;
   const detailDescending=group.column==="artist"?true:group.column==="album"?false:state.descending;
   const page=await call("getTracks",{view:state.view,groupColumn:group.column,groupValue:group.name,offset:state.offset,pageSize:state.pageSize,sort:detailSort,descending:detailDescending});
@@ -230,11 +246,12 @@ async function renderAudio() {
 async function renderSettings() {
   const s=await call("getSettings"); state.settings=s; setTheme(s);
   let indexedBytes=state.indexedBytes||0;try{const library=await call("getHome",{pageSize:1});indexedBytes=Number(library.totalBytes)||0;state.indexedBytes=indexedBytes;}catch{/* The settings page remains available if library summary is unavailable. */}
-  const activeAccent=s.accentManual&&s.accentColor?s.accentColor:s.accentMode==="Artwork"&&s.artworkAccent?s.artworkAccent:"#b7ff2d";
+  const resolvedTheme=String(s.theme||"System").toLowerCase()==="light"||String(s.theme||"System").toLowerCase()==="system"&&s.resolvedTheme==="Light"?"light":"dark";
+  const activeAccent=s.accentManual&&s.accentColor?s.accentColor:s.accentMode==="Artwork"&&s.artworkAccent?s.artworkAccent:resolvedTheme==="light"?"#548c00":"#b7ff2d";
   const row=(key,title,desc,type="toggle",values=[])=>{const bounds=key==="navigationWidth"?"min=\"180\" max=\"360\"":key==="browseWidth"?"min=\"180\" max=\"480\"":"";return `<div class="setting-row"><div><b>${esc(title)}</b><span>${esc(desc)}</span></div>${type==="toggle"?`<button class="toggle ${s[key]?"on":""}" data-setting="${key}" role="switch" aria-checked="${!!s[key]}"><i></i></button>`:type==="select"?`<select class="select" data-setting="${key}">${values.map(v=>`<option ${String(s[key])===String(v.value)?"selected":""} value="${esc(v.value)}">${esc(v.label)}</option>`).join("")}</select>`:type==="number"?`<input class="field setting-number" type="number" ${bounds} step="1" data-setting="${key}" value="${esc(s[key]||"")}">`:`<input class="field ${type==="color"?"setting-color":""}" ${type==="color"?`type="color"`:"type=\"text\""} data-setting="${key}" value="${esc(s[key]||"")}">`}</div>`;};
   return viewHeader("Settings","Choose how Music Player looks and behaves.")+`<div class="settings-grid"><nav class="settings-menu" aria-label="Settings sections"><button class="active" data-settings-nav="appearance">Appearance</button><button data-settings-nav="library">Library</button><button data-settings-nav="playback">Playback</button><button data-view="Audio">Equalizer</button><button data-settings-nav="advanced">Advanced</button></nav><div class="settings-panel">`+
     `<section class="setting-section settings-anchor" id="settings-appearance" data-settings-section="appearance"><h2>Appearance</h2><p>Match the player to your desktop.</p>${row("theme","Color theme","System, light, or dark.","select",[{value:"System",label:"System"},{value:"Light",label:"Light"},{value:"Dark",label:"Dark"}])}${row("accentMode","Accent style","Keep the Music Player lime or use album artwork.","select",[{value:"Native",label:"Lime"},{value:"Artwork",label:"Album artwork"}])}${row("accentManual","Use a custom accent","Choose a color for active controls.")}${row("accentColor","Custom accent color","Applied when the custom accent is enabled.","color")}${row("windowMaterial","Window material","Native backdrop behind the player.","select",[{value:"Mica",label:"Mica"},{value:"Acrylic",label:"Desktop Acrylic"},{value:"Opaque",label:"Opaque"}])}${row("motionStyle","Navigation motion","Respect accessibility animation preferences.","select",[{value:"Off",label:"Off"},{value:"Subtle",label:"Subtle"},{value:"Expressive",label:"Expressive"}])}<div class="setting-row"><div><b>Accent presets</b><span>Quick choices for the custom accent.</span></div><div class="accent-list">${[["#b7ff2d","Lime"],["#59d7ff","Sky"],["#a878ff","Violet"],["#ff6e91","Rose"],["#ffb04a","Amber"]].map(([color,label])=>`<button class="accent-dot ${activeAccent===color?"active":""}" data-accent-color="${color}" title="${label}" style="background:${color}"></button>`).join("")}</div></div><div class="toolbar"><button class="action" data-action="reset-ui">Reset UI settings…</button></div></section>`+
-    `<section class="setting-section settings-anchor" id="settings-library" data-settings-section="library"><h2>Library</h2><p>Local folders and indexed tracks.</p><div class="setting-row"><div><b>Indexed library</b><span>Total size of tracks currently indexed.</span></div><strong id="indexedLibrarySize">${bytesLabel(indexedBytes)}</strong></div>${row("hideDuplicates","Hide exact duplicates","Show one representative in normal library views.")}${["showArtwork","showArtist","showAlbum","showAdded","showYear","showDuration","showFavorite"].map((k,i)=>row(k,["Artwork","Artist","Album","Added date","Year","Duration","Favorite button"][i],"Show this column when the window is wide enough.")).join("")}<div class="toolbar"><button class="action" data-action="manage-roots">Manage folders</button><button class="action" data-action="manage-exclusions">Scan exclusions</button><button class="action" data-action="duplicates">Find duplicates</button><button class="action" data-action="scan">Scan library</button></div></section>`+
+    `<section class="setting-section settings-anchor" id="settings-library" data-settings-section="library"><h2>Library</h2><p>Local folders and indexed tracks.</p><div class="setting-row"><div><b>Indexed library</b><span>Total size of tracks currently indexed.</span></div><strong id="indexedLibrarySize">${bytesLabel(indexedBytes)}</strong></div>${row("hideDuplicates","Hide exact duplicates","Show one representative in normal library views.")}${["showArtwork","showArtist","showAlbum","showAdded","showYear","showDuration","showFavorite"].map((k,i)=>row(k,["Artwork","Artist","Album","Added date","Year","Duration","Favorite button"][i],"Show this column when the window is wide enough.")).join("")}<div class="toolbar"><button class="action" data-action="manage-roots">Manage folders</button><button class="action" data-action="manage-exclusions">Scan exclusions</button><button class="action" data-action="duplicates">Find duplicates</button><button class="action" data-action="scan">Scan library</button><button class="action" data-action="rebuild-index">Rebuild index and reconcile missing files</button></div><p class="muted">Rebuilding refreshes artwork and removes files confirmed missing from reachable locations. Playlist entries, favorites, ratings, and listening history are preserved.</p></section>`+
     `<section class="setting-section settings-anchor" id="settings-playback" data-settings-section="playback"><h2>Playback</h2><p>Keep playback state and the queue easy to reach.</p>${row("autoOpenPanel","Open the Now Playing pane when a song starts","Show the current track and upcoming queue.")}<div class="toolbar"><button class="action" data-view="Audio">Equalizer and audio output</button></div></section>`+
     `<section class="setting-section settings-anchor" id="settings-advanced" data-settings-section="advanced"><h2>Advanced</h2><p>Application behavior, navigation, and diagnostics.</p>${row("checkUpdates","Check GitHub releases automatically","Automatic checks use a six-hour interval; updates are never installed automatically.")}${row("minimizeToTray","Minimize to notification area","Keep the player available from the system tray.")}${row("navigationWidth","Navigation width","Expanded sidebar width in logical pixels.","number")}${row("browseWidth","Browse grid spacing","Spacing between album, artist, and playlist tiles.","number")}<div class="toolbar"><button class="action" data-action="check-updates" ${state.updateCheckActive?"disabled":""} aria-busy="${state.updateCheckActive}">${state.updateCheckActive?"Checking…":"Check for updates"}</button><button class="action" data-action="open-default-apps">Choose default music player</button><button class="action" data-action="open-logs">Open logs</button><button class="action" data-action="export-logs">Export logs</button></div><h3>Navigation order and visibility</h3><p>Move destinations with the arrows and hide optional destinations with the switch.</p><div class="nav-settings">${navigationSettingsMarkup(s)}</div></section><div class="toolbar"><button class="action primary" data-action="save-settings">Save settings</button></div></div></div>`;
 }

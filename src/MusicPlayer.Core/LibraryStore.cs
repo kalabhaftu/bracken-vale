@@ -14,7 +14,7 @@ public sealed partial class LibraryStore
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly LocalAppLog _log;
-    private sealed record TrackQuery(string Where, string OrderBy, string? EscapedSearch, string? NormalizedSearch, object GroupValue, object FolderPrefix);
+    private sealed record TrackQuery(string Where, string OrderBy, string[] SearchTerms, string? FtsPhrase, object GroupValue, object FolderPrefix);
 
     public LibraryStore(string databasePath, LocalAppLog? log = null)
     {
@@ -303,11 +303,14 @@ public sealed partial class LibraryStore
             "genre" => "($group IS NULL OR genre=$group)", "folder" => "($folderPrefix IS NULL OR tracks.path LIKE $folderPrefix ESCAPE '\\')",
             null => "1=1", _ => throw new ArgumentOutOfRangeException(nameof(groupColumn))
         };
-        var normalizedSearch = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
-        var escaped = normalizedSearch?.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
-        var searchPredicate = normalizedSearch is null ? "1=1" : normalizedSearch.Length >= 3
-            ? "tracks.rowid IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH $ftsPhrase) AND (title LIKE $pattern ESCAPE '\\' OR artist LIKE $pattern ESCAPE '\\' OR album LIKE $pattern ESCAPE '\\' OR album_artist LIKE $pattern ESCAPE '\\' OR genre LIKE $pattern ESCAPE '\\' OR tracks.path LIKE $pattern ESCAPE '\\')"
-            : "(title LIKE $pattern ESCAPE '\\' OR artist LIKE $pattern ESCAPE '\\' OR album LIKE $pattern ESCAPE '\\' OR album_artist LIKE $pattern ESCAPE '\\' OR genre LIKE $pattern ESCAPE '\\' OR tracks.path LIKE $pattern ESCAPE '\\')";
+        var searchTerms = SplitSearchTerms(search);
+        var perTermPredicates = searchTerms.Select((_, index) =>
+            $"(title LIKE $pattern{index} ESCAPE '\\' OR artist LIKE $pattern{index} ESCAPE '\\' OR album LIKE $pattern{index} ESCAPE '\\' OR album_artist LIKE $pattern{index} ESCAPE '\\' OR genre LIKE $pattern{index} ESCAPE '\\' OR tracks.path LIKE $pattern{index} ESCAPE '\\')");
+        var searchPredicate = searchTerms.Length == 0 ? "1=1" : $"({string.Join(" AND ", perTermPredicates)})";
+        var ftsTerms = searchTerms.Where(term => term.Length >= 3 && term.All(char.IsLetterOrDigit)).ToArray();
+        var ftsPhrase = ftsTerms.Length == 0 ? null : string.Join(" AND ", ftsTerms.Select(QuoteFtsTerm));
+        if (ftsPhrase is not null)
+            searchPredicate = $"tracks.rowid IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH $ftsPhrase) AND {searchPredicate}";
         var where = $"{predicate} AND {groupPredicate} AND {searchPredicate}";
         var fullOrderBy = $"{orderBy} {(descending ? "DESC" : "ASC")}, title COLLATE NOCASE, path COLLATE NOCASE, path";
         object groupParameter = string.IsNullOrWhiteSpace(groupValue) || groupColumn == "folder" ? DBNull.Value : groupValue;
@@ -318,15 +321,15 @@ public sealed partial class LibraryStore
             var prefix = Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
             folderPrefix = EscapeLike(prefix) + "%";
         }
-        return new(where, fullOrderBy, escaped, normalizedSearch, groupParameter,
+        return new(where, fullOrderBy, searchTerms, ftsPhrase, groupParameter,
             folderPrefix is null ? DBNull.Value : folderPrefix);
     }
 
     private static void BindTrackQuery(SqliteCommand command, TrackQuery query)
     {
-        Add(command, "$pattern", query.EscapedSearch is null ? DBNull.Value : $"%{query.EscapedSearch}%");
-        if (query.NormalizedSearch is { Length: >= 3 })
-            Add(command, "$ftsPhrase", "\"" + query.NormalizedSearch.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"");
+        for (var index = 0; index < query.SearchTerms.Length; index++)
+            Add(command, $"$pattern{index}", $"%{EscapeLike(query.SearchTerms[index])}%");
+        if (query.FtsPhrase is not null) Add(command, "$ftsPhrase", query.FtsPhrase);
         Add(command, "$group", query.GroupValue);
         Add(command, "$folderPrefix", query.FolderPrefix);
     }
@@ -349,11 +352,11 @@ public sealed partial class LibraryStore
         if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
         if (pageSize is < 1 or > 200) throw new ArgumentOutOfRangeException(nameof(pageSize), "Group page size must be between 1 and 200.");
         var safeColumn = column switch { "album" => "album", "artist" => "artist", "genre" => "genre", _ => throw new ArgumentOutOfRangeException(nameof(column)) };
-        var term = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+        var terms = SplitSearchTerms(search);
+        var match = BuildColumnSearchPredicate(safeColumn, terms, "$groupSearch");
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT {safeColumn},COUNT(*),MIN(artwork_path),MIN(artist),MIN(year) FROM tracks WHERE {safeColumn}<>'' AND ($term IS NULL OR {safeColumn} LIKE $pattern ESCAPE '\\') GROUP BY {safeColumn} ORDER BY {safeColumn} COLLATE NOCASE LIMIT $limit OFFSET $offset";
-        Add(command, "$term", term is null ? DBNull.Value : term);
-        Add(command, "$pattern", term is null ? DBNull.Value : $"%{EscapeLike(term)}%");
+        command.CommandText = $"SELECT {safeColumn},COUNT(*),MIN(artwork_path),MIN(artist),MIN(year) FROM tracks WHERE {safeColumn}<>'' AND {match} GROUP BY {safeColumn} ORDER BY {safeColumn} COLLATE NOCASE LIMIT $limit OFFSET $offset";
+        BindColumnSearch(command, terms, "$groupSearch");
         Add(command, "$limit", pageSize); Add(command, "$offset", offset);
         using var reader = command.ExecuteReader();
         var groups = new List<LibraryGroup>(pageSize);
@@ -365,11 +368,11 @@ public sealed partial class LibraryStore
     public int CountGroups(string column, string? search = null)
     {
         var safeColumn = column switch { "album" => "album", "artist" => "artist", "genre" => "genre", _ => throw new ArgumentOutOfRangeException(nameof(column)) };
-        var term = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+        var terms = SplitSearchTerms(search);
+        var match = BuildColumnSearchPredicate(safeColumn, terms, "$groupSearch");
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT COUNT(DISTINCT {safeColumn}) FROM tracks WHERE {safeColumn}<>'' AND ($term IS NULL OR {safeColumn} LIKE $pattern ESCAPE '\\')";
-        Add(command, "$term", term is null ? DBNull.Value : term);
-        Add(command, "$pattern", term is null ? DBNull.Value : $"%{EscapeLike(term)}%");
+        command.CommandText = $"SELECT COUNT(DISTINCT {safeColumn}) FROM tracks WHERE {safeColumn}<>'' AND {match}";
+        BindColumnSearch(command, terms, "$groupSearch");
         return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
     }
 
@@ -928,6 +931,17 @@ public sealed partial class LibraryStore
     private static string NormalizeRoot(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
     private static string RootPrefix(string root) => Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
     private static string EscapeLike(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
+    private static string[] SplitSearchTerms(string? value) => string.IsNullOrWhiteSpace(value)
+        ? Array.Empty<string>()
+        : value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    private static string BuildColumnSearchPredicate(string column, IReadOnlyList<string> terms, string parameterPrefix) =>
+        terms.Count == 0 ? "1=1" : string.Join(" AND ", terms.Select((_, index) => $"{column} LIKE ${parameterPrefix}{index} ESCAPE '\\'"));
+    private static void BindColumnSearch(SqliteCommand command, IReadOnlyList<string> terms, string parameterPrefix)
+    {
+        for (var index = 0; index < terms.Count; index++)
+            Add(command, $"${parameterPrefix}{index}", $"%{EscapeLike(terms[index])}%");
+    }
+    private static string QuoteFtsTerm(string term) => "\"" + term.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
     private static DateTime ParseStamp(string value) => DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
     private static void Add(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
 }

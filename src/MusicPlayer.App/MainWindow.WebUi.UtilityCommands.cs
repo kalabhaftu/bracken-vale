@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BrackenVale.Core;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace BrackenVale.App;
@@ -9,6 +10,13 @@ public sealed partial class MainWindow
     {
         switch (name)
         {
+            case "reportFrontendError":
+            {
+                var kind = String(payload, "kind");
+                if (kind is "script" or "rejection")
+                    LocalAppLog.Shared.Warning("web-ui", $"The local interface reported an unhandled {kind} error.");
+                return null;
+            }
             case "openLogs": OpenLogsFolder_Click(this, new Microsoft.UI.Xaml.RoutedEventArgs()); return null;
             case "exportLogs": await ExportLogsAsync(); return null;
             case "openRelease": OpenRelease(String(payload, "url")); return null;

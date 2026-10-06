@@ -38,6 +38,24 @@ internal sealed class LibraryQueryService
     }
 
     public string CurrentView => _context.View;
+    public string CurrentSearch => _context.Search;
+    public object? CurrentGroup
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_context.GroupColumn) || string.IsNullOrWhiteSpace(_context.GroupValue)) return null;
+            return new { column = _context.GroupColumn, name = _context.GroupValue, id = _context.GroupValue };
+        }
+    }
+    public object? CurrentPlaylist
+    {
+        get
+        {
+            if (_context.View != "Playlist" || string.IsNullOrWhiteSpace(_context.PlaylistId)) return null;
+            var playlist = _store.GetPlaylistSummaries().FirstOrDefault(item => item.Id == _context.PlaylistId);
+            return playlist is null ? null : PlaylistDto(playlist);
+        }
+    }
 
     public void RestoreContext(string? serialized)
     {
@@ -399,8 +417,9 @@ internal sealed class LibraryQueryService
 
     private object SearchPlaylistPage(string query, int offset, int size)
     {
-        var playlists = _store.GetPlaylistSummaries().Where(playlist =>
-            playlist.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+        var terms = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var playlists = _store.GetPlaylistSummaries().Where(playlist => terms.All(term =>
+            playlist.Name.Contains(term, StringComparison.OrdinalIgnoreCase))).ToArray();
         return new { items = playlists.Skip(offset).Take(size).Select(PlaylistDto).ToArray(), totalCount = playlists.Length };
     }
 
