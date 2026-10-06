@@ -1,11 +1,13 @@
-# Changelog
+# Music Player changelog
 
-All notable changes to Bracken Vale are documented here.
+Changes to Music Player are documented here. C# namespaces, assembly and package identifiers, and the local app-data folder retain their existing names for compatibility.
 
 ## [Unreleased]
 
+- Replace the previous WinUI screen layout, which did not match the intended player design, with Music Player's locally packaged WebView2 interface. The temporary v2 file was visual input only; playback and library behavior remain in C#.
+- Rename the visible application to Music Player while retaining the installed package identity, executable, and local data location.
 - Fix playlist selection, playback, duplicate-entry removal, rename, export and delete flows; add library-root management and live scan details.
-- Refresh the Fluent player and playlist layouts for narrow windows and keyboard/screen-reader use; expose active Shuffle and A–B repeat states.
+- Expose active Shuffle and A–B repeat states and keep the desktop player usable at narrower window widths.
 - Migrate the local index safely to FTS5 trigram search and database-backed scan generations; page library and playlist results and preserve rows under incomplete, unavailable and excluded paths.
 - Bound artwork memory and cache storage, retain five usable tag backups per track, serialize playback state changes, and bound log/network/settings work.
 - Pin GitHub Actions to commit SHAs, restrict workflow permissions, run ARM64 checks on native Windows ARM, protect `main` with required pull-request checks, and add a private signing preflight for release tags.

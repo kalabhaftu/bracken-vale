@@ -1,6 +1,6 @@
 # Third-party notices
 
-Bracken Vale bundles or restores the following third-party software. Each component remains under its own license; this notice does not replace the license text shipped with the corresponding package.
+Music Player bundles or restores the following third-party software. Each component remains under its own license; this notice does not replace the license text shipped with the corresponding package.
 
 | Component | Use | License | Source |
 |---|---|---|---|

@@ -1,0 +1,22 @@
+using System.Text.Json;
+
+namespace BrackenVale.App;
+
+public sealed partial class MainWindow
+{
+    private async Task<object?> HandleWebUiUtilityCommandAsync(string name, JsonElement payload)
+    {
+        switch (name)
+        {
+            case "openLogs": OpenLogsFolder_Click(this, new Microsoft.UI.Xaml.RoutedEventArgs()); return null;
+            case "exportLogs": await ExportLogsAsync(); return null;
+            case "openRelease": OpenRelease(String(payload, "url")); return null;
+            case "setPanelMode":
+                _store.SetSetting("right-sidebar-mode", String(payload, "mode") == "info" ? "Info" : "Queue"); return null;
+            case "openDefaultApps":
+                if (!await Windows.System.Launcher.LaunchUriAsync(new Uri("ms-settings:defaultapps"))) throw new InvalidOperationException("Windows Settings could not be opened.");
+                return null;
+            default: throw new InvalidOperationException("This Music Player command is not available in the utility handler.");
+        }
+    }
+}

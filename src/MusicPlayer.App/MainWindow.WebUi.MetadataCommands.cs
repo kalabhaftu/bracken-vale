@@ -1,0 +1,69 @@
+using System.Globalization;
+using System.Text.Json;
+using BrackenVale.Core;
+
+namespace BrackenVale.App;
+
+public sealed partial class MainWindow
+{
+    private async Task<object?> HandleWebUiMetadataCommandAsync(string name, JsonElement payload)
+    {
+        switch (name)
+        {
+            case "saveLyrics": await SaveLyricsAsync(payload); return null;
+            case "searchLyrics": return await SearchLyricsAsync(TrackFrom(payload, "id") ?? _playback.CurrentTrack);
+            case "saveTags": await SaveTagsAsync(payload); return null;
+            case "restoreTags": await RestoreTagsAsync(payload); return null;
+            case "pickArtwork": return await PickArtworkAsync();
+            default: throw new InvalidOperationException("This Music Player command is not available in the metadata handler.");
+        }
+    }
+
+    private async Task SaveLyricsAsync(JsonElement payload)
+    {
+        var track = TrackFrom(payload, "id") ?? _playback.CurrentTrack ?? throw new InvalidOperationException("Choose a track before editing lyrics.");
+        var text = String(payload, "text"); var mode = String(payload, "mode"); var offset = Int(payload, "offsetMilliseconds");
+        await _trackMetadata.SaveLyricsAsync(track.Path, text, mode == "embed", offset);
+        await RefreshEditedTrackAsync(track.Path); PublishLibraryChanged();
+    }
+
+    private async Task<object> SearchLyricsAsync(Track? track)
+    {
+        if (track is null) return new { results = Array.Empty<object>() };
+        var results = await _trackMetadata.SearchLyricsAsync(track.Title, track.Artist);
+        return new { results };
+    }
+
+    private async Task SaveTagsAsync(JsonElement payload)
+    {
+        var track = RequireTrack(payload, "id");
+        var tags = payload.TryGetProperty("tags", out var value) && value.ValueKind == JsonValueKind.Object ? value : default;
+        string? Optional(string name) => tags.ValueKind == JsonValueKind.Object && tags.TryGetProperty(name, out var item) && item.ValueKind != JsonValueKind.Null ? item.ToString() : null;
+        var custom = JsonDictionary(tags, "customFields"); var additional = JsonDictionary(tags, "additionalFields");
+        uint? Year() => uint.TryParse(Optional("year"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var year) ? year : null;
+        uint? TrackNumber() => uint.TryParse(Optional("trackNumber"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : null;
+        var artworkToken = String(payload, "artworkToken");
+        var artPath = !string.IsNullOrWhiteSpace(artworkToken) && _webArtworkPaths.TryGetValue(artworkToken, out var selectedArtwork) ? selectedArtwork : null;
+        var edit = new TagEdit(Optional("title"), Optional("artist"), Optional("album"), Optional("albumArtist"), Optional("genre"), Year(), TrackNumber(),
+            ArtworkPath: string.IsNullOrWhiteSpace(artPath) ? null : artPath, CustomFields: custom, AdditionalFields: additional);
+        await _trackMetadata.SaveTagsAsync(track.Path, edit);
+        await RefreshEditedTrackAsync(track.Path); PublishLibraryChanged();
+    }
+
+    private async Task RestoreTagsAsync(JsonElement payload)
+    {
+        var track = RequireTrack(payload, "id");
+        var backups = _trackMetadata.ListTagBackups(track.Path);
+        if (backups.Count == 0) throw new InvalidOperationException("No saved tag backups are available for this track.");
+        var selectedId = String(payload, "backupId");
+        var backup = string.IsNullOrWhiteSpace(selectedId) ? backups[0] : backups.FirstOrDefault(item => _libraryQueries.OpaqueId(item.BackupPath) == selectedId)
+            ?? throw new InvalidOperationException("That tag backup is no longer available.");
+        await _trackMetadata.RestoreTagsAsync(backup); await RefreshEditedTrackAsync(track.Path); PublishLibraryChanged();
+    }
+
+    private static IReadOnlyDictionary<string, string> JsonDictionary(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(name, out var map) || map.ValueKind != JsonValueKind.Object) return new Dictionary<string, string>();
+        return map.EnumerateObject().ToDictionary(item => item.Name, item => item.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+    }
+}

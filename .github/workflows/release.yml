@@ -58,14 +58,17 @@ jobs:
           $pfxPath = Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx'
           $probePath = Join-Path $env:RUNNER_TEMP ('bracken-vale-signing-probe-' + [Guid]::NewGuid().ToString('N') + '.txt')
           $preflightPassed = $false
+          $preflightStage = 'read signing material'
           if ($hasPfx -and $hasPassword) {
             $certificate = $null
             $chain = $null
             try {
+              $preflightStage = 'decode the signing certificate'
               $pfxBytes = [Convert]::FromBase64String($env:SIGNING_PFX)
               [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
               $pfxBytes = $null
 
+              $preflightStage = 'open the signing certificate and validate its identity'
               $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
                 $pfxPath,
                 $env:SIGNING_PASSWORD,
@@ -81,6 +84,7 @@ jobs:
               } | Select-Object -First 1
               if (-not $codeSigningEku) { throw 'Signing certificate lacks the Code Signing EKU.' }
 
+              $preflightStage = 'validate the signing certificate trust chain'
               $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
               $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::Online
               $chain.ChainPolicy.RevocationFlag = [System.Security.Cryptography.X509Certificates.X509RevocationFlag]::ExcludeRoot
@@ -88,18 +92,23 @@ jobs:
               $chain.ChainPolicy.ApplicationPolicy.Add([System.Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.3'))
               if (-not $chain.Build($certificate)) { throw 'Signing certificate chain is not trusted or could not be validated.' }
 
+              $preflightStage = 'locate Windows SDK signing tools'
               $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
               $signtool = Get-ChildItem -Path (Join-Path $sdkRoot '*/x64/signtool.exe') -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
               if (-not $signtool) { throw 'Windows SDK signtool.exe was not found.' }
 
+              $preflightStage = 'sign the disposable preflight file'
               [IO.File]::WriteAllText($probePath, 'Bracken Vale signing preflight')
               & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfxPath /p $env:SIGNING_PASSWORD $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signing probe failed.' }
+              $preflightStage = 'verify the disposable signature'
               & $signtool verify /pa /all $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signature verification failed.' }
               $preflightPassed = $true
             } catch {
               $preflightPassed = $false
+              $exceptionType = $_.Exception.GetType().Name
+              Write-Host "::error::Private signing preflight failed while attempting to $preflightStage ($exceptionType). Details are suppressed to protect signing material."
             } finally {
               if ($chain) { $chain.Dispose() }
               if ($certificate) { $certificate.Dispose() }
@@ -132,8 +141,8 @@ jobs:
       - name: Restore and test
         if: steps.release.outputs.preflight_only != 'true'
         run: |
-          dotnet restore BrackenVale.sln
-          dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj --configuration Release --no-restore
+          dotnet restore MusicPlayer.sln
+          dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj --configuration Release --no-restore
       - name: Install Inno Setup 7
         if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
         run: choco install innosetup --version=7.1.0 --yes --no-progress
@@ -154,12 +163,14 @@ jobs:
             if (-not $signtool) { throw 'Windows SDK signtool.exe was not found.' }
           }
           New-Item artifacts -ItemType Directory -Force | Out-Null
-          try {
-            foreach ($arch in @(@{ name='x64'; rid='win-x64' }, @{ name='arm64'; rid='win-arm64' })) {
-              $out = Join-Path $PWD "artifacts/portable-$($arch.name)"
-              dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --runtime $arch.rid --self-contained true --output $out -p:Platform=$($arch.name) -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true -p:Version=$version
+          foreach ($arch in @(@{ name='x64'; rid='win-x64' }, @{ name='arm64'; rid='win-arm64' })) {
+              $publish = Join-Path $PWD "artifacts/publish-$($arch.name)"
+              dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --runtime $arch.rid --self-contained true --output $publish -p:Platform=$($arch.name) -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true -p:Version=$version
               if ($LASTEXITCODE -ne 0) { throw "Portable publish failed for $($arch.name)." }
-              Copy-Item ThirdPartyNotices.md $out
+              $packageName = "MusicPlayer-$version-$($arch.name)-portable"
+              $out = Join-Path $PWD "artifacts/$packageName"
+              & packaging/windows/Prepare-PortablePackage.ps1 -PublishDirectory $publish -DestinationDirectory $out -Version $version -Architecture $arch.name
+              if ($LASTEXITCODE -ne 0) { throw "Portable package preparation failed for $($arch.name)." }
               if ($signed) {
                 $app = Join-Path $out 'BrackenVale.exe'
                 & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $app
@@ -167,22 +178,19 @@ jobs:
                 & $signtool verify /pa /all $app
                 if ($LASTEXITCODE -ne 0) { throw "App signature verification failed for $($arch.name)." }
                 $iscc = (Get-Command ISCC.exe -ErrorAction Stop).Source
-                & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" packaging/windows/BrackenVale.iss
+                & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" packaging/windows/MusicPlayer.iss
                 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $($arch.name)." }
-                $setup = Join-Path $PWD "artifacts/BrackenVale-Setup-$($arch.name).exe"
+                $setup = Join-Path $PWD "artifacts/MusicPlayer-Setup-$($arch.name).exe"
                 & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $setup
                 if ($LASTEXITCODE -ne 0) { throw "Signing installer failed for $($arch.name)." }
                 & $signtool verify /pa /all $setup
                 if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed for $($arch.name)." }
               }
-              $zip = "artifacts/BrackenVale-$version-$($arch.name)-portable.zip"
-              Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
-            }
-            Copy-Item ThirdPartyNotices.md artifacts
-            Copy-Item (Join-Path $env:RUNNER_TEMP 'release-notes.md') artifacts/release-notes.md
-          } finally {
-            Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx') -Force -ErrorAction SilentlyContinue
+              $zip = Join-Path $PWD "artifacts/$packageName.zip"
+              Compress-Archive -LiteralPath $out -DestinationPath $zip -CompressionLevel Optimal
           }
+          Copy-Item ThirdPartyNotices.md artifacts
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'release-notes.md') artifacts/release-notes.md
       - name: Build signed MSIX bundle
         if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
         shell: pwsh
@@ -192,21 +200,21 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $manifestVersion = "$($version.Split('-')[0]).0"
-          dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:PackageCertificateKeyFile="$env:RUNNER_TEMP\bracken-vale-signing.pfx" -p:PackageCertificatePassword="$env:SIGNING_PASSWORD" -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
+          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:PackageCertificateKeyFile="$env:RUNNER_TEMP\bracken-vale-signing.pfx" -p:PackageCertificatePassword="$env:SIGNING_PASSWORD" -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
           if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle packaging/signing failed.' }
-          $bundle = Get-ChildItem src/BrackenVale.App -Recurse -Filter *.msixbundle | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $bundle = Get-ChildItem src/MusicPlayer.App -Recurse -Filter *.msixbundle | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $bundle) { throw 'Windows packaging completed without producing an MSIX bundle.' }
           $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
           $signtool = Get-ChildItem -Path (Join-Path $sdkRoot '*/x64/signtool.exe') -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
           if (-not $signtool) { throw 'Windows SDK signtool.exe was not found.' }
           & $signtool verify /pa /all $bundle.FullName
           if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle signature verification failed.' }
-          Copy-Item $bundle.FullName "artifacts/BrackenVale-$version-x64-arm64.msixbundle"
+          Copy-Item $bundle.FullName "artifacts/MusicPlayer-$version-x64-arm64.msixbundle"
       # actions/upload-artifact v7, pinned to the verified tag commit.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: steps.release.outputs.preflight_only != 'true'
         with:
-          name: bracken-vale-release-assets
+          name: music-player-release-assets
           path: artifacts/
           if-no-files-found: error
           retention-days: 1
@@ -225,7 +233,7 @@ jobs:
       # actions/download-artifact v7, pinned to the verified tag commit.
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: bracken-vale-release-assets
+          name: music-player-release-assets
           path: artifacts
       - name: Publish GitHub Release
         env:
@@ -237,7 +245,7 @@ jobs:
           $assets = Get-ChildItem artifacts -File | Where-Object Name -ne 'release-notes.md' | ForEach-Object FullName
           if (-not $assets) { throw 'No release assets were downloaded.' }
           $tag = $env:GITHUB_REF_NAME
-          $title = "Bracken Vale $($tag.TrimStart('v'))"
+          $title = "Music Player $($tag.TrimStart('v'))"
           $notes = Join-Path $PWD 'artifacts/release-notes.md'
           if (-not (Test-Path $notes)) { throw 'Release notes artifact is missing.' }
           $null = gh release view $tag --json tagName 2>$null

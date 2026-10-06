@@ -23,9 +23,9 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Restore core tests
-        run: dotnet restore tests/BrackenVale.Tests/BrackenVale.Tests.csproj
+        run: dotnet restore tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj
       - name: Test core
-        run: dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj --configuration Release --no-restore
+        run: dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj --configuration Release --no-restore
 
   test-and-build:
     name: ${{ matrix.arch }}
@@ -50,24 +50,31 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Restore
-        run: dotnet restore BrackenVale.sln
+        run: dotnet restore MusicPlayer.sln
       - name: Test core
-        run: dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj --configuration Release --no-restore
+        run: dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj --configuration Release --no-restore
       - name: Build WinUI app
-        run: dotnet build src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --no-restore -p:Platform=${{ matrix.arch }} -p:RuntimeIdentifier=${{ matrix.rid }} -p:AppxPackageSigningEnabled=false -p:GenerateAppxPackageOnBuild=false
+        run: dotnet build src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --no-restore -p:Platform=${{ matrix.arch }} -p:RuntimeIdentifier=${{ matrix.rid }} -p:AppxPackageSigningEnabled=false -p:GenerateAppxPackageOnBuild=false
       - name: Publish self-contained portable app
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = Join-Path $PWD 'artifacts/portable'
-          dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --output $out -p:Platform=${{ matrix.arch }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
+          $out = Join-Path $PWD 'artifacts/publish'
+          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --output $out -p:Platform=${{ matrix.arch }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
           if ($LASTEXITCODE -ne 0) { throw 'Portable publish failed.' }
-          $archive = 'artifacts/bracken-vale-${{ matrix.rid }}.zip'
-          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $archive -CompressionLevel Optimal
+          $arch = '${{ matrix.arch }}'.ToLowerInvariant()
+          $packageName = "MusicPlayer-ci-$arch-portable"
+          $stage = Join-Path $PWD "artifacts/$packageName"
+          & packaging/windows/Prepare-PortablePackage.ps1 -PublishDirectory $out -DestinationDirectory $stage -Version 'ci' -Architecture $arch
+          if ($LASTEXITCODE -ne 0) { throw 'Portable package preparation failed.' }
+          $archive = "artifacts/$packageName.zip"
+          Compress-Archive -LiteralPath $stage -DestinationPath $archive -CompressionLevel Optimal
       - name: Smoke test self-contained app startup
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD 'artifacts/portable/BrackenVale.exe'
+          $arch = '${{ matrix.arch }}'.ToLowerInvariant()
+          $packageName = "MusicPlayer-ci-$arch-portable"
+          $exe = Join-Path $PWD "artifacts/$packageName/BrackenVale.exe"
           $process = Start-Process -FilePath $exe -PassThru
           try {
             Start-Sleep -Seconds 8
@@ -75,7 +82,7 @@ jobs:
             if ($process.HasExited) {
               $logs = Join-Path $env:LOCALAPPDATA 'BrackenVale/Logs'
               if (Test-Path $logs) { Get-ChildItem $logs -Filter 'bracken-vale-*.log' | Get-Content }
-              throw "Bracken Vale exited during startup with code $($process.ExitCode)."
+              throw "Music Player exited during startup with code $($process.ExitCode)."
             }
           } finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
@@ -84,6 +91,6 @@ jobs:
         # actions/upload-artifact v7, pinned to the verified tag commit.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: bracken-vale-${{ matrix.rid }}-portable
-          path: artifacts/bracken-vale-${{ matrix.rid }}.zip
+          name: music-player-${{ matrix.rid }}-portable
+          path: artifacts/MusicPlayer-ci-*-portable.zip
           if-no-files-found: error

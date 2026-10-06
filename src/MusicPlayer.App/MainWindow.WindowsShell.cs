@@ -1,0 +1,300 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Numerics;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text.Json;
+using BrackenVale.Core;
+using Microsoft.UI.Composition;
+using Microsoft.UI;
+using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Hosting;
+using Microsoft.UI.Windowing;
+using Windows.Graphics.Imaging;
+using Windows.Media;
+using Windows.Storage;
+using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
+using Windows.UI;
+using Windows.UI.ViewManagement;
+using WinRT.Interop;
+
+namespace BrackenVale.App;
+
+public sealed partial class MainWindow : Window
+{
+    private void OpenLogsFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var info = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+            info.ArgumentList.Add(LocalAppLog.Shared.FolderPath);
+            Process.Start(info);
+        }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Error("logs", "Could not open the log folder.", ex);
+            _ = ShowNoticeAsync($"Logs are stored at {LocalAppLog.Shared.FolderPath}");
+        }
+    }
+
+    private void ApplyStoredAppearance()
+    {
+        ShellRoot.RequestedTheme = _store.GetSetting("theme") switch { "Light" => ElementTheme.Light, "Dark" => ElementTheme.Dark, _ => ElementTheme.Default };
+        SystemBackdrop = _store.GetSetting("window-material") switch
+        {
+            "Mica" => new MicaBackdrop(),
+            "Opaque" => null,
+            _ => new DesktopAcrylicBackdrop()
+        };
+        if (_store.GetSetting("accent-manual") == "true" && TryParseColor(_store.GetSetting("accent-color"), out var color)) ApplyAccent(color);
+        ApplyNativeWindowChrome();
+    }
+
+    private void ApplyNativeWindowChrome()
+    {
+        try
+        {
+            var hwnd = WindowNative.GetWindowHandle(this);
+            var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
+            var appWindow = AppWindow.GetFromWindowId(windowId);
+            var iconPath = ActiveProductIconPath();
+            if (File.Exists(iconPath)) appWindow.SetIcon(iconPath);
+
+            var titleBar = appWindow.TitleBar;
+            if (!AppWindowTitleBar.IsCustomizationSupported()) return;
+            var dark = ShellRoot.RequestedTheme == ElementTheme.Dark ||
+                (ShellRoot.RequestedTheme == ElementTheme.Default && ShellRoot.ActualTheme == ElementTheme.Dark);
+            var background = dark ? Color.FromArgb(255, 16, 18, 16) : Color.FromArgb(255, 240, 242, 239);
+            var foreground = dark ? Color.FromArgb(255, 247, 248, 246) : Color.FromArgb(255, 25, 29, 25);
+            titleBar.BackgroundColor = background;
+            titleBar.ForegroundColor = foreground;
+            titleBar.ButtonBackgroundColor = background;
+            titleBar.ButtonForegroundColor = foreground;
+            titleBar.ButtonInactiveBackgroundColor = background;
+            titleBar.ButtonInactiveForegroundColor = dark ? Color.FromArgb(255, 160, 167, 159) : Color.FromArgb(255, 116, 124, 116);
+            titleBar.ButtonHoverBackgroundColor = dark ? Color.FromArgb(255, 36, 38, 36) : Color.FromArgb(255, 212, 217, 211);
+            titleBar.ButtonHoverForegroundColor = foreground;
+            titleBar.ButtonPressedBackgroundColor = dark ? Color.FromArgb(255, 48, 52, 48) : Color.FromArgb(255, 200, 206, 199);
+            titleBar.ButtonPressedForegroundColor = foreground;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or COMException or ArgumentException)
+        {
+            LocalAppLog.Shared.Warning("window", "The native title bar icon or theme colors could not be applied.", ex);
+        }
+    }
+
+    private async Task<bool> ApplyArtworkAccentAsync(string? artworkPath)
+    {
+        if (string.IsNullOrWhiteSpace(artworkPath) || !System.IO.File.Exists(artworkPath)) { _webArtworkAccent = null; ResetAccent(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null }); return false; }
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(artworkPath);
+            using var stream = await file.OpenAsync(FileAccessMode.Read);
+            var decoder = await BitmapDecoder.CreateAsync(stream);
+            var data = await decoder.GetPixelDataAsync(BitmapPixelFormat.Rgba8, BitmapAlphaMode.Ignore,
+                new BitmapTransform { ScaledWidth = 32, ScaledHeight = 32 }, ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
+            var pixels = data.DetachPixelData();
+            if (pixels.Length < 3) { _webArtworkAccent = null; ResetAccent(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null }); return false; }
+            if (!SameTrack(_playback.CurrentTrack?.ArtworkPath, artworkPath) || _store.GetSetting("accent-mode") != "Artwork" || _store.GetSetting("accent-manual") == "true") return false;
+            var accent = SelectArtworkAccent(pixels); ApplyAccent(accent);
+            _webArtworkAccent = $"#{accent.R:X2}{accent.G:X2}{accent.B:X2}";
+            _webBridge?.SendEvent("artworkAccentChanged", new { color = _webArtworkAccent });
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
+        { LocalAppLog.Shared.Warning("artwork-accent", $"Could not read artwork '{artworkPath}'.", ex); _webArtworkAccent = null; ResetAccent(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null }); return false; }
+    }
+
+    private static Color SelectArtworkAccent(byte[] pixels)
+    {
+        var bins = new Dictionary<int, (double Weight, double Red, double Green, double Blue)>();
+        for (var index = 0; index + 2 < pixels.Length; index += 4)
+        {
+            var red = pixels[index]; var green = pixels[index + 1]; var blue = pixels[index + 2];
+            var maximum = Math.Max(red, Math.Max(green, blue));
+            var minimum = Math.Min(red, Math.Min(green, blue));
+            var saturation = maximum == 0 ? 0 : (maximum - minimum) / (double)maximum;
+            var luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255.0;
+            var usableBrightness = Math.Clamp((luminance - 0.06) / 0.22, 0, 1) * Math.Clamp((0.99 - luminance) / 0.16, 0, 1);
+            var weight = (0.18 + saturation * 1.35) * (0.35 + usableBrightness * 0.65);
+            var key = ((red >> 4) << 8) | ((green >> 4) << 4) | (blue >> 4);
+            bins.TryGetValue(key, out var bin);
+            bins[key] = (bin.Weight + weight, bin.Red + red * weight, bin.Green + green * weight, bin.Blue + blue * weight);
+        }
+        var selected = bins.Values.OrderByDescending(bin => bin.Weight).FirstOrDefault();
+        if (selected.Weight <= 0) return Color.FromArgb(255, pixels[0], pixels[1], pixels[2]);
+        return Color.FromArgb(255,
+            (byte)Math.Clamp(selected.Red / selected.Weight, 0, 255),
+            (byte)Math.Clamp(selected.Green / selected.Weight, 0, 255),
+            (byte)Math.Clamp(selected.Blue / selected.Weight, 0, 255));
+    }
+
+    private static void ApplyAccent(Color color)
+    {
+        Application.Current.Resources["BrackenAccentColor"] = color;
+        Application.Current.Resources["BrackenAccentBrush"] = new SolidColorBrush(color);
+    }
+
+    private static void ResetAccent()
+    {
+        foreach (var key in new[] { "BrackenAccentColor", "BrackenAccentBrush" }) Application.Current.Resources.Remove(key);
+    }
+
+    private static bool TryParseColor(string? value, out Color color)
+    {
+        color = Colors.ForestGreen;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var hex = value.Trim().TrimStart('#');
+        if (hex.Length != 6 || !byte.TryParse(hex[..2], System.Globalization.NumberStyles.HexNumber, null, out var r) ||
+            !byte.TryParse(hex[2..4], System.Globalization.NumberStyles.HexNumber, null, out var g) ||
+            !byte.TryParse(hex[4..], System.Globalization.NumberStyles.HexNumber, null, out var b)) return false;
+        color = Color.FromArgb(255, r, g, b); return true;
+    }
+
+    private async Task CheckForUpdatesAsync(bool force)
+    {
+        if (!force && _store.GetSetting("check-updates") == "false") return;
+        if (!force && DateTime.TryParse(_store.GetSetting("last-update-check"), out var last) && DateTime.UtcNow - last.ToUniversalTime() < TimeSpan.FromDays(7)) return;
+        try
+        {
+            _store.SetSetting("last-update-check", DateTime.UtcNow.ToString("O"));
+            var assembly = typeof(MainWindow).Assembly;
+            var currentVersionText = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? assembly.GetName().Version?.ToString(3);
+            var current = ReleaseVersion.TryParse(currentVersionText, out var parsedCurrent) ? parsedCurrent : new ReleaseVersion(0, 1, 0, null);
+            var release = await GitHubUpdates.GetLatestAsync(current.IsPrerelease);
+            if (release is null || !ReleaseVersion.TryParse(release.Tag, out var latest) || latest.CompareTo(current) <= 0)
+            {
+                if (force) await ShowNoticeAsync("You are using the latest available release.");
+                return;
+            }
+            _webAvailableRelease = release;
+            if (_webUiActive && _webUiBootstrapped) PublishWebUpdateAvailable();
+        }
+        catch (HttpRequestException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check failed.", ex); if (force) await ShowNoticeAsync("Could not reach GitHub. Check your connection and try again.", InfoBarSeverity.Warning); }
+        catch (TaskCanceledException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check timed out.", ex); if (force) await ShowNoticeAsync("The GitHub update check timed out.", InfoBarSeverity.Warning); }
+        catch (System.Text.Json.JsonException ex) { LocalAppLog.Shared.Warning("updates", "GitHub returned invalid release data.", ex); if (force) await ShowNoticeAsync("GitHub returned an update response Music Player could not read.", InfoBarSeverity.Warning); }
+        catch (Exception ex) { LocalAppLog.Shared.Error("updates", "Could not complete the GitHub release check.", ex); if (force) await ShowNoticeAsync("The update check failed. See the local log for details.", InfoBarSeverity.Error); }
+    }
+
+    private void PublishWebUpdateAvailable()
+    {
+        if (_webAvailableRelease is { } release)
+            _webBridge?.SendEvent("updateAvailable", new { tag = release.Tag, url = release.Url });
+    }
+
+
+    private async Task RefreshEditedTrackAsync(string path)
+    {
+        var track = await Task.Run(() =>
+        {
+            var scanned = TrackReader.Read(path, Path.Combine(_appData, "Artwork"));
+            _store.UpsertTrack(scanned);
+            return scanned;
+        });
+        if (SameTrack(_playback.CurrentTrack?.Path, track.Path))
+        {
+            _playback.UpdateTrackMetadata(track);
+            UpdateCurrentTrack(track);
+            UpdateSystemMediaControls(track, _playback.IsPlaying);
+        }
+        PublishLibraryChanged();
+    }
+
+    private void InitializeSystemMediaControls()
+    {
+        try
+        {
+            _systemControls = SystemMediaTransportControlsInterop.GetForWindow(WindowNative.GetWindowHandle(this));
+            _systemControls.IsEnabled = true; _systemControls.IsPlayEnabled = true; _systemControls.IsPauseEnabled = true;
+            _systemControls.IsNextEnabled = true; _systemControls.IsPreviousEnabled = true;
+            _systemControls.ButtonPressed += SystemControls_ButtonPressed;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException) { LocalAppLog.Shared.Warning("system-media-controls", "Could not initialize Windows media controls.", ex); }
+    }
+
+    private void SystemControls_ButtonPressed(SystemMediaTransportControls sender, SystemMediaTransportControlsButtonPressedEventArgs args)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            switch (args.Button)
+            {
+                case SystemMediaTransportControlsButton.Play:
+                    if (_playback.CurrentTrack is null && GetCurrentQueuePaths().FirstOrDefault() is { } firstPath && _store.GetTrack(firstPath) is { } firstTrack)
+                        PlayTrack(firstTrack, true);
+                    else ResumePlayback();
+                    if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Playing;
+                    break;
+                case SystemMediaTransportControlsButton.Pause: PausePlayback(); break;
+                case SystemMediaTransportControlsButton.Next: AdvanceQueue(false); break;
+                case SystemMediaTransportControlsButton.Previous: PlayPreviousTrack(); break;
+            }
+        });
+    }
+
+    private void UpdateSystemMediaControls(Track? track, bool playing)
+    {
+        if (_systemControls is null || track is null) return;
+        _systemControls.IsEnabled = true;
+        _systemControls.PlaybackStatus = playing ? MediaPlaybackStatus.Playing : MediaPlaybackStatus.Paused;
+        var updater = _systemControls.DisplayUpdater; updater.Type = MediaPlaybackType.Music;
+        updater.MusicProperties.Title = track.Title; updater.MusicProperties.Artist = track.Artist; updater.MusicProperties.AlbumTitle = track.Album;
+        updater.Thumbnail = null;
+        updater.Update();
+        if (!string.IsNullOrWhiteSpace(track.ArtworkPath) && System.IO.File.Exists(track.ArtworkPath)) _ = UpdateMediaThumbnailAsync(track.ArtworkPath);
+    }
+
+    private async Task UpdateMediaThumbnailAsync(string path)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(path);
+            if (_systemControls is null || _playback.CurrentTrack?.ArtworkPath != path) return;
+            var updater = _systemControls.DisplayUpdater;
+            updater.Thumbnail = RandomAccessStreamReference.CreateFromFile(file);
+            updater.Update();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
+        { LocalAppLog.Shared.Warning("media-artwork", $"Could not load artwork: {path}", ex); }
+    }
+
+    private void ApplyTraySetting()
+    {
+        if (_store.GetSetting("minimize-to-tray") == "true")
+        {
+            if (_tray is not null) { _tray.UpdateIcon(ActiveProductIconPath()); return; }
+            _tray = new TrayIconService(WindowNative.GetWindowHandle(this), ActiveProductIconPath(),
+                () => DispatcherQueue.TryEnqueue(() => { var hwnd = WindowNative.GetWindowHandle(this); TrayIconService.RestoreWindow(hwnd); Activate(); }));
+        }
+        else { _tray?.Dispose(); _tray = null; }
+    }
+
+    private string ActiveProductIconPath()
+    {
+        var theme = _store.GetSetting("theme");
+        var light = theme == "Light" || (theme != "Dark" && ShellRoot.ActualTheme == ElementTheme.Light);
+        var suffix = light ? "light" : _store.GetSetting("accent-mode") == "Artwork" ? "accent" : "dark";
+        return Path.Combine(AppContext.BaseDirectory, "Assets", $"MusicPlayer-{suffix}.ico");
+    }
+
+    private Task ShowNoticeAsync(string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
+    {
+        _webBridge?.SendEvent("notification", new { message, severity = severity.ToString() });
+        if (_webUiActive) return Task.CompletedTask;
+        _noticeDismissTimer?.Stop();
+        AppNotice.Message = message;
+        AppNotice.Severity = severity;
+        AppNotice.IsOpen = true;
+        if (severity is InfoBarSeverity.Informational or InfoBarSeverity.Success) _noticeDismissTimer?.Start();
+        return Task.CompletedTask;
+    }
+
+    private void WebUiFailureClose_Click(object sender, RoutedEventArgs e) => Close();
+}

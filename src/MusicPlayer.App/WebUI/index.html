@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Music Player</title>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/layout.css">
+  <link rel="stylesheet" href="styles/components.css">
+</head>
+<body>
+  <div class="app" id="appRoot">
+    <aside class="sidebar">
+      <div class="brand"><img class="brand-logo" id="brandLogo" src="https://assets.musicplayer.local/MusicPlayer-dark.png" alt=""><div><b>Music Player</b><small>Local library</small></div></div>
+      <nav id="navigation" aria-label="Main navigation">
+        <div class="nav-section"><div class="nav-title">Discover</div>
+          <button class="nav-item active" data-view="Home"><span data-icon="home"></span><span>Home</span></button>
+          <button class="nav-item" data-view="Search"><span data-icon="search"></span><span>Search</span><kbd>Ctrl K</kbd></button>
+          <button class="nav-item" data-view="Recently Played"><span data-icon="clock"></span><span>Recently Played</span></button>
+          <button class="nav-item" data-view="Favorites"><span data-icon="heart"></span><span>Favorites</span></button>
+        </div>
+        <div class="nav-section"><div class="nav-title">Your Library</div>
+          <button class="nav-item" data-view="Songs"><span data-icon="music"></span><span>Songs</span></button>
+          <button class="nav-item" data-view="Albums"><span data-icon="disc"></span><span>Albums</span></button>
+          <button class="nav-item" data-view="Artists"><span data-icon="users"></span><span>Artists</span></button>
+          <button class="nav-item" data-view="Genres"><span data-icon="tag"></span><span>Genres</span></button>
+          <button class="nav-item" data-view="Most Played"><span data-icon="trending"></span><span>Most Played</span></button>
+          <button class="nav-item" data-view="Recently Added"><span data-icon="spark"></span><span>Recently Added</span></button>
+          <button class="nav-item" data-view="Playlists"><span data-icon="list"></span><span>Playlists</span></button>
+          <button class="nav-item" data-view="Folders"><span data-icon="folder"></span><span>Folders</span></button>
+        </div>
+        <div class="nav-section"><div class="nav-title">Playback</div>
+          <button class="nav-item" data-view="Now Playing"><span data-icon="headphones"></span><span>Now Playing</span></button>
+          <button class="nav-item" data-view="Lyrics"><span data-icon="lyrics"></span><span>Lyrics</span></button>
+          <button class="nav-item" data-view="Queue"><span data-icon="queue"></span><span>Queue</span></button>
+          <button class="nav-item" data-view="Audio"><span data-icon="sliders"></span><span>Audio</span></button>
+        </div>
+        <div class="nav-section"><div class="nav-title">Manage</div>
+          <button class="nav-item" data-view="Duplicates"><span data-icon="copy"></span><span>Duplicates</span></button>
+        </div>
+      </nav>
+      <div class="side-footer">
+        <div class="storage"><div class="storage-head"><span>Indexed library</span><span id="librarySize">—</span></div></div>
+        <button class="nav-item" data-view="Settings"><span data-icon="settings"></span><span>Settings</span></button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn" id="backBtn" title="Back" aria-label="Back" data-icon="chevron-left"></button>
+        <button class="icon-btn" id="forwardBtn" title="Forward" aria-label="Forward" data-icon="chevron-right"></button>
+        <label class="search-box"><span data-icon="search"></span><input id="globalSearch" type="search" placeholder="Search songs, artists, albums, playlists…" autocomplete="off"><kbd>Ctrl K</kbd></label>
+        <div class="top-spacer"></div>
+        <button class="icon-btn panel-toggle" id="panelToggleBtn" title="Show Now Playing panel" aria-label="Show Now Playing panel" data-icon="queue"></button>
+        <button class="top-action" id="scanBtn"><span data-icon="refresh"></span> Scan library</button>
+      </header>
+      <div class="scan-strip" id="scanStrip" hidden><span class="scan-dot"></span><span id="scanText"></span><button id="scanPause">Pause</button><button id="scanCancel">Cancel</button></div>
+      <div class="content" id="content" tabindex="-1"><div id="routeView"></div></div>
+    </main>
+
+    <aside class="now-panel" id="rightPanel" aria-label="Now Playing">
+      <div class="panel-heading"><b>Now playing</b><button class="icon-btn panel-close" id="panelClose" title="Close panel" aria-label="Close panel" data-icon="close"></button></div>
+      <div class="panel-current" id="panelCurrent"></div>
+      <div class="panel-tabs"><button class="active" data-panel="queue">Queue</button><button data-panel="info">Track info</button></div>
+      <div class="panel-content" id="panelContent"></div>
+    </aside>
+
+    <footer class="player">
+      <div class="now"><div class="now-cover cover" id="nowCover"></div><div class="now-meta"><b id="nowTitle">Nothing playing</b><span id="nowArtist">Choose a song from your library</span></div><button class="ctrl heart" id="heartBtn" title="Favorite" aria-label="Favorite" data-icon="heart"></button></div>
+      <div class="player-center"><div class="controls">
+        <button class="ctrl" id="shuffleBtn" title="Shuffle" aria-label="Shuffle" data-icon="shuffle"></button>
+        <button class="ctrl" id="prevBtn" title="Previous track" aria-label="Previous track" data-icon="skip-back"></button>
+        <button class="ctrl play-main" id="playBtn" title="Play" aria-label="Play" data-icon="play"></button>
+        <button class="ctrl" id="nextBtn" title="Next track" aria-label="Next track" data-icon="skip-forward"></button>
+        <button class="ctrl" id="repeatBtn" title="Repeat off" aria-label="Repeat off" data-icon="repeat"></button>
+        <button class="ctrl" id="abBtn" title="A–B repeat off" aria-label="A–B repeat off">A–B</button>
+      </div><div class="timeline"><span id="currentTime">0:00</span><input id="progressRange" type="range" min="0" max="1" value="0" aria-label="Track position"><span id="totalTime">0:00</span></div></div>
+      <div class="player-right"><button class="ctrl" data-view="Lyrics" title="Lyrics" aria-label="Lyrics" data-icon="lyrics"></button><button class="ctrl" data-view="Queue" title="Queue" aria-label="Queue" data-icon="queue"></button><button class="ctrl" data-view="Audio" title="Audio controls" aria-label="Audio controls" data-icon="speaker"></button><button class="ctrl" id="muteBtn" title="Mute" aria-label="Mute" data-icon="volume"></button><input id="volumeRange" type="range" min="0" max="100" value="75" aria-label="Volume"></div>
+    </footer>
+  </div>
+  <div class="context-menu" id="contextMenu" role="menu"></div>
+  <div class="modal-layer" id="modalLayer" hidden><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><header><h2 id="modalTitle"></h2><button class="icon-btn" id="modalClose" aria-label="Close" data-icon="close"></button></header><div class="modal-body" id="modalBody"></div><footer id="modalActions"></footer></section></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>
