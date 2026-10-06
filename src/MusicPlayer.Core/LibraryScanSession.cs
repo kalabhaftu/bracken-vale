@@ -15,6 +15,7 @@ public sealed class LibraryScanSession : IDisposable
     private readonly SqliteCommand _stateCommand;
     private readonly SqliteCommand _excludeCommand;
     private readonly SqliteCommand _defaultExcludeCommand;
+    private readonly SqliteCommand _incompleteCommand;
     private bool _completed;
     private bool _disposed;
 
@@ -32,6 +33,7 @@ public sealed class LibraryScanSession : IDisposable
                 DELETE FROM scan_seen WHERE run_id IN (SELECT id FROM scan_runs WHERE started_utc < $stale);
                 DELETE FROM scan_excluded WHERE run_id IN (SELECT id FROM scan_runs WHERE started_utc < $stale);
                 DELETE FROM scan_default_excluded WHERE run_id IN (SELECT id FROM scan_runs WHERE started_utc < $stale);
+                DELETE FROM scan_incomplete_paths WHERE run_id IN (SELECT id FROM scan_runs WHERE started_utc < $stale);
                 DELETE FROM scan_roots WHERE run_id IN (SELECT id FROM scan_runs WHERE started_utc < $stale);
                 DELETE FROM scan_runs WHERE started_utc < $stale;
                 """;
@@ -62,8 +64,8 @@ public sealed class LibraryScanSession : IDisposable
 
         _stateCommand = _connection.CreateCommand();
         _stateCommand.CommandText = OperatingSystem.IsWindows()
-            ? "SELECT file_size,modified_utc FROM tracks WHERE path COLLATE NOCASE=$path"
-            : "SELECT file_size,modified_utc FROM tracks WHERE path=$path";
+            ? "SELECT file_size,modified_utc,has_lyrics FROM tracks WHERE path COLLATE NOCASE=$path"
+            : "SELECT file_size,modified_utc,has_lyrics FROM tracks WHERE path=$path";
         _stateCommand.Parameters.Add("$path", SqliteType.Text);
         _stateCommand.Prepare();
         _excludeCommand = _connection.CreateCommand();
@@ -78,6 +80,12 @@ public sealed class LibraryScanSession : IDisposable
         _defaultExcludeCommand.Parameters.Add("$path", SqliteType.Text);
         _defaultExcludeCommand.Parameters.Add("$prefix", SqliteType.Text);
         _defaultExcludeCommand.Prepare();
+        _incompleteCommand = _connection.CreateCommand();
+        _incompleteCommand.CommandText = "INSERT OR IGNORE INTO scan_incomplete_paths(run_id,path,prefix) VALUES($run,$path,$prefix)";
+        _incompleteCommand.Parameters.Add("$run", SqliteType.Integer).Value = _runId;
+        _incompleteCommand.Parameters.Add("$path", SqliteType.Text);
+        _incompleteCommand.Parameters.Add("$prefix", SqliteType.Text);
+        _incompleteCommand.Prepare();
     }
 
     public bool IsUnchanged(string path, long length, DateTime modifiedUtc)
@@ -87,7 +95,9 @@ public sealed class LibraryScanSession : IDisposable
         parameter.Value = Path.GetFullPath(path);
         using var reader = _stateCommand.ExecuteReader();
         if (!reader.Read()) return false;
-        return reader.GetInt64(0) == length && DateTime.Parse(reader.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) == modifiedUtc;
+        return reader.GetInt64(0) == length &&
+               DateTime.Parse(reader.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) == modifiedUtc &&
+               reader.GetInt64(2) >= 0;
     }
 
     public void MarkSeen(string path)
@@ -107,6 +117,16 @@ public sealed class LibraryScanSession : IDisposable
         command.Parameters.AddWithValue("$run", _runId);
         command.Parameters.AddWithValue("$root", NormalizeRoot(rootPath));
         command.ExecuteNonQuery();
+    }
+
+    /// <summary>Protects only a subtree whose contents could not be fully inspected.</summary>
+    public void MarkPathIncomplete(string path)
+    {
+        ThrowIfDisposed();
+        var normalized = NormalizeRoot(path);
+        _incompleteCommand.Parameters["$path"].Value = normalized;
+        _incompleteCommand.Parameters["$prefix"].Value = RootPrefix(normalized);
+        _incompleteCommand.ExecuteNonQuery();
     }
 
     /// <summary>Legacy exclusions are conservatively retained until a user removes them.</summary>
@@ -150,6 +170,11 @@ public sealed class LibraryScanSession : IDisposable
                   AND (tracks.path{collation}=incomplete.root_path OR
                        substr(tracks.path,1,length(incomplete.root_prefix)){collation}=incomplete.root_prefix))
               AND NOT EXISTS (
+                SELECT 1 FROM scan_incomplete_paths incomplete
+                WHERE incomplete.run_id=$run
+                  AND (tracks.path{collation}=incomplete.path OR
+                       substr(tracks.path,1,length(incomplete.prefix)){collation}=incomplete.prefix))
+              AND NOT EXISTS (
                 SELECT 1 FROM scan_default_excluded e
                 WHERE e.run_id=$run
                   AND (tracks.path{collation}=e.path OR substr(tracks.path,1,length(e.prefix)){collation}=e.prefix)
@@ -184,6 +209,13 @@ public sealed class LibraryScanSession : IDisposable
             clearDefaultExcluded.CommandText = "DELETE FROM scan_default_excluded WHERE run_id=$run";
             clearDefaultExcluded.Parameters.AddWithValue("$run", _runId);
             clearDefaultExcluded.ExecuteNonQuery();
+        }
+        using (var clearIncomplete = _connection.CreateCommand())
+        {
+            clearIncomplete.Transaction = transaction;
+            clearIncomplete.CommandText = "DELETE FROM scan_incomplete_paths WHERE run_id=$run";
+            clearIncomplete.Parameters.AddWithValue("$run", _runId);
+            clearIncomplete.ExecuteNonQuery();
         }
         using (var clearRoots = _connection.CreateCommand())
         {
@@ -233,12 +265,13 @@ public sealed class LibraryScanSession : IDisposable
         _stateCommand.Dispose();
         _excludeCommand.Dispose();
         _defaultExcludeCommand.Dispose();
+        _incompleteCommand.Dispose();
         if (!_completed)
         {
             try
             {
                 using var transaction = _connection.BeginTransaction();
-                foreach (var table in new[] { "scan_seen", "scan_excluded", "scan_default_excluded", "scan_roots", "scan_runs" })
+                foreach (var table in new[] { "scan_seen", "scan_excluded", "scan_default_excluded", "scan_incomplete_paths", "scan_roots", "scan_runs" })
                 {
                     using var command = _connection.CreateCommand();
                     command.Transaction = transaction;

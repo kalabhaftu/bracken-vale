@@ -17,7 +17,8 @@ public sealed record Track(
     int Rating = 0,
     int PlayCount = 0,
     DateTime? LastPlayedUtc = null,
-    string? ArtworkPath = null)
+    string? ArtworkPath = null,
+    bool HasLyrics = false)
 {
     public string RatingDisplay => Rating == 0 ? "☆" : new string('★', Rating);
     public string FavoriteGlyph => Favorite ? "♥" : "♡";
@@ -41,7 +42,7 @@ public sealed record LibraryStats(int TotalTracks, long TotalBytes);
 
 public sealed record ScanProgress(int FilesFound, int DirectoriesVisited, string CurrentPath);
 public sealed record LyricsLine(TimeSpan Time, string Text);
-public sealed record LyricsDocument(IReadOnlyList<LyricsLine> Lines, TimeSpan Offset)
+public sealed record LyricsDocument(IReadOnlyList<LyricsLine> Lines, TimeSpan Offset, IReadOnlyDictionary<string, string>? Metadata = null)
 {
     public string At(TimeSpan position)
     {

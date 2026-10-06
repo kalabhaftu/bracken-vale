@@ -75,7 +75,9 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
         Action<string>? directoryVisited = null,
         Action<string, bool>? rootCompleted = null,
         Action<string>? pathExcluded = null,
-        Action<string, ScanExcludedPathKind>? pathExcludedWithReason = null)
+        Action<string, ScanExcludedPathKind>? pathExcludedWithReason = null,
+        Action<string>? rootUnavailable = null,
+        Action<string>? pathIncomplete = null)
     {
         void ReportExcluded(string path, ScanExcludedPathKind kind)
         {
@@ -91,11 +93,21 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
             control.Token.ThrowIfCancellationRequested();
             await control.WaitIfPausedAsync().ConfigureAwait(false);
             var root = Normalize(suppliedRoot);
+            // Root completion is deliberately local to the root directory. A blocked
+            // child must protect that subtree, not every sibling in a large library.
             var completeRoot = true;
+            var rootUnavailableReported = false;
+            void ReportRootUnavailable()
+            {
+                if (rootUnavailableReported) return;
+                rootUnavailableReported = true;
+                rootUnavailable?.Invoke(root);
+            }
             if (!Directory.Exists(root))
             {
                 _log.Warning("scanner", $"Could not enumerate missing or unavailable root '{root}'.");
                 rootCompleted?.Invoke(root, false);
+                ReportRootUnavailable();
                 continue;
             }
 
@@ -107,7 +119,12 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
                 await control.WaitIfPausedAsync().ConfigureAwait(false);
                 if (!TryGetAttributes(directory, out var directoryAttributes))
                 {
-                    completeRoot = false;
+                    if (PathsEqual(directory, root))
+                    {
+                        completeRoot = false;
+                        ReportRootUnavailable();
+                    }
+                    else pathIncomplete?.Invoke(directory);
                     continue;
                 }
                 if ((directoryAttributes & FileAttributes.ReparsePoint) != 0)
@@ -132,7 +149,12 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
                 {
                     _log.Warning("scanner", $"Could not enumerate directory '{directory}'.", ex);
-                    completeRoot = false;
+                    if (PathsEqual(directory, root))
+                    {
+                        completeRoot = false;
+                        ReportRootUnavailable();
+                    }
+                    else pathIncomplete?.Invoke(directory);
                     continue;
                 }
                 var completeDirectory = true;
@@ -150,7 +172,6 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
                         {
                             _log.Warning("scanner", $"Could not completely enumerate directory '{directory}'.", ex);
                             completeDirectory = false;
-                            completeRoot = false;
                             break;
                         }
                         control.Token.ThrowIfCancellationRequested();
@@ -158,7 +179,6 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
                         if (!TryGetAttributes(entry, out var attributes))
                         {
                             completeDirectory = false;
-                            completeRoot = false;
                             continue;
                         }
                         if ((attributes & FileAttributes.ReparsePoint) != 0)
@@ -181,7 +201,16 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
                         }
                     }
                 }
-                if (!completeDirectory) continue;
+                if (!completeDirectory)
+                {
+                    if (PathsEqual(directory, root))
+                    {
+                        completeRoot = false;
+                        ReportRootUnavailable();
+                    }
+                    else pathIncomplete?.Invoke(directory);
+                    continue;
+                }
                 directoriesVisited++;
                 directoryVisited?.Invoke(directory);
             }

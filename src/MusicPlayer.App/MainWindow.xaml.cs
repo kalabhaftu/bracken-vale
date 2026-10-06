@@ -1,40 +1,20 @@
-using System.Diagnostics;
-using System.Globalization;
-using System.Numerics;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Text.Json;
 using BrackenVale.Core;
-using Microsoft.UI.Composition;
-using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media.Imaging;
-using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Hosting;
-using Microsoft.UI.Windowing;
-using Windows.Graphics.Imaging;
 using Windows.Media;
-using Windows.Storage;
-using Windows.Storage.Pickers;
-using Windows.Storage.Streams;
-using Windows.UI;
-using Windows.UI.ViewManagement;
-using WinRT.Interop;
 
 namespace BrackenVale.App;
 
 public sealed partial class MainWindow : Window
 {
     private readonly LibraryStore _store = LibraryStore.InAppData();
-    private readonly string _appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BrackenVale");
+    private readonly string _appData = AppDataPaths.Root;
     private readonly LibraryQueryService _libraryQueries;
     private readonly PlaylistLibraryService _playlistLibrary;
     private readonly PlayerSettingsService _playerSettings;
     private readonly LibraryLocationService _libraryLocations;
+    private readonly TrackAvailabilityService _trackAvailability;
+    private readonly LibraryFileWatcher _libraryFileWatcher;
     private readonly TrackMetadataService _trackMetadata;
     private readonly LibraryScanCoordinator _libraryScan;
     private readonly PlaybackQueueCoordinator _playbackQueue = new();
@@ -47,14 +27,16 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private bool _shuffle { get => _playbackQueue.Shuffle; set => _playbackQueue.SetShuffle(value); }
     private bool _windowClosed;
-    private bool _countedCurrentPlay;
+    private readonly PlaybackListeningTracker _playbackListening = new();
     private DateTimeOffset? _scanStartedUtc;
     private string _scanCurrentPath = "";
+    private string? _scanOutcomeKind;
+    private string? _scanOutcomeMessage;
+    private DateTimeOffset? _scanOutcomeUtc;
     private int _scanFilesFound;
     private int _scanDirectoriesVisited;
-    private long _heardMilliseconds;
-    private long _lastPlayCountPosition;
     private bool _crossfadeInProgress;
+    private bool _libraryWatcherRescanPending;
     private string? _crossfadeFailureSource;
     private int? _crossfadeSourceQueueIndex;
     private int _queueIndex { get => _playbackQueue.CurrentIndex; set => _playbackQueue.SetCurrentIndex(value); }
@@ -68,15 +50,23 @@ public sealed partial class MainWindow : Window
     private TimeSpan? _repeatB { get => _playbackQueue.RepeatB; set => _playbackQueue.SetAbRepeatPoints(_repeatA, value); }
     private DateTime _lastSessionSave = DateTime.UtcNow;
     private WebViewBridge? _webBridge;
+    private readonly List<nint> _windowIconHandles = [];
+    private string? _nativeWindowIconPath;
 
     public MainWindow()
     {
         InitializeComponent();
+        ShellRoot.ActualThemeChanged += (_, _) => ApplyNativeWindowChrome();
         _libraryQueries = new(_store, _appData);
+        _libraryQueries.RestoreContext(_store.GetSetting("last-view-context"));
         _playbackCommands = new(_playbackQueue, _playback, _store.GetTrack, GetCurrentQueuePaths);
         _playlistLibrary = new(_store);
         _playerSettings = new(_store);
         _libraryLocations = new(_store);
+        _trackAvailability = new(_store, _libraryQueries, _libraryLocations);
+        _libraryFileWatcher = new();
+        _libraryFileWatcher.PathsRemoved += paths => _ = HandleLibraryPathsRemovedAsync(paths);
+        _libraryFileWatcher.RescanRequested += RequestLibraryWatcherRescan;
         _trackMetadata = new(_appData);
         _libraryScan = new(new LibraryIndexer(_store, Path.Combine(_appData, "Artwork")));
         Title = "Music Player";
@@ -104,6 +94,7 @@ public sealed partial class MainWindow : Window
         _noticeDismissTimer.Tick += (_, _) => AppNotice.IsOpen = false;
         Closed += MainWindow_Closed;
         ApplyStoredAppearance();
+        Activated += (_, _) => ApplyNativeWindowIcon();
         RestoreSession();
         StartStartupScan();
         _ = CheckForUpdatesAsync(false);

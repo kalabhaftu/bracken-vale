@@ -8,21 +8,28 @@ internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
     private readonly object _gate = new();
     private ScanControl? _activeScan;
     private bool _paused;
+    private bool _cancellationRequested;
 
     public bool IsRunning
     {
         get { lock (_gate) return _activeScan is not null; }
     }
 
-    public bool IsPaused
+    public (bool Active, bool Paused, bool Cancelling) GetStatus()
     {
-        get { lock (_gate) return _activeScan is not null && _paused; }
+        lock (_gate)
+        {
+            var active = _activeScan is not null;
+            var cancelling = active && _cancellationRequested;
+            return (active, active && _paused && !cancelling, cancelling);
+        }
     }
 
     public Task<IndexResult?> StartAsync(
         IEnumerable<string> roots,
         IEnumerable<string> ignoredDirectories,
-        IProgress<ScanProgress>? progress = null)
+        IProgress<ScanProgress>? progress = null,
+        bool forceRefresh = false)
     {
         var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var scanRoots = roots.Select(Path.GetFullPath).Distinct(pathComparer).ToArray();
@@ -35,16 +42,17 @@ internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
             control = new ScanControl();
             _activeScan = control;
             _paused = false;
+            _cancellationRequested = false;
         }
 
-        return RunAsync(scanRoots, ignoredDirectories, control, progress);
+        return RunAsync(scanRoots, ignoredDirectories, control, progress, forceRefresh);
     }
 
     public bool TogglePause()
     {
         lock (_gate)
         {
-            if (_activeScan is not { } control) return false;
+            if (_activeScan is not { } control || _cancellationRequested) return false;
             if (_paused) control.Resume();
             else control.Pause();
             _paused = !_paused;
@@ -52,20 +60,27 @@ internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
         }
     }
 
-    public void Cancel()
+    public bool Cancel()
     {
-        lock (_gate) _activeScan?.Cancel();
+        lock (_gate)
+        {
+            if (_activeScan is not { } control || _cancellationRequested) return false;
+            _cancellationRequested = true;
+            control.Cancel();
+            return true;
+        }
     }
 
     private async Task<IndexResult?> RunAsync(
         string[] roots,
         IEnumerable<string> ignoredDirectories,
         ScanControl control,
-        IProgress<ScanProgress>? progress)
+        IProgress<ScanProgress>? progress,
+        bool forceRefresh)
     {
         try
         {
-            return await Task.Run(() => indexer.ScanAsync(roots, ignoredDirectories, control, progress)).ConfigureAwait(false);
+            return await Task.Run(() => indexer.ScanAsync(roots, ignoredDirectories, control, progress, forceRefresh)).ConfigureAwait(false);
         }
         finally
         {
@@ -75,6 +90,7 @@ internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
                 {
                     _activeScan = null;
                     _paused = false;
+                    _cancellationRequested = false;
                 }
                 control.Dispose();
             }

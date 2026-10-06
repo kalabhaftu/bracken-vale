@@ -24,6 +24,7 @@ public sealed partial class MainWindow
                     queue = QueueDtos(Math.Max(0, _queueIndex), 30), queueOffset = Math.Max(0, _queueIndex), queueTotal = _queue.Count, queueIndex = _queueIndex,
                     panel = _store.GetSetting("right-sidebar-mode") == "Info" ? "info" : "queue",
                     settings = settingState, resolvedTheme = ShellRoot.ActualTheme == ElementTheme.Light ? "Light" : "Dark", scan = ScanDto(),
+                    updateCheckActive = Volatile.Read(ref _updateCheckActive) != 0,
                     updateAvailable = _webAvailableRelease is { } available ? new { tag = available.Tag, url = available.Url } : null
                 };
             }

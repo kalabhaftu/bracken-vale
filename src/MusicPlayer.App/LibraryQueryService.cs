@@ -16,12 +16,16 @@ internal sealed class LibraryQueryService
     {
         "Home", "Search", "Songs", "Albums", "Artists", "Genres", "Folders", "Favorites", "Most Played",
         "Recently Played", "Recently Added", "Playlists", "Playlist", "Album", "Artist", "Genre", "Folder",
-        "Queue", "Audio", "Settings", "Duplicates", "Lyrics", "Now Playing"
+        "With Lyrics", "Queue", "Audio", "Settings", "Duplicates", "Lyrics", "Now Playing"
     };
 
     private readonly LibraryStore _store;
     private readonly string _artworkDirectory;
     private readonly Dictionary<string, string> _trackPaths = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _unavailableTrackPaths = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly object _availabilityGate = new();
+    private readonly HashSet<string> _unavailableRootPaths = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly object _rootAvailabilityGate = new();
     private IReadOnlyList<string>? _folderCache;
     private ViewContext _context = new("Home", "", null, null, null);
     private TrackSort _sort = TrackSort.Title;
@@ -34,6 +38,25 @@ internal sealed class LibraryQueryService
     }
 
     public string CurrentView => _context.View;
+
+    public void RestoreContext(string? serialized)
+    {
+        if (string.IsNullOrWhiteSpace(serialized) || serialized.Length > 8192) return;
+        try
+        {
+            using var document = JsonDocument.Parse(serialized);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return;
+            SetContext(document.RootElement);
+            if (_context.View == "Playlist" &&
+                (string.IsNullOrWhiteSpace(_context.PlaylistId) || !_store.GetPlaylistSummaries().Any(item => item.Id == _context.PlaylistId)))
+                SetContext(JsonDocument.Parse("{\"view\":\"Playlists\"}").RootElement);
+        }
+        catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidOperationException)
+        {
+            LocalAppLog.Shared.Warning("navigation", "The saved player view could not be restored; opening Home instead.", ex);
+            _context = new("Home", "", null, null, null);
+        }
+    }
 
     public object HomeData(int requestedPageSize)
     {
@@ -79,13 +102,25 @@ internal sealed class LibraryQueryService
             "Favorites" => "favorites",
             "Most Played" => "most-played",
             "Recently Played" => "recent",
+            "With Lyrics" => "with-lyrics",
             _ => null
         };
         var requestedSort = String(payload, "sort");
-        var sort = ParseSort(requestedSort);
-        if (_context.View == "Recently Added" && requestedSort == "Title") sort = TrackSort.Added;
+        var sortSpecified = payload.TryGetProperty("sort", out var sortValue) && sortValue.ValueKind == JsonValueKind.String &&
+                            !string.IsNullOrWhiteSpace(sortValue.GetString());
+        var sort = sortSpecified ? ParseSort(requestedSort) : _context.View switch
+        {
+            "Most Played" => TrackSort.PlayCount,
+            "Recently Played" => TrackSort.LastPlayed,
+            "Recently Added" => TrackSort.Added,
+            _ => TrackSort.Title
+        };
         _sort = sort;
-        _descending = Boolean(payload, "descending");
+        var descendingSpecified = payload.TryGetProperty("descending", out var descendingValue) &&
+                                  descendingValue.ValueKind is JsonValueKind.True or JsonValueKind.False;
+        _descending = descendingSpecified
+            ? Boolean(payload, "descending")
+            : _context.View is "Most Played" or "Recently Played" or "Recently Added";
         var result = _store.GetTracksPageWithCount(_context.Search, sort, _descending, filter,
             _context.GroupColumn, _context.GroupValue, Math.Max(0, Int(payload, "offset")),
             Math.Clamp(Int(payload, "pageSize", 100), 1, 200), HideExactDuplicates);
@@ -106,11 +141,20 @@ internal sealed class LibraryQueryService
     {
         var roots = ReadJsonSetting("library-roots", Array.Empty<string>());
         var counts = _store.GetRootTrackCounts(roots);
-        var rootDtos = roots.Select(path => new
+        var rootDtos = roots.Select(path =>
         {
-            path,
-            name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
-            trackCount = counts.GetValueOrDefault(path)
+            var normalizedPath = NormalizeRootPath(path);
+            bool scanUnavailable;
+            lock (_rootAvailabilityGate) scanUnavailable = _unavailableRootPaths.Contains(normalizedPath);
+            var available = Directory.Exists(path) && !scanUnavailable;
+            return new
+            {
+                path,
+                name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
+                trackCount = counts.GetValueOrDefault(path),
+                available,
+                status = available ? "Available" : "Unavailable"
+            };
         }).ToArray();
         if (Boolean(payload, "rootsOnly"))
             return new { roots = rootDtos, folders = Array.Empty<object>(), folderCount = 0, folderOffset = 0, scan = scanState };
@@ -185,16 +229,36 @@ internal sealed class LibraryQueryService
             playlistId = null;
 
         _context = new(view, search, groupColumn, groupValue, playlistId);
+        PersistContext();
     }
 
-    public void SetPlaylistContext(string id) => _context = _context with { View = "Playlist", PlaylistId = id };
+    public void SetPlaylistContext(string id)
+    {
+        _context = _context with { View = "Playlist", PlaylistId = id };
+        PersistContext();
+    }
 
     public string SetGroupContext(string type, string value)
     {
         var column = GroupColumnFromType(type);
         var view = column switch { "album" => "Album", "artist" => "Artist", _ => "Genre" };
         _context = new(view, "", column, value, null);
+        PersistContext();
         return column;
+    }
+
+    private void PersistContext()
+    {
+        var serialized = JsonSerializer.Serialize(new
+        {
+            view = _context.View,
+            search = _context.Search,
+            groupColumn = _context.GroupColumn,
+            groupValue = _context.GroupValue,
+            playlistId = _context.PlaylistId
+        });
+        if (!string.Equals(_store.GetSetting("last-view-context"), serialized, StringComparison.Ordinal))
+            _store.SetSetting("last-view-context", serialized);
     }
 
     public IReadOnlyList<string> CurrentTrackPaths()
@@ -207,6 +271,7 @@ internal sealed class LibraryQueryService
             "Favorites" => "favorites",
             "Most Played" => "most-played",
             "Recently Played" => "recent",
+            "With Lyrics" => "with-lyrics",
             _ => null
         };
         return _store.GetTrackPaths(_context.Search, _sort, _descending, filter,
@@ -219,6 +284,42 @@ internal sealed class LibraryQueryService
     public Track? ResolveTrack(string? id) =>
         !string.IsNullOrWhiteSpace(id) && _trackPaths.TryGetValue(id, out var path) ? _store.GetTrack(path) : null;
 
+    public string? ResolveTrackPath(string? id) =>
+        !string.IsNullOrWhiteSpace(id) && _trackPaths.TryGetValue(id, out var path) ? path : null;
+
+    public bool SetTrackUnavailable(string path, bool unavailable)
+    {
+        var fullPath = Path.GetFullPath(path);
+        lock (_availabilityGate)
+            return unavailable ? _unavailableTrackPaths.Add(fullPath) : _unavailableTrackPaths.Remove(fullPath);
+    }
+
+    public bool IsTrackUnavailable(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        lock (_availabilityGate) return _unavailableTrackPaths.Contains(fullPath);
+    }
+
+    public void SetUnavailableRoots(IEnumerable<string> roots)
+    {
+        var normalizedRoots = roots.Select(NormalizeRootPath).ToArray();
+        lock (_rootAvailabilityGate)
+        {
+            _unavailableRootPaths.Clear();
+            foreach (var root in normalizedRoots) _unavailableRootPaths.Add(root);
+        }
+    }
+
+    public string[] ClearUnavailableTracksThatExist()
+    {
+        string[] candidates;
+        lock (_availabilityGate) candidates = _unavailableTrackPaths.ToArray();
+        var available = candidates.Where(File.Exists).ToArray();
+        lock (_availabilityGate)
+            foreach (var path in available) _unavailableTrackPaths.Remove(path);
+        return available;
+    }
+
     public string TrackId(string path)
     {
         var id = OpaqueId(path);
@@ -229,6 +330,19 @@ internal sealed class LibraryQueryService
 
     public string OpaqueId(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..24];
 
+    private static string NormalizeRootPath(string path)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            return Path.TrimEndingDirectorySeparator(fullPath);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+    }
+
     public object TrackDto(Track track, bool includePath = false) => new
     {
         id = TrackId(track.Path), title = track.Title, artist = track.Artist, album = track.Album,
@@ -237,7 +351,9 @@ internal sealed class LibraryQueryService
         addedDisplay = track.AddedUtc.ToLocalTime().ToString("d", CultureInfo.CurrentCulture),
         lastPlayedDisplay = track.LastPlayedUtc?.ToLocalTime().ToString("d", CultureInfo.CurrentCulture) ?? "",
         favorite = track.Favorite, rating = track.Rating, playCount = track.PlayCount,
+        hasLyrics = track.HasLyrics,
         artworkUrl = ArtworkUrl(track.ArtworkPath), format = Path.GetExtension(track.Path).TrimStart('.').ToUpperInvariant(),
+        unavailable = false, fileUnavailable = IsTrackUnavailable(track.Path),
         path = includePath ? track.Path : null
     };
 

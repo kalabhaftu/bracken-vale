@@ -15,13 +15,13 @@ public sealed partial class MainWindow
         var search = String(payload, "search");
         var entries = _store.GetPlaylistEntriesPage(id, search, offset, size);
         var tracks = entries.Select(entry => entry.Track is null
-            ? new { id = _libraryQueries.OpaqueId(entry.Path), title = Path.GetFileNameWithoutExtension(entry.Path), artist = "Unavailable", album = "", albumArtist = "", genre = "", year = 0u, trackNumber = 0u, durationSeconds = 0d, addedDisplay = "Unavailable", lastPlayedDisplay = "", favorite = false, rating = 0, playCount = 0, artworkUrl = (string?)null, position = entry.Position, unavailable = true }
-            : new { id = _libraryQueries.TrackId(entry.Path), title = entry.Track.Title, artist = entry.Track.Artist, album = entry.Track.Album, albumArtist = entry.Track.AlbumArtist, genre = entry.Track.Genre, year = entry.Track.Year, trackNumber = entry.Track.TrackNumber, durationSeconds = entry.Track.Duration.TotalSeconds, addedDisplay = entry.Track.AddedUtc.ToLocalTime().ToString("d", CultureInfo.CurrentCulture), lastPlayedDisplay = entry.Track.LastPlayedUtc?.ToLocalTime().ToString("d", CultureInfo.CurrentCulture) ?? "", favorite = entry.Track.Favorite, rating = entry.Track.Rating, playCount = entry.Track.PlayCount, artworkUrl = _libraryQueries.ArtworkUrl(entry.Track.ArtworkPath), position = entry.Position, unavailable = false }).ToArray();
+            ? new { id = _libraryQueries.TrackId(entry.Path), title = Path.GetFileNameWithoutExtension(entry.Path), artist = "Unavailable", album = "", albumArtist = "", genre = "", year = 0u, trackNumber = 0u, durationSeconds = 0d, addedDisplay = "Unavailable", lastPlayedDisplay = "", favorite = false, rating = 0, playCount = 0, artworkUrl = (string?)null, position = entry.Position, unavailable = true, fileUnavailable = _libraryQueries.IsTrackUnavailable(entry.Path) }
+            : new { id = _libraryQueries.TrackId(entry.Path), title = entry.Track.Title, artist = entry.Track.Artist, album = entry.Track.Album, albumArtist = entry.Track.AlbumArtist, genre = entry.Track.Genre, year = entry.Track.Year, trackNumber = entry.Track.TrackNumber, durationSeconds = entry.Track.Duration.TotalSeconds, addedDisplay = entry.Track.AddedUtc.ToLocalTime().ToString("d", CultureInfo.CurrentCulture), lastPlayedDisplay = entry.Track.LastPlayedUtc?.ToLocalTime().ToString("d", CultureInfo.CurrentCulture) ?? "", favorite = entry.Track.Favorite, rating = entry.Track.Rating, playCount = entry.Track.PlayCount, artworkUrl = _libraryQueries.ArtworkUrl(entry.Track.ArtworkPath), position = entry.Position, unavailable = false, fileUnavailable = _libraryQueries.IsTrackUnavailable(entry.Path) }).ToArray();
         return new { tracks, totalCount = _store.CountPlaylistEntries(id, search) };
     }
 
     private object[] QueueDtos(int offset, int pageSize) => _queue.Skip(offset).Take(pageSize).Select(path =>
-        _store.GetTrack(path) is { } track ? (object)_libraryQueries.TrackDto(track) : new { id = _libraryQueries.OpaqueId(path), title = Path.GetFileNameWithoutExtension(path), artist = "Unavailable", album = "", albumArtist = "", genre = "", year = 0u, trackNumber = 0u, durationSeconds = 0d, addedDisplay = "Unavailable", lastPlayedDisplay = "", favorite = false, rating = 0, playCount = 0, artworkUrl = (string?)null, unavailable = true }).ToArray();
+        _store.GetTrack(path) is { } track ? (object)_libraryQueries.TrackDto(track) : new { id = _libraryQueries.TrackId(path), title = Path.GetFileNameWithoutExtension(path), artist = "Unavailable", album = "", albumArtist = "", genre = "", year = 0u, trackNumber = 0u, durationSeconds = 0d, addedDisplay = "Unavailable", lastPlayedDisplay = "", favorite = false, rating = 0, playCount = 0, artworkUrl = (string?)null, unavailable = true, fileUnavailable = _libraryQueries.IsTrackUnavailable(path) }).ToArray();
 
     private object QueuePage(JsonElement payload)
     {
@@ -37,15 +37,16 @@ public sealed partial class MainWindow
 
     private object LyricsData(Track? track)
     {
-        if (track is null) return new { track = (object?)null, raw = "", plainText = "", lines = Array.Empty<object>(), offsetMilliseconds = 0 };
-        var raw = LyricsFiles.ReadRaw(track.Path);
+        if (track is null) return new { track = (object?)null, raw = "", plainText = "", source = "none", lines = Array.Empty<object>(), offsetMilliseconds = 0 };
+        var reading = LyricsFiles.Read(track.Path);
+        var raw = reading.Text;
         var doc = Lyrics.Parse(raw);
         var plainText = doc.Lines.Count == 0
-            ? string.Join(Environment.NewLine, raw.Split('\n').Where(line => !line.TrimStart().StartsWith("[offset:", StringComparison.OrdinalIgnoreCase)).Select(line => line.Trim()).Where(line => line.Length > 0))
+            ? Lyrics.PlainText(raw)
             : "";
         return new
         {
-            track = _libraryQueries.TrackDto(track, true), raw, plainText,
+            track = _libraryQueries.TrackDto(track, true), raw, plainText, source = reading.Source,
             offsetMilliseconds = (long)doc.Offset.TotalMilliseconds,
             lines = doc.Lines.Select(line => new { seconds = line.Time.TotalSeconds, text = line.Text }).ToArray()
         };

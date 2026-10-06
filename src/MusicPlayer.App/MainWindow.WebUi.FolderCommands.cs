@@ -11,11 +11,13 @@ public sealed partial class MainWindow
             case "addFolder": await AddFolderFromWebAsync(); return null;
             case "removeRoot": await RemoveRootFromWebAsync(String(payload, "path")); return null;
             case "scanLibrary":
+            case "rebuildLibraryIndex":
             {
                 if (!_libraryScan.IsRunning)
                 {
                     var roots = _libraryLocations.GetLibraryRoots();
-                    if (roots.Length == 0) await AddFolderFromWebAsync(); else StartScan(roots);
+                    if (roots.Length == 0) await AddFolderFromWebAsync();
+                    else StartScan(roots, forceRefresh: name == "rebuildLibraryIndex");
                 }
                 else await ShowNoticeAsync("A library scan is already running.");
                 return null;
@@ -23,7 +25,9 @@ public sealed partial class MainWindow
             case "toggleScanPause":
                 if (_libraryScan.TogglePause()) PublishScanState();
                 return null;
-            case "cancelScan": _libraryScan.Cancel(); return null;
+            case "cancelScan":
+                if (_libraryScan.Cancel()) PublishScanState();
+                return null;
             case "showInFolder":
             {
                 var track = RequireTrack(payload, "id"); RevealFileInExplorer(track.Path); return null;

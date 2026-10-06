@@ -10,7 +10,7 @@ public sealed record IndexedFileState(long Length, DateTime ModifiedUtc);
 
 public sealed partial class LibraryStore
 {
-    private const int SchemaVersion = 5;
+    private const int SchemaVersion = 7;
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly LocalAppLog _log;
@@ -27,8 +27,7 @@ public sealed partial class LibraryStore
 
     public static LibraryStore InAppData()
     {
-        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return new(Path.Combine(root, "BrackenVale", "library.db"));
+        return new(Path.Combine(AppDataPaths.Root, "library.db"));
     }
 
     public void UpsertTrack(Track track)
@@ -167,11 +166,11 @@ public sealed partial class LibraryStore
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO tracks(path,title,artist,album,album_artist,genre,year,track_number,duration_ms,file_size,modified_utc,added_utc,favorite,rating,play_count,last_played_utc,artwork_path)
-            VALUES($path,$title,$artist,$album,$albumArtist,$genre,$year,$track,$duration,$size,$modified,$added,$favorite,$rating,$plays,$played,$artwork)
+            INSERT INTO tracks(path,title,artist,album,album_artist,genre,year,track_number,duration_ms,file_size,modified_utc,added_utc,favorite,rating,play_count,last_played_utc,artwork_path,has_lyrics)
+            VALUES($path,$title,$artist,$album,$albumArtist,$genre,$year,$track,$duration,$size,$modified,$added,$favorite,$rating,$plays,$played,$artwork,$hasLyrics)
             ON CONFLICT(path) DO UPDATE SET title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,
               genre=excluded.genre,year=excluded.year,track_number=excluded.track_number,duration_ms=excluded.duration_ms,file_size=excluded.file_size,
-              modified_utc=excluded.modified_utc,artwork_path=excluded.artwork_path
+              modified_utc=excluded.modified_utc,artwork_path=excluded.artwork_path,has_lyrics=excluded.has_lyrics
             """;
         BindTrack(command, track);
         command.ExecuteNonQuery();
@@ -295,7 +294,7 @@ public sealed partial class LibraryStore
         };
         var predicate = filter switch
         {
-            "favorites" => "favorite=1", "most-played" => "play_count>0", "recent" => "last_played_utc IS NOT NULL",
+            "favorites" => "favorite=1", "most-played" => "play_count>0", "recent" => "last_played_utc IS NOT NULL", "with-lyrics" => "has_lyrics=1",
             _ => "1=1"
         };
         var groupPredicate = groupColumn switch
@@ -605,7 +604,7 @@ public sealed partial class LibraryStore
         var (match, pattern, ftsPhrase) = BuildPlaylistSearch(search);
         var collation = OperatingSystem.IsWindows() ? " COLLATE NOCASE" : string.Empty;
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT p.position,p.track_path,t.path,t.title,t.artist,t.album,t.album_artist,t.genre,t.year,t.track_number,t.duration_ms,t.file_size,t.modified_utc,t.added_utc,t.favorite,t.rating,t.play_count,t.last_played_utc,t.artwork_path FROM playlist_tracks p LEFT JOIN tracks t ON t.path{collation}=p.track_path WHERE p.playlist_id=$id AND {match} ORDER BY p.position LIMIT $limit OFFSET $offset";
+        command.CommandText = $"SELECT p.position,p.track_path,t.path,t.title,t.artist,t.album,t.album_artist,t.genre,t.year,t.track_number,t.duration_ms,t.file_size,t.modified_utc,t.added_utc,t.favorite,t.rating,t.play_count,t.last_played_utc,t.artwork_path,t.has_lyrics FROM playlist_tracks p LEFT JOIN tracks t ON t.path{collation}=p.track_path WHERE p.playlist_id=$id AND {match} ORDER BY p.position LIMIT $limit OFFSET $offset";
         Add(command, "$id", playlistId); Add(command, "$pattern", pattern is null ? DBNull.Value : pattern);
         if (ftsPhrase is not null) Add(command, "$ftsPhrase", ftsPhrase);
         Add(command, "$limit", pageSize); Add(command, "$offset", offset);
@@ -881,6 +880,26 @@ public sealed partial class LibraryStore
                 """;
             migrate.ExecuteNonQuery();
             transaction.Commit();
+            version = 5;
+        }
+        if (version == 5)
+        {
+            using var transaction = connection.BeginTransaction();
+            using var migrate = connection.CreateCommand();
+            migrate.Transaction = transaction;
+            migrate.CommandText = "ALTER TABLE tracks ADD COLUMN has_lyrics INTEGER NOT NULL DEFAULT -1 CHECK(has_lyrics IN (-1,0,1)); PRAGMA user_version=6;";
+            migrate.ExecuteNonQuery();
+            transaction.Commit();
+            version = 6;
+        }
+        if (version == 6)
+        {
+            using var transaction = connection.BeginTransaction();
+            using var migrate = connection.CreateCommand();
+            migrate.Transaction = transaction;
+            migrate.CommandText = "CREATE TABLE scan_incomplete_paths(run_id INTEGER NOT NULL,path TEXT NOT NULL,prefix TEXT NOT NULL,PRIMARY KEY(run_id,path),FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE); CREATE INDEX ix_scan_incomplete_paths_run ON scan_incomplete_paths(run_id); PRAGMA user_version=7;";
+            migrate.ExecuteNonQuery();
+            transaction.Commit();
         }
     }
 
@@ -893,6 +912,7 @@ public sealed partial class LibraryStore
         Add(command, "$duration", (long)t.Duration.TotalMilliseconds); Add(command, "$size", t.FileSize); Add(command, "$modified", Stamp(t.ModifiedUtc));
         Add(command, "$added", Stamp(t.AddedUtc)); Add(command, "$favorite", t.Favorite ? 1 : 0); Add(command, "$rating", t.Rating);
         Add(command, "$plays", t.PlayCount); Add(command, "$played", t.LastPlayedUtc.HasValue ? Stamp(t.LastPlayedUtc.Value) : DBNull.Value); Add(command, "$artwork", (object?)t.ArtworkPath ?? DBNull.Value);
+        Add(command, "$hasLyrics", t.HasLyrics ? 1 : 0);
     }
 
     private static Track ReadTrack(SqliteDataReader r) => new(
@@ -901,7 +921,8 @@ public sealed partial class LibraryStore
         TimeSpan.FromMilliseconds(r.GetInt64(r.GetOrdinal("duration_ms"))), r.GetInt64(r.GetOrdinal("file_size")), ParseStamp(r.GetString(r.GetOrdinal("modified_utc"))),
         ParseStamp(r.GetString(r.GetOrdinal("added_utc"))), r.GetInt64(r.GetOrdinal("favorite")) != 0, r.GetInt32(r.GetOrdinal("rating")), r.GetInt32(r.GetOrdinal("play_count")),
         r.IsDBNull(r.GetOrdinal("last_played_utc")) ? null : ParseStamp(r.GetString(r.GetOrdinal("last_played_utc"))),
-        r.IsDBNull(r.GetOrdinal("artwork_path")) ? null : r.GetString(r.GetOrdinal("artwork_path")));
+        r.IsDBNull(r.GetOrdinal("artwork_path")) ? null : r.GetString(r.GetOrdinal("artwork_path")),
+        r.GetInt64(r.GetOrdinal("has_lyrics")) == 1);
 
     private static string Stamp(DateTime value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
     private static string NormalizeRoot(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));

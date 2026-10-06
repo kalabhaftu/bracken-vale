@@ -2,7 +2,7 @@ using System.Security;
 
 namespace BrackenVale.Core;
 
-public sealed record IndexResult(int Indexed, int Skipped, int Removed = 0);
+public sealed record IndexResult(int Indexed, int Skipped, int Removed = 0, IReadOnlyList<string>? UnavailableRoots = null, IReadOnlyList<string>? IncompletePaths = null);
 
 public sealed class LibraryIndexer(LibraryStore store, string artworkCache, LocalAppLog? log = null)
 {
@@ -12,7 +12,8 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         IEnumerable<string> roots,
         IEnumerable<string> ignoredDirectories,
         ScanControl control,
-        IProgress<ScanProgress>? progress = null)
+        IProgress<ScanProgress>? progress = null,
+        bool forceRefresh = false)
     {
         var pending = new List<Track>(64);
         var scanRoots = roots.Select(Path.GetFullPath).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
@@ -23,6 +24,8 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         var ignored = ignoredDirectories.Select(Path.GetFullPath).ToArray();
         var indexed = 0;
         var skipped = 0;
+        var unavailableRoots = new List<string>();
+        var incompletePaths = new List<string>();
         void FlushPending()
         {
             if (pending.Count == 0) return;
@@ -37,22 +40,38 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
             {
                 token.ThrowIfCancellationRequested();
                 var fullPath = Path.GetFullPath(path);
-                scan.MarkSeen(fullPath);
                 try
                 {
                     var info = new FileInfo(path);
-                    if (scan.IsUnchanged(fullPath, info.Length, info.LastWriteTimeUtc))
+                    if (!info.Exists)
+                    {
+                        if (MayStillExist(fullPath)) scan.MarkSeen(fullPath);
+                        skipped++;
                         return ValueTask.CompletedTask;
-                    pending.Add(TrackReader.Read(path, artworkCache));
+                    }
+                    if (!forceRefresh && scan.IsUnchanged(fullPath, info.Length, info.LastWriteTimeUtc))
+                    {
+                        scan.MarkSeen(fullPath);
+                        return ValueTask.CompletedTask;
+                    }
+                    var track = TrackReader.Read(path, artworkCache);
+                    scan.MarkSeen(fullPath);
+                    pending.Add(track);
                     if (pending.Count >= 64) FlushPending();
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
                 {
+                    // Keep an unreadable but still-present audio file in the index; if it
+                    // disappeared during this scan, leave it unseen so Complete() prunes it.
+                    if (MayStillExist(fullPath)) scan.MarkSeen(fullPath);
                     skipped++;
                     _log.Warning("indexer", $"Skipped audio file '{fullPath}'.", ex);
                 }
                 return ValueTask.CompletedTask;
-            }, progress, rootCompleted: scan.MarkRootCompleted, pathExcludedWithReason: scan.MarkExcludedPath).ConfigureAwait(false);
+            }, progress, rootCompleted: scan.MarkRootCompleted,
+                rootUnavailable: root => unavailableRoots.Add(root),
+                pathExcludedWithReason: scan.MarkExcludedPath,
+                pathIncomplete: path => { scan.MarkPathIncomplete(path); incompletePaths.Add(path); }).ConfigureAwait(false);
         }
         catch
         {
@@ -63,6 +82,14 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         var removed = scan.Complete();
         if (removed > 0) store.InvalidateExactFingerprintSnapshot();
         store.PruneUnreferencedArtwork(artworkCache);
-        return new(indexed, skipped, removed);
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        return new(indexed, skipped, removed, unavailableRoots.Distinct(comparer).ToArray(), incompletePaths.Distinct(comparer).ToArray());
+    }
+
+    private static bool MayStillExist(string path)
+    {
+        try { _ = File.GetAttributes(path); return true; }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException) { return true; }
     }
 }

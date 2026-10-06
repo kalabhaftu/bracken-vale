@@ -45,6 +45,7 @@ public sealed partial class MainWindow : Window
             roots = DefaultMusicRoots().ToList();
             _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
         }
+        _libraryFileWatcher.SetRoots(roots);
         if (roots.Count > 0) StartScan(roots);
     }
 
@@ -67,12 +68,13 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
     }
 
-    private async void StartScan(IEnumerable<string> roots)
+    private async void StartScan(IEnumerable<string> roots, bool forceRefresh = false)
     {
         if (_libraryScan.IsRunning) return;
         var scanRoots = roots.Select(Path.GetFullPath).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
         if (scanRoots.Length == 0) return;
         _scanStartedUtc = DateTimeOffset.UtcNow;
+        ClearScanOutcome();
         _scanCurrentPath = "Preparing scan…";
         _scanFilesFound = 0;
         _scanDirectoriesVisited = 0;
@@ -94,7 +96,7 @@ public sealed partial class MainWindow : Window
                     nextLibraryRefresh = value.FilesFound + 256;
                 }
             });
-            var scanTask = _libraryScan.StartAsync(scanRoots, ignored, progress);
+            var scanTask = _libraryScan.StartAsync(scanRoots, ignored, progress, forceRefresh);
             if (!_libraryScan.IsRunning) return;
             PublishScanState();
             var result = await scanTask;
@@ -103,6 +105,28 @@ public sealed partial class MainWindow : Window
                 if (result is not null)
                 {
                     _scanCurrentPath = "Scan complete";
+                    var unavailableRoots = result.UnavailableRoots ?? Array.Empty<string>();
+                    _libraryQueries.SetUnavailableRoots(unavailableRoots);
+                    if (unavailableRoots.Count > 0)
+                    {
+                        _trackAvailability.MarkUnavailableRoots(unavailableRoots);
+                        var unavailableIds = new HashSet<string>(StringComparer.Ordinal);
+                        if (_playback.CurrentTrack is { } current && _libraryQueries.IsTrackUnavailable(current.Path))
+                            unavailableIds.Add(_libraryQueries.TrackId(current.Path));
+                        foreach (var path in _queue)
+                            if (_libraryQueries.IsTrackUnavailable(path)) unavailableIds.Add(_libraryQueries.TrackId(path));
+                        foreach (var id in unavailableIds)
+                            _webBridge?.SendEvent("trackAvailabilityChanged", new { id, fileUnavailable = true });
+                    }
+                    foreach (var path in _trackAvailability.ClearUnavailableTracksThatExist())
+                        _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(path), fileUnavailable = false });
+                    var heading = forceRefresh ? "Index rebuilt" : "Scan complete";
+                    var message = $"{heading} · {result.Indexed:N0} tracks updated · {result.Removed:N0} missing tracks removed · {result.Skipped:N0} files skipped";
+                    if (unavailableRoots.Count > 0)
+                        message += $" · unavailable folders (tracks kept): {string.Join("; ", unavailableRoots)}";
+                    if (result.IncompletePaths is { Count: > 0 } incompletePaths)
+                        message += $" · {incompletePaths.Count:N0} folders could not be checked; their indexed tracks were kept";
+                    SetScanOutcome("complete", message);
                 }
                 PublishLibraryChanged(); PublishScanState();
             }
@@ -110,11 +134,13 @@ public sealed partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             LocalAppLog.Shared.Info("scanner", "Library scan cancelled; completed tracks were retained.");
+            SetScanOutcome("cancelled", "Scan cancelled · tracks already indexed were kept");
             if (!_windowClosed) { _scanCurrentPath = "Scan cancelled"; PublishScanState(); }
         }
         catch (Exception ex)
         {
             LocalAppLog.Shared.Error("scanner", "Library scan failed.", ex);
+            SetScanOutcome("error", $"Scan failed · {ex.Message}");
             if (!_windowClosed) { _scanCurrentPath = "Scan stopped"; PublishScanState(); _ = ShowNoticeAsync($"The library scan failed: {ex.Message}", InfoBarSeverity.Error); }
         }
         finally
@@ -122,7 +148,22 @@ public sealed partial class MainWindow : Window
             if (!_windowClosed)
             {
                 PublishLibraryChanged(); PublishScanState();
+                RunPendingLibraryWatcherRescan();
             }
         }
+    }
+
+    private void ClearScanOutcome()
+    {
+        _scanOutcomeKind = null;
+        _scanOutcomeMessage = null;
+        _scanOutcomeUtc = null;
+    }
+
+    private void SetScanOutcome(string kind, string message)
+    {
+        _scanOutcomeKind = kind;
+        _scanOutcomeMessage = message;
+        _scanOutcomeUtc = DateTimeOffset.UtcNow;
     }
 }
