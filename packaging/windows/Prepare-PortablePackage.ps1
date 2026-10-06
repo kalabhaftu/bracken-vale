@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 
 $source = (Resolve-Path -LiteralPath $PublishDirectory).Path
 $destination = [IO.Path]::GetFullPath($DestinationDirectory)
-$executable = Join-Path $source 'BrackenVale.exe'
+$executable = Join-Path $source 'MusicPlayer.exe'
 $license = Join-Path $source 'LICENSE'
 $notices = Join-Path $source 'ThirdPartyNotices.md'
 
@@ -58,7 +58,7 @@ foreach ($entry in $entries) {
 $readme = @'
 Music Player __VERSION__ — portable for Windows __ARCHITECTURE__
 
-Launch BrackenVale.exe from this folder.
+Launch MusicPlayer.exe from this folder.
 
 To add this portable copy to Open with and add Add to Music Player queue / Create Music Player playlist to supported audio-file context menus for your Windows account, run:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-MusicPlayer-FileActions.ps1
@@ -66,7 +66,7 @@ To remove those entries before moving or deleting this folder, run the same comm
 On Windows 11, these classic context-menu actions are under Show more options.
 
 Your library database, settings, artwork cache, and logs are stored in:
-%LOCALAPPDATA%\BrackenVale
+%LOCALAPPDATA%\MusicPlayer
 
 This package contains the Windows __ARCHITECTURE__ app and its required runtime files.
 See LICENSE and ThirdPartyNotices.md for license information.
@@ -79,8 +79,8 @@ $readme = $readme.Replace('__VERSION__', $Version).Replace('__ARCHITECTURE__', $
 )
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Register-MusicPlayer-FileActions.ps1') -Destination (Join-Path $destination 'Register-MusicPlayer-FileActions.ps1')
 
-if (-not (Test-Path -LiteralPath (Join-Path $destination 'BrackenVale.exe') -PathType Leaf)) {
-    throw 'Staged package is missing BrackenVale.exe.'
+if (-not (Test-Path -LiteralPath (Join-Path $destination 'MusicPlayer.exe') -PathType Leaf)) {
+    throw 'Staged package is missing MusicPlayer.exe.'
 }
 if (-not (Test-Path -LiteralPath (Join-Path $destination 'LICENSE') -PathType Leaf)) {
     throw 'Staged package is missing LICENSE.'

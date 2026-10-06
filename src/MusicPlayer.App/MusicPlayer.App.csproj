@@ -16,7 +16,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\MusicPlayer.ico</ApplicationIcon>
     <RootNamespace>BrackenVale.App</RootNamespace>
-    <AssemblyName>BrackenVale</AssemblyName>
+    <AssemblyName>MusicPlayer</AssemblyName>
     <Version>0.1.0</Version>
     <AppxPackageSigningEnabled Condition="'$(AppxPackageSigningEnabled)' == ''">false</AppxPackageSigningEnabled>
     <AppxBundle>Always</AppxBundle>

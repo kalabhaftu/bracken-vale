@@ -5,6 +5,7 @@ namespace BrackenVale.Core;
 
 public sealed class LocalAppLog
 {
+    private const string LogPrefix = "music-player-";
     private const long MaxBytes = 4 * 1024 * 1024;
     private const long MaxTotalBytes = 50 * 1024 * 1024;
     private const int RetentionDays = 14;
@@ -17,8 +18,7 @@ public sealed class LocalAppLog
 
     public LocalAppLog(string? folder = null)
     {
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _folder = folder ?? Path.Combine(local, "BrackenVale", "Logs");
+        _folder = folder ?? Path.Combine(AppDataPaths.Root, "Logs");
     }
 
     public void Info(string area, string message) => Write("INFO", area, message, null);
@@ -34,13 +34,13 @@ public sealed class LocalAppLog
         lock (_gate)
         {
             string[] files = Directory.Exists(_folder)
-                ? Directory.GetFiles(_folder, "bracken-vale-*.log").Concat(Directory.GetFiles(_folder, "bracken-vale-*.log.1")).ToArray()
+                ? Directory.GetFiles(_folder, $"{LogPrefix}*.log*")
                 : [];
             if (files.Length == 0) throw new FileNotFoundException("There are no Music Player logs to export.", _folder);
             var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
             if (files.Contains(fullPath, pathComparer)) throw new ArgumentException("Choose a ZIP destination outside the log files.", nameof(destination));
             Directory.CreateDirectory(directory);
-            var temporary = Path.Combine(directory, $".bracken-vale-logs-{Guid.NewGuid():N}.tmp");
+            var temporary = Path.Combine(directory, $".{LogPrefix}logs-{Guid.NewGuid():N}.tmp");
             try
             {
                 using (var archive = ZipFile.Open(temporary, ZipArchiveMode.Create))
@@ -64,7 +64,7 @@ public sealed class LocalAppLog
                 Directory.CreateDirectory(_folder);
                 var day = DateOnly.FromDateTime(now);
                 if (_lastPrunedDayUtc != day && PruneLogs(now, null)) _lastPrunedDayUtc = day;
-                var path = Path.Combine(_folder, $"bracken-vale-{now:yyyy-MM-dd}.log");
+                var path = Path.Combine(_folder, $"{LogPrefix}{now:yyyy-MM-dd}.log");
                 if (File.Exists(path) && new FileInfo(path).Length + Encoding.UTF8.GetByteCount(entry) > MaxBytes)
                     File.Move(path, path + ".1", true);
                 File.AppendAllText(path, entry, new UTF8Encoding(false));
@@ -92,7 +92,7 @@ public sealed class LocalAppLog
 
     private void EnforceTotalLimit(DateTime now, string? protectedPath)
     {
-        var files = Directory.EnumerateFiles(_folder, "bracken-vale-*.log*")
+        var files = EnumerateLogFiles()
             .Select(path => new FileInfo(path))
             .Where(file => file.Exists)
             .ToArray();
@@ -105,7 +105,7 @@ public sealed class LocalAppLog
             }
         }
 
-        files = Directory.EnumerateFiles(_folder, "bracken-vale-*.log*")
+        files = EnumerateLogFiles()
             .Select(path => new FileInfo(path))
             .Where(file => file.Exists)
             .ToArray();
@@ -127,6 +127,12 @@ public sealed class LocalAppLog
 
     private static bool SamePath(string first, string? second) => second is not null &&
         string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private IEnumerable<string> EnumerateLogFiles()
+    {
+        if (!Directory.Exists(_folder)) return [];
+        return Directory.EnumerateFiles(_folder, $"{LogPrefix}*.log*");
+    }
 
     private static string Truncate(string value)
     {

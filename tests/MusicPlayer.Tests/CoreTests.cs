@@ -63,7 +63,7 @@ public sealed class CoreTests : IDisposable
         var folder = Path.Combine(_root, "Logs");
         var log = new LocalAppLog(folder);
         log.Error("tag-editor", "Could not save tags.", new IOException("file is read-only"));
-        var file = Assert.Single(Directory.GetFiles(folder, "bracken-vale-*.log"));
+        var file = Assert.Single(Directory.GetFiles(folder, "music-player-*.log"));
         var contents = System.IO.File.ReadAllText(file);
         Assert.Contains("[ERROR] [tag-editor] Could not save tags.", contents);
         Assert.Contains("System.IO.IOException: file is read-only", contents);
@@ -106,8 +106,8 @@ public sealed class CoreTests : IDisposable
         var log = new LocalAppLog(folder);
         log.Info("test", new string('x', 4 * 1024 * 1024 + 100));
         log.Info("test", "after rotation");
-        var rotated = Assert.Single(Directory.GetFiles(folder, "bracken-vale-*.log.1"));
-        var current = Assert.Single(Directory.GetFiles(folder, "bracken-vale-*.log"));
+        var rotated = Assert.Single(Directory.GetFiles(folder, "music-player-*.log.1"));
+        var current = Assert.Single(Directory.GetFiles(folder, "music-player-*.log"));
         Assert.True(new FileInfo(rotated).Length <= 4 * 1024 * 1024);
         Assert.Contains("after rotation", System.IO.File.ReadAllText(current));
     }
@@ -227,7 +227,7 @@ public sealed class CoreTests : IDisposable
             await new LibraryScanner(new LocalAppLog(logFolder)).ScanAsync([root], [], control,
                 (path, _) => { found.Add(path); return ValueTask.CompletedTask; });
             Assert.Empty(found);
-            var log = System.IO.File.ReadAllText(Assert.Single(Directory.GetFiles(logFolder, "bracken-vale-*.log")));
+            var log = System.IO.File.ReadAllText(Assert.Single(Directory.GetFiles(logFolder, "music-player-*.log")));
             Assert.Contains("[WARN] [scanner]", log);
             Assert.Contains("private", log);
         }
@@ -295,7 +295,7 @@ public sealed class CoreTests : IDisposable
         }
 
         Assert.Null(_store.LoadSession());
-        var log = Assert.Single(Directory.GetFiles(Path.Combine(_root, "Logs"), "bracken-vale-*.log"));
+        var log = Assert.Single(Directory.GetFiles(Path.Combine(_root, "Logs"), "music-player-*.log"));
         Assert.Contains("Saved playback session was invalid", System.IO.File.ReadAllText(log));
     }
 

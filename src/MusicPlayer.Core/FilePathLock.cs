@@ -11,7 +11,7 @@ internal sealed class FilePathLock : IDisposable
     {
         var canonical = Path.GetFullPath(path);
         if (OperatingSystem.IsWindows()) canonical = canonical.ToUpperInvariant();
-        var name = "BrackenVale.FileWrite." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+        var name = "MusicPlayer.FileWrite." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
         _mutex = new Mutex(false, name);
         try { _mutex.WaitOne(); }
         catch (AbandonedMutexException) { } // Ownership transfers to this process; the previous writer has exited.

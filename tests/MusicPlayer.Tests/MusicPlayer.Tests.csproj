@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <AssemblyName>BrackenVale.Tests</AssemblyName>
+    <AssemblyName>MusicPlayer.Tests</AssemblyName>
     <RootNamespace>BrackenVale.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>

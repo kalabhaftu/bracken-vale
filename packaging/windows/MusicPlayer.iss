@@ -18,7 +18,7 @@ AppVersion={#AppVersion}
 AppPublisher=Kalabhaftu
 DefaultDirName={localappdata}\Programs\Music Player
 DefaultGroupName=Music Player
-UninstallDisplayIcon={app}\BrackenVale.exe
+UninstallDisplayIcon={app}\MusicPlayer.exe
 ArchitecturesAllowed={#Architecture}
 ArchitecturesInstallIn64BitMode={#Architecture}
 PrivilegesRequired=lowest
@@ -34,15 +34,15 @@ Uninstallable=yes
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Music Player"; Filename: "{app}\BrackenVale.exe"
-Name: "{autodesktop}\Music Player"; Filename: "{app}\BrackenVale.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Music Player"; Filename: "{app}\MusicPlayer.exe"
+Name: "{autodesktop}\Music Player"; Filename: "{app}\MusicPlayer.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Run]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -ExecutionPolicy Bypass -File ""{app}\Register-MusicPlayer-FileActions.ps1"" -Quiet"; Flags: runhidden waituntilterminated
-Filename: "{app}\BrackenVale.exe"; Description: "Launch Music Player"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\MusicPlayer.exe"; Description: "Launch Music Player"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -ExecutionPolicy Bypass -File ""{app}\Register-MusicPlayer-FileActions.ps1"" -Unregister -Quiet"; Flags: runhidden waituntilterminated

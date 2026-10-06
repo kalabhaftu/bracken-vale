@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$executable = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'BrackenVale.exe'))
+$executable = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'MusicPlayer.exe'))
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "Music Player executable was not found: $executable"
 }
@@ -16,7 +16,7 @@ $capabilitiesRelativePath = "Software\BrackenVale\Capabilities\$ApplicationName"
 $capabilities = "HKCU:\$capabilitiesRelativePath"
 $associationName = "BrackenVale.$($ApplicationName -replace '[^A-Za-z0-9]', '')"
 $integrationRoot = "HKCU:\Software\BrackenVale\ShellIntegration\$($ApplicationName -replace '[^A-Za-z0-9]', '')"
-$appKey = 'HKCU:\Software\Classes\Applications\BrackenVale.exe'
+$appKey = 'HKCU:\Software\Classes\Applications\MusicPlayer.exe'
 $storedExecutable = Join-Path $integrationRoot 'ExecutablePath'
 
 function Set-DefaultValue([string] $Path, [string] $Value) {

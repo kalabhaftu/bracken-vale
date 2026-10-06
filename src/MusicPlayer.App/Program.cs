@@ -45,6 +45,7 @@ internal static class Program
             return;
         }
 
+        AppDataPaths.MigrateFromDevelopmentFolder();
         _instance = instance;
         InitialActivation = ParseActivation(activation, args);
         instance.Activated += Instance_Activated;
@@ -150,7 +151,7 @@ internal static class Program
     private static string[] ParseArguments(string arguments)
     {
         if (string.IsNullOrWhiteSpace(arguments)) return [];
-        var commandLine = CommandLineToArgvW("BrackenVale.exe " + arguments, out var count);
+        var commandLine = CommandLineToArgvW("MusicPlayer.exe " + arguments, out var count);
         if (commandLine == 0) return [];
         try
         {
