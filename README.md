@@ -25,9 +25,7 @@ For ARM64, use `-p:Platform=ARM64 -p:RuntimeIdentifier=win-arm64`. The core test
 
 ## Local files and network access
 
-The SQLite database, settings, artwork cache, tag backups, and logs remain under `%LOCALAPPDATA%\BrackenVale` to preserve existing user data. The app has no account, streaming service, or cloud sync. LRCLIB receives only title and artist after a user starts a lyrics search. The optional weekly update check contacts GitHub and can be disabled in Settings.
-
-The temporary `local_music_player.html` and `local_music_player_v2.html` files were local design inputs only. They are now kept outside the checkout and are not needed for builds or included in releases.
+The SQLite database, settings, artwork cache, tag backups, and logs are stored under `%LOCALAPPDATA%\MusicPlayer`. The app has no account, streaming service, or cloud sync. Lyrics can come from sidecar `.lrc` files or supported embedded audio tags; LRCLIB receives only title and artist after a user starts a search. The optional GitHub update check runs at most once every six hours after a successful response and can be disabled in Settings. Updates open the release page and are never installed automatically.
 
 Windows format support depends on the bundled LibVLC modules and the specific file/device combination. See [the format matrix](docs/format-matrix.md). Release signing requirements and current signing status are documented in [the release process](docs/release.md). Remaining migration and release checks are listed in [project status](docs/project-status.md).
 

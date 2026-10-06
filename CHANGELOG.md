@@ -1,16 +1,22 @@
 # Music Player changelog
 
-Changes to Music Player are documented here. C# namespaces, assembly and package identifiers, and the local app-data folder retain their existing names for compatibility.
+Changes to Music Player are documented here. The visible product name and executable use Music Player/MusicPlayer; internal C# namespaces, the MSIX identity, and the local app-data folder retain their existing identifiers.
 
 ## [Unreleased]
 
-- Replace the previous WinUI screen layout, which did not match the intended player design, with Music Player's locally packaged WebView2 interface. The temporary v2 file was visual input only; playback and library behavior remain in C#.
-- Rename the visible application to Music Player while retaining the installed package identity, executable, and local data location.
+- Replace the previous WinUI screen layout with Music Player's locally packaged WebView2 interface while keeping playback and library behavior in C#.
+- Add durable collapsed-sidebar and resizable-panel preferences, resettable UI groups, built-in history/most-played/with-lyrics playlists, and remove those smart lists from primary navigation.
+- Detect removed audio files in the background, reconcile index rows without user clicks, retain playlist and queue references, and expose unavailable library roots and scan skips.
+- Index sidecar and embedded lyric availability for a paged With Lyrics view; identify lyric source, read supported embedded tags including ID3 synchronized lyrics, and preserve richer LRC timing metadata.
+- Use GitHub ETags, single-flight checks, success-based retry timing, and a repository-validated stable-release fallback while keeping updates user-initiated and installation manual.
+- Rename the executable and core/test assembly outputs to MusicPlayer while retaining the installed package identity and local data location.
+- Show a clear unavailable-file notice and reconcile stale library rows when their configured storage is reachable, while preserving queue and playlist occurrences for recovery.
+- Keep the saved track duration visible while restored playback is paused and the audio engine has not loaded its timeline yet.
 - Fix playlist selection, playback, duplicate-entry removal, rename, export and delete flows; add library-root management and live scan details.
 - Expose active Shuffle and A–B repeat states and keep the desktop player usable at narrower window widths.
 - Migrate the local index safely to FTS5 trigram search and database-backed scan generations; page library and playlist results and preserve rows under incomplete, unavailable and excluded paths.
 - Bound artwork memory and cache storage, retain five usable tag backups per track, serialize playback state changes, and bound log/network/settings work.
-- Pin GitHub Actions to commit SHAs, restrict workflow permissions, run ARM64 checks on native Windows ARM, protect `main` with required pull-request checks, and add a private signing preflight for release tags.
+- Pin GitHub Actions to commit SHAs, restrict workflow permissions, run ARM64 checks on native Windows ARM, protect `main` with required pull-request checks, and require verified signing plus a signed SHA-256 asset manifest before publishing preview or stable releases.
 
 ## [0.1.0-preview.1]
 

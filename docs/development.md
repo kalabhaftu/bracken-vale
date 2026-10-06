@@ -29,7 +29,7 @@ The core and its tests target .NET 10 without WinUI and can be tested on macOS o
 
 ## Configuration and data
 
-Application data lives under `%LOCALAPPDATA%\BrackenVale`; the SQLite database, artwork cache, recoverable tag backups and rotating logs are local. Logs are in `%LOCALAPPDATA%\BrackenVale\Logs` and can be opened from Settings. They contain error details and may include local file paths, so review them before sharing. The app has no server or public API. Playlists import M3U and M3U8 files and export UTF-8 M3U8. LRCLIB searches send only title and artist after the user starts the search; GitHub is used only for the optional weekly release check.
+Application data lives under `%LOCALAPPDATA%\MusicPlayer`; the SQLite database, artwork cache, recoverable tag backups and rotating logs are local. Logs are in `%LOCALAPPDATA%\MusicPlayer\Logs` and can be opened from Settings. They contain error details and may include local file paths, so review them before sharing. The app has no server or public API. Playlists import M3U and M3U8 files and export UTF-8 M3U8. Lyrics can be read from supported embedded tags or adjacent `.lrc` files. LRCLIB searches send only title and artist after the user starts the search; the optional GitHub release check uses conditional requests and does not download or install releases.
 
 ## Release signing
 
