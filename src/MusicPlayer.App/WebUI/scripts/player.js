@@ -2,12 +2,13 @@ export function createPlayerUi({state,$,$$,call,command,cover,esc,fmtDuration,sv
   const trackDetailsCache = new Map();
   let trackDetailsRequest = 0;
   let trackDetailsTrackId = null;
+  let panelCurrentTrackId = null;
 function updatePlayer() {
   const t=state.track;
   const coverEl=$("#nowCover");
   if(t) {
     $("#nowTitle").textContent=t.title;
-    $("#nowArtist").textContent=[t.artist,t.album].filter(Boolean).join(" · ");
+    $("#nowArtist").textContent=[t.artist,t.album,t.fileUnavailable?"File unavailable":null].filter(Boolean).join(" · ");
     if(coverEl.dataset.trackId!==t.id){
       const holder=document.createElement("div");holder.innerHTML=cover(t);const art=holder.firstElementChild;
       coverEl.className=`now-cover cover ${[...art.classList].filter(x=>x.startsWith("c")).join(" ")}`;
@@ -24,11 +25,11 @@ function updatePlayer() {
   }
   $("#playBtn").dataset.icon=state.playing?"pause":"play"; $("#playBtn").title=state.playing?"Pause":"Play"; $("#playBtn").setAttribute("aria-label",state.playing?"Pause":"Play"); $("#playBtn").setAttribute("aria-pressed",String(state.playing)); $("#playBtn").innerHTML=svg(state.playing?"pause":"play");
   const shuffleBtn=$("#shuffleBtn"); shuffleBtn.classList.toggle("active",state.shuffle); shuffleBtn.title=state.shuffle?"Shuffle on":"Shuffle off"; shuffleBtn.setAttribute("aria-label",shuffleBtn.title); shuffleBtn.setAttribute("aria-pressed",String(state.shuffle));
-  const repeatBtn=$("#repeatBtn"); repeatBtn.classList.toggle("active",state.repeat!=="Off"); repeatBtn.title=`Repeat ${state.repeat.toLowerCase()}`; repeatBtn.setAttribute("aria-label",repeatBtn.title); repeatBtn.setAttribute("aria-pressed",String(state.repeat!=="Off")); repeatBtn.innerHTML=svg("repeat");
+  const repeatBtn=$("#repeatBtn"); const repeatLabel=state.repeat==="Queue"?"Repeat all":state.repeat==="Track"?"Repeat one":"Repeat off"; repeatBtn.classList.toggle("active",state.repeat!=="Off"); repeatBtn.title=repeatLabel; repeatBtn.setAttribute("aria-label",repeatLabel); repeatBtn.setAttribute("aria-pressed",String(state.repeat!=="Off")); repeatBtn.innerHTML=`${svg("repeat")}${state.repeat==="Track"?'<span class="repeat-one" aria-hidden="true">1</span>':""}`;
   const abBtn=$("#abBtn"); abBtn.classList.toggle("active",state.repeatA!==null); abBtn.title=state.repeatB!==null?"A–B repeat on":state.repeatA!==null?"Mark point B":"A–B repeat off"; abBtn.setAttribute("aria-label",abBtn.title); abBtn.setAttribute("aria-pressed",String(state.repeatA!==null));
   const favoriteLabel=t?.favorite?"Remove from favorites":"Add to favorites";
   const heartBtn=$("#heartBtn"); heartBtn.classList.toggle("on",!!t?.favorite); heartBtn.title=favoriteLabel; heartBtn.setAttribute("aria-label",favoriteLabel); heartBtn.setAttribute("aria-pressed",String(!!t?.favorite)); heartBtn.innerHTML=svg("heart");
-  $("#currentTime").textContent=fmtDuration(state.position); $("#totalTime").textContent=fmtDuration(state.duration); const seek=$("#progressRange"); if(!seek.matches(":active")) { seek.max=String(Math.max(1,state.duration)); seek.value=String(Math.min(state.duration,state.position)); } const seekMax=Math.max(1,Number(seek.max)||1); seek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(seek.value)/seekMax*100))}%`);
+  $("#currentTime").textContent=fmtDuration(state.seekPreviewSeconds??state.position); $("#totalTime").textContent=fmtDuration(state.duration); const seek=$("#progressRange"); if(!state.seeking&&!seek.matches(":active")) { seek.max=String(Math.max(1,state.duration)); seek.value=String(Math.min(state.duration,state.position)); } const seekMax=Math.max(1,Number(seek.max)||1); seek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(seek.value)/seekMax*100))}%`);
   if(state.volume>0){state.lastVolume=state.volume;state.muted=false;}else state.muted=true;
   $("#volumeRange").value=String(state.volume); $("#volumeRange").style.setProperty("--range-progress",`${Math.max(0,Math.min(100,state.volume))}%`); const muteBtn=$("#muteBtn"); muteBtn.title=state.muted?"Unmute":"Mute"; muteBtn.setAttribute("aria-label",muteBtn.title); muteBtn.setAttribute("aria-pressed",String(state.muted)); muteBtn.innerHTML=svg(state.muted?"mute":"volume");
   const audioVolume=$("#audioVolume");if(audioVolume)audioVolume.value=String(state.volume);
@@ -39,8 +40,9 @@ function updateActiveLyric(){ if(state.view!=="Lyrics"||!state.lyricLines.length
 
 function updatePanel() {
   const current=state.track; const currentBox=$("#panelCurrent"); const content=$("#panelContent");
+  const currentId=current?.id||null;if(currentId!==panelCurrentTrackId){panelCurrentTrackId=currentId;$("#panelScroll").scrollTop=0;}
   if(!current) currentBox.innerHTML=`<div class="empty-state"><b>Nothing playing</b>Choose a track to see details here.</div>`;
-  else { const favoriteLabel=current.favorite?"Remove from favorites":"Add to favorites"; currentBox.innerHTML=`${cover(current,"panel-cover")}<div class="panel-track-title"><div><h2>${esc(current.title)}</h2><p>${esc(current.artist)}${current.album?` · ${esc(current.album)}`:""}</p></div><button class="ctrl heart ${current.favorite?"on":""}" data-action="favorite" data-id="${esc(current.id)}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${current.favorite?"true":"false"}">${svg("heart")}</button></div>`; }
+  else { const favoriteLabel=current.favorite?"Remove from favorites":"Add to favorites"; currentBox.innerHTML=`${cover(current,"panel-cover")}<div class="panel-track-title"><div><h2>${esc(current.title)}</h2><p>${esc(current.artist)}${current.album?` · ${esc(current.album)}`:""}${current.fileUnavailable?" · File unavailable":""}</p></div><button class="ctrl heart ${current.favorite?"on":""}" data-action="favorite" data-id="${esc(current.id)}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${current.favorite?"true":"false"}">${svg("heart")}</button></div>`; }
   const quality=[];
   const bitrate=Number(state.trackDetails?.bitrateKbps)||0;
   const sampleRate=Number(state.trackDetails?.sampleRateHz)||0;
@@ -48,11 +50,12 @@ function updatePanel() {
   if(bitrate>0)quality.push(`${bitrate} kbps`);
   if(sampleRate>0)quality.push(sampleRate>=1000?`${(sampleRate/1000).toFixed(sampleRate%1000===0?0:1)} kHz`:`${sampleRate} Hz`);
   if(bits>0)quality.push(`${bits}-bit`);
-  const qualityRow=quality.length?`<div class="info-row"><span>Audio quality</span><b>${esc(quality.join(" · "))}</b></div>`:"";
+  const qualityText=quality.join(" · ");
+  const qualityRow=quality.length?`<div class="info-row"><span>Audio quality</span><b title="${esc(qualityText)}">${esc(qualityText)}</b></div>`:"";
   if(state.panel==="queue") {
     const start=Math.max(0,state.queueIndex-(state.queueOffset||0));
     const upcoming=state.queue.slice(start+1,start+4);
-    content.innerHTML=`<div class="panel-meta">${current?`<div class="info-row"><span>Album</span><b>${esc(current.album||"—")}</b></div><div class="info-row"><span>Format</span><b>${esc(current.format||"—")}</b></div>${qualityRow}<div class="info-row"><span>Location</span><b class="location">${esc(current.path||"—")}</b></div>`:`<div class="empty-state">Track information appears here.</div>`}</div><div class="panel-label">Next in queue</div>${upcoming.length?upcoming.map((t,i)=>`<div class="queue-row" data-context="track" data-context-id="${esc(t.id)}">${cover(t,"queue-thumb")}<div class="queue-copy"><b>${esc(t.title)}</b><span>${esc(t.artist)}</span></div><span class="row-tools"><button class="ctrl" data-action="queue-remove" data-index="${state.queueOffset+start+i+1}" aria-label="Remove from queue">×</button></span></div>`).join(""):`<div class="empty-state">No upcoming tracks.</div>`}`;
+    content.innerHTML=`<div class="panel-meta">${current?`<div class="info-row"><span>Album</span><b title="${esc(current.album||"—")}">${esc(current.album||"—")}</b></div><div class="info-row"><span>Format</span><b title="${esc(current.format||"—")}">${esc(current.format||"—")}</b></div>${current.fileUnavailable?`<div class="info-row"><span>Status</span><b>File unavailable</b></div>`:""}${qualityRow}<div class="info-row"><span>Location</span><b class="location" data-action="copy-location" data-id="${esc(current.id)}" title="${esc(current.path||"")}" role="button" tabindex="0" aria-label="Copy full file path">${esc(current.path||"—")}</b></div>`:`<div class="empty-state">Track information appears here.</div>`}</div><div class="panel-label">Next in queue</div>${upcoming.length?upcoming.map((t,i)=>`<div class="queue-row ${t.fileUnavailable?"unavailable-track":""}" data-action="play-queue" data-index="${state.queueOffset+start+i+1}" data-context="track" data-context-id="${esc(t.id)}" role="button" tabindex="0" aria-label="Play ${esc(t.title)}">${cover(t,"queue-thumb")}<div class="queue-copy"><b>${esc(t.title)}</b><span>${esc(t.fileUnavailable?(t.artist==="Unavailable"?"File unavailable":`${t.artist} · File unavailable`):t.artist)}</span></div><span class="row-tools"><button class="ctrl" data-action="queue-remove" data-index="${state.queueOffset+start+i+1}" aria-label="Remove from queue">×</button></span></div>`).join(""):`<div class="empty-state">No upcoming tracks.</div>`}`;
   }
   else content.innerHTML=current?`<div class="info-block"><h3>Track information</h3><div class="info-row"><span>Album</span><b>${esc(current.album||"—")}</b></div><div class="info-row"><span>Album artist</span><b>${esc(current.albumArtist||current.artist||"—")}</b></div><div class="info-row"><span>Year · Genre</span><b>${esc([current.year,current.genre].filter(Boolean).join(" · ")||"—")}</b></div><div class="info-row"><span>Audio format</span><b>${esc(current.format||"—")}</b></div>${qualityRow}</div><div class="toolbar"><button class="action" data-action="details" data-id="${esc(current.id)}">Track details</button><button class="action" data-action="show-location" data-id="${esc(current.id)}">Show in File Explorer</button></div>`:`<div class="empty-state">Track information appears here.</div>`;
   $$(".panel-tabs [data-panel]").forEach(b=>b.classList.toggle("active",b.dataset.panel===state.panel));

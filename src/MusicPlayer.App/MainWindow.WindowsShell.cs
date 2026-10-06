@@ -29,6 +29,10 @@ namespace BrackenVale.App;
 
 public sealed partial class MainWindow : Window
 {
+    private readonly object _updateCheckGate = new();
+    private int _updateCheckActive;
+    private TaskCompletionSource<bool>? _updateCheckCompletion;
+
     private void OpenLogsFolder_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -65,13 +69,17 @@ public sealed partial class MainWindow : Window
             var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
             var appWindow = AppWindow.GetFromWindowId(windowId);
             var iconPath = ActiveProductIconPath();
-            if (File.Exists(iconPath)) appWindow.SetIcon(iconPath);
+            if (File.Exists(iconPath))
+            {
+                appWindow.SetIcon(iconPath);
+                ApplyNativeWindowIcon(hwnd, iconPath);
+            }
 
             var titleBar = appWindow.TitleBar;
             if (!AppWindowTitleBar.IsCustomizationSupported()) return;
             var dark = ShellRoot.RequestedTheme == ElementTheme.Dark ||
                 (ShellRoot.RequestedTheme == ElementTheme.Default && ShellRoot.ActualTheme == ElementTheme.Dark);
-            var background = dark ? Color.FromArgb(255, 16, 18, 16) : Color.FromArgb(255, 240, 242, 239);
+            var background = dark ? Color.FromArgb(255, 16, 18, 16) : Color.FromArgb(255, 231, 234, 230);
             var foreground = dark ? Color.FromArgb(255, 247, 248, 246) : Color.FromArgb(255, 25, 29, 25);
             titleBar.BackgroundColor = background;
             titleBar.ForegroundColor = foreground;
@@ -161,15 +169,50 @@ public sealed partial class MainWindow : Window
     private async Task CheckForUpdatesAsync(bool force)
     {
         if (!force && _store.GetSetting("check-updates") == "false") return;
-        if (!force && DateTime.TryParse(_store.GetSetting("last-update-check"), out var last) && DateTime.UtcNow - last.ToUniversalTime() < TimeSpan.FromDays(7)) return;
+        if (!force && DateTime.TryParse(_store.GetSetting("last-update-check"), out var last) && DateTime.UtcNow - last.ToUniversalTime() < TimeSpan.FromHours(6)) return;
+        // Startup and the Settings command can race. Share a pending request with
+        // a manual caller so clicks never create parallel GitHub requests.
+        TaskCompletionSource<bool>? completion = null;
+        Task? pending = null;
+        lock (_updateCheckGate)
+        {
+            if (_updateCheckActive != 0)
+                pending = _updateCheckCompletion?.Task;
+            else
+            {
+                completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _updateCheckCompletion = completion;
+                _updateCheckActive = 1;
+            }
+        }
+        if (completion is null)
+        {
+            if (force && pending is not null) await pending;
+            return;
+        }
+
+        _webBridge?.SendEvent("updateCheckState", new { checking = true });
         try
         {
-            _store.SetSetting("last-update-check", DateTime.UtcNow.ToString("O"));
             var assembly = typeof(MainWindow).Assembly;
             var currentVersionText = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
                 ?? assembly.GetName().Version?.ToString(3);
             var current = ReleaseVersion.TryParse(currentVersionText, out var parsedCurrent) ? parsedCurrent : new ReleaseVersion(0, 1, 0, null);
-            var release = await GitHubUpdates.GetLatestAsync(current.IsPrerelease);
+            var channel = current.IsPrerelease ? "preview" : "stable";
+            var sameChannel = string.Equals(_store.GetSetting("update-release-channel"), channel, StringComparison.Ordinal);
+            var cachedRelease = sameChannel
+                ? GitHubUpdates.ReadCachedRelease(_store.GetSetting("update-release-tag"), _store.GetSetting("update-release-url"))
+                : null;
+            var result = await GitHubUpdates.GetLatestAsync(current.IsPrerelease,
+                sameChannel ? _store.GetSetting("update-etag") : null, cachedRelease);
+            // Only record a completed response. Offline startup must not suppress retries for six hours.
+            _store.SetSetting("last-update-check", DateTime.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+            _store.SetSetting("update-etag", result.ETag ?? "");
+            _store.SetSetting("update-release-tag", result.Release?.Tag ?? "");
+            _store.SetSetting("update-release-url", result.Release?.Url ?? "");
+            _store.SetSetting("update-release-channel", channel);
+            _webAvailableRelease = null;
+            var release = result.Release;
             if (release is null || !ReleaseVersion.TryParse(release.Tag, out var latest) || latest.CompareTo(current) <= 0)
             {
                 if (force) await ShowNoticeAsync("You are using the latest available release.");
@@ -178,11 +221,81 @@ public sealed partial class MainWindow : Window
             _webAvailableRelease = release;
             if (_webUiActive && _webUiBootstrapped) PublishWebUpdateAvailable();
         }
-        catch (HttpRequestException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check failed.", ex); if (force) await ShowNoticeAsync("Could not reach GitHub. Check your connection and try again.", InfoBarSeverity.Warning); }
+        catch (HttpRequestException ex)
+        {
+            LocalAppLog.Shared.Warning("updates", "GitHub release check failed.", ex);
+            var limited = ex.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.TooManyRequests;
+            if (force) await ShowNoticeAsync(limited
+                ? "GitHub is limiting update checks right now. Try again later."
+                : "Could not reach GitHub. Check your connection and try again.", InfoBarSeverity.Warning);
+        }
         catch (TaskCanceledException ex) { LocalAppLog.Shared.Warning("updates", "GitHub release check timed out.", ex); if (force) await ShowNoticeAsync("The GitHub update check timed out.", InfoBarSeverity.Warning); }
         catch (System.Text.Json.JsonException ex) { LocalAppLog.Shared.Warning("updates", "GitHub returned invalid release data.", ex); if (force) await ShowNoticeAsync("GitHub returned an update response Music Player could not read.", InfoBarSeverity.Warning); }
         catch (Exception ex) { LocalAppLog.Shared.Error("updates", "Could not complete the GitHub release check.", ex); if (force) await ShowNoticeAsync("The update check failed. See the local log for details.", InfoBarSeverity.Error); }
+        finally
+        {
+            lock (_updateCheckGate)
+            {
+                _updateCheckActive = 0;
+                if (ReferenceEquals(_updateCheckCompletion, completion)) _updateCheckCompletion = null;
+            }
+            completion.TrySetResult(true);
+            _webBridge?.SendEvent("updateCheckState", new { checking = false });
+        }
     }
+
+    private void ApplyNativeWindowIcon()
+    {
+        try
+        {
+            var path = ActiveProductIconPath();
+            if (!File.Exists(path)) return;
+            var hwnd = WindowNative.GetWindowHandle(this);
+            var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
+            AppWindow.GetFromWindowId(windowId).SetIcon(path);
+            ApplyNativeWindowIcon(hwnd, path);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or COMException or ArgumentException)
+        {
+            LocalAppLog.Shared.Warning("window", "The Music Player taskbar icon could not be applied.", ex);
+        }
+    }
+
+    private void ApplyNativeWindowIcon(nint hwnd, string iconPath)
+    {
+        if (string.Equals(_nativeWindowIconPath, iconPath, StringComparison.OrdinalIgnoreCase)) return;
+        // AppWindow.SetIcon normally updates both surfaces. Set the Win32 small and large
+        // icons as well so Windows taskbar grouping and title-bar rendering agree for a
+        // directly launched portable executable.
+        var small = LoadImage(IntPtr.Zero, iconPath, ImageIcon, 16, 16, LoadFromFile);
+        var large = LoadImage(IntPtr.Zero, iconPath, ImageIcon, 32, 32, LoadFromFile);
+        if (small != IntPtr.Zero)
+        {
+            _windowIconHandles.Add(small);
+            _ = SendMessage(hwnd, WmSetIcon, new nint(IconSmall), small);
+        }
+        if (large != IntPtr.Zero)
+        {
+            _windowIconHandles.Add(large);
+            _ = SendMessage(hwnd, WmSetIcon, new nint(IconBig), large);
+        }
+        if (small != IntPtr.Zero || large != IntPtr.Zero) _nativeWindowIconPath = iconPath;
+    }
+
+    private const uint WmSetIcon = 0x0080;
+    private const int IconSmall = 0;
+    private const int IconBig = 1;
+    private const uint ImageIcon = 1;
+    private const uint LoadFromFile = 0x0010;
+
+    [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint LoadImage(nint instance, string name, uint type, int width, int height, uint loadFlags);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW", SetLastError = true)]
+    private static extern nint SendMessage(nint hwnd, uint message, nint wParam, nint lParam);
+
+    [DllImport("user32.dll", EntryPoint = "DestroyIcon", SetLastError = true)]
+    private static extern bool DestroyIcon(nint icon);
 
     private void PublishWebUpdateAvailable()
     {

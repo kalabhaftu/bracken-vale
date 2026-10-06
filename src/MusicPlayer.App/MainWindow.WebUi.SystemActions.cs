@@ -33,8 +33,8 @@ public sealed partial class MainWindow
 
     private static void OpenRelease(string url)
     {
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
-            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        if (GitHubUpdates.IsReleasePage(url))
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
     private void RevealFileInExplorer(string path)

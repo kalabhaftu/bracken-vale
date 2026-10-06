@@ -15,6 +15,21 @@ public sealed partial class MainWindow
             case "setEqualizerBand": SetEqualizerBand(Int(payload, "index"), (float)Double(payload, "value")); return null;
             case "saveEqualizerPreset": SaveEqualizerPreset(String(payload, "name")); return null;
             case "updateSettings": await UpdateWebSettingsAsync(payload); return null;
+            case "resetUiSettings":
+            {
+                var appearanceChanged = _playerSettings.ResetUiSettings(payload);
+                if (appearanceChanged)
+                {
+                    _webArtworkAccent = null;
+                    ApplyStoredAppearance();
+                    ApplyTraySetting();
+                    ResetAccent();
+                    _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null });
+                }
+                PublishSettingsChanged();
+                PublishLibraryChanged();
+                return WebSettings();
+            }
             case "addExclusion": await AddExclusionAsync(); return null;
             case "removeExclusion": RemoveExclusion(String(payload, "path")); return null;
             case "checkUpdates": await CheckForUpdatesAsync(true); return null;
