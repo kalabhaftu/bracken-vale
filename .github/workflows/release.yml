@@ -56,7 +56,7 @@ jobs:
 
           $signed = $false
           $pfxPath = Join-Path $env:RUNNER_TEMP 'bracken-vale-signing.pfx'
-          $probePath = Join-Path $env:RUNNER_TEMP ('bracken-vale-signing-probe-' + [Guid]::NewGuid().ToString('N') + '.txt')
+          $probePath = Join-Path $env:RUNNER_TEMP ('bracken-vale-signing-probe-' + [Guid]::NewGuid().ToString('N') + '.exe')
           $preflightPassed = $false
           $preflightStage = 'read signing material'
           if ($hasPfx -and $hasPassword) {
@@ -97,13 +97,32 @@ jobs:
               $signtool = Get-ChildItem -Path (Join-Path $sdkRoot '*/x64/signtool.exe') -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
               if (-not $signtool) { throw 'Windows SDK signtool.exe was not found.' }
 
-              $preflightStage = 'sign the disposable preflight file'
-              [IO.File]::WriteAllText($probePath, 'Bracken Vale signing preflight')
-              & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfxPath /p $env:SIGNING_PASSWORD $probePath
+              $preflightStage = 'prepare the disposable executable signing probe'
+              $probeSource = Join-Path $PSHOME 'pwsh.exe'
+              if (-not (Test-Path -LiteralPath $probeSource -PathType Leaf)) { throw 'PowerShell executable was not found for the signing probe.' }
+              Copy-Item -LiteralPath $probeSource -Destination $probePath
+              $preflightStage = 'sign the disposable executable probe'
+              & $signtool sign /as /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfxPath /p $env:SIGNING_PASSWORD $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signing probe failed.' }
-              $preflightStage = 'verify the disposable signature'
+              $preflightStage = 'verify the disposable executable signature'
               & $signtool verify /pa /all $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signature verification failed.' }
+
+              $preflightStage = 'verify detached SHA-256 manifest signing support'
+              Add-Type -AssemblyName System.Security.Cryptography.Pkcs
+              $probeContent = [System.Security.Cryptography.Pkcs.ContentInfo]::new([Text.Encoding]::UTF8.GetBytes('Music Player manifest signing preflight'))
+              $probeCms = [System.Security.Cryptography.Pkcs.SignedCms]::new($probeContent, $true)
+              $probeSigner = [System.Security.Cryptography.Pkcs.CmsSigner]::new(
+                [System.Security.Cryptography.Pkcs.SubjectIdentifierType]::IssuerAndSerialNumber,
+                $certificate
+              )
+              $probeSigner.IncludeOption = [System.Security.Cryptography.X509Certificates.X509IncludeOption]::EndCertOnly
+              $probeSigner.DigestAlgorithm = [System.Security.Cryptography.Oid]::new('2.16.840.1.101.3.4.2.1')
+              $probeCms.ComputeSignature($probeSigner)
+              $probeVerifier = [System.Security.Cryptography.Pkcs.SignedCms]::new($probeContent, $true)
+              $probeVerifier.Decode($probeCms.Encode())
+              $probeVerifier.CheckSignature($true)
+              if ($probeVerifier.SignerInfos.Count -ne 1 -or $probeVerifier.SignerInfos[0].Certificate.Thumbprint -ne $certificate.Thumbprint) { throw 'Detached manifest probe was not signed by the configured release certificate.' }
               $preflightPassed = $true
             } catch {
               $preflightPassed = $false
@@ -116,23 +135,21 @@ jobs:
             }
           }
 
-          if ($hasPfx -ne $hasPassword -or (($hasPfx -or $hasPassword) -and -not $preflightPassed)) {
+          if (-not $hasPfx -or -not $hasPassword) {
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+            if ($preflightOnly) { throw 'Private signing preflight failed because both signing secrets are required. No release was created.' }
+            throw 'Preview and stable releases require both signing secrets and a successful signing preflight.'
+          }
+          if (-not $preflightPassed) {
             Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
             if ($preflightOnly) { throw 'Private signing preflight failed. No release was created.' }
-            if (-not $preview) { throw 'Stable releases require a valid, trusted signing certificate and successful private signing preflight.' }
-            Write-Warning 'Signing preflight did not pass. This preview will be published with unsigned portable ZIPs only.'
-          } elseif (-not $hasPfx) {
-            if ($preflightOnly) { throw 'Private signing preflight failed because signing secrets are not configured. No release was created.' }
-            if (-not $preview) { throw 'Stable releases require BRACKENVALE_SIGNING_PFX_BASE64 and BRACKENVALE_SIGNING_PFX_PASSWORD secrets.' }
-            Write-Warning 'Signing secrets are not configured. This preview will be published with unsigned portable ZIPs only.'
-          } else {
-            $signed = $true
+            throw 'Release blocked because certificate validation and disposable-file signature verification did not pass.'
           }
+          $signed = $true
 
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           if (-not $preflightOnly) {
             Set-Content -Path $notesPath -Value $notes -NoNewline
-            if ($preview -and -not $signed) { Add-Content -Path $notesPath -Value "`n`n> Unsigned preview ZIPs only. Windows may show a security warning. Signed setup and MSIX packages are reserved for a later stable release." }
           }
           "signed=$($signed.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "preview=$($preview.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -143,11 +160,16 @@ jobs:
         run: |
           dotnet restore MusicPlayer.sln
           dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj --configuration Release --no-restore
+      - name: Require verified signing before release packaging
+        if: steps.release.outputs.preflight_only != 'true'
+        shell: pwsh
+        run: |
+          if ('${{ steps.release.outputs.signed }}' -ne 'true') { throw 'Release packaging requires a successful private signing preflight.' }
       - name: Install Inno Setup 7
         if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
         run: choco install innosetup --version=7.1.0 --yes --no-progress
-      - name: Build portable packages and optional signed installers
-        if: steps.release.outputs.preflight_only != 'true'
+      - name: Build signed portable packages and setup installers
+        if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
         shell: pwsh
         env:
           SIGNING_PASSWORD: ${{ secrets.BRACKENVALE_SIGNING_PFX_PASSWORD }}
@@ -172,7 +194,7 @@ jobs:
               & packaging/windows/Prepare-PortablePackage.ps1 -PublishDirectory $publish -DestinationDirectory $out -Version $version -Architecture $arch.name
               if ($LASTEXITCODE -ne 0) { throw "Portable package preparation failed for $($arch.name)." }
               if ($signed) {
-                $app = Join-Path $out 'BrackenVale.exe'
+                $app = Join-Path $out 'MusicPlayer.exe'
                 & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $app
                 if ($LASTEXITCODE -ne 0) { throw "Signing app binary failed for $($arch.name)." }
                 & $signtool verify /pa /all $app
@@ -210,12 +232,25 @@ jobs:
           & $signtool verify /pa /all $bundle.FullName
           if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle signature verification failed.' }
           Copy-Item $bundle.FullName "artifacts/MusicPlayer-$version-x64-arm64.msixbundle"
+      - name: Sign and verify release SHA-256 manifest
+        if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          SIGNING_PASSWORD: ${{ secrets.BRACKENVALE_SIGNING_PFX_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          & packaging/windows/Sign-ReleaseManifest.ps1 `
+            -ArtifactDirectory artifacts `
+            -Version $version `
+            -PfxPath "$env:RUNNER_TEMP\bracken-vale-signing.pfx" `
+            -Password $env:SIGNING_PASSWORD
       # actions/upload-artifact v7, pinned to the verified tag commit.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: steps.release.outputs.preflight_only != 'true'
+        if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
         with:
           name: music-player-release-assets
-          path: artifacts/
+          path: release-assets/
           if-no-files-found: error
           retention-days: 1
       - name: Remove signing material
@@ -225,7 +260,7 @@ jobs:
 
   publish:
     needs: build
-    if: needs.build.outputs.preflight_only != 'true'
+    if: needs.build.outputs.preflight_only != 'true' && needs.build.outputs.signed == 'true'
     runs-on: windows-2022
     permissions:
       contents: write
@@ -235,6 +270,15 @@ jobs:
         with:
           name: music-player-release-assets
           path: artifacts
+      - name: Verify signed assets before GitHub Release upload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifests = @(Get-ChildItem artifacts -File -Filter 'MusicPlayer-*-SHA256SUMS.txt')
+          if ($manifests.Count -ne 1) { throw 'Expected exactly one signed release manifest.' }
+          $manifest = $manifests[0].FullName
+          $verifier = Join-Path $PWD 'artifacts/Verify-MusicPlayer-ReleaseManifest.ps1'
+          & $verifier -ManifestPath $manifest -SignaturePath "$manifest.p7s"
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

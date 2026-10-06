@@ -74,7 +74,7 @@ jobs:
         run: |
           $arch = '${{ matrix.arch }}'.ToLowerInvariant()
           $packageName = "MusicPlayer-ci-$arch-portable"
-          $exe = Join-Path $PWD "artifacts/$packageName/BrackenVale.exe"
+          $exe = Join-Path $PWD "artifacts/$packageName/MusicPlayer.exe"
           $process = Start-Process -FilePath $exe -PassThru
           try {
             Start-Sleep -Seconds 8
