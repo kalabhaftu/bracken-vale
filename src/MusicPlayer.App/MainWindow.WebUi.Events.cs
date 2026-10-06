@@ -36,14 +36,18 @@ public sealed partial class MainWindow
 
     private object ScanDto()
     {
-        var active = _libraryScan.IsRunning;
+        var (active, paused, cancelling) = _libraryScan.GetStatus();
+        var outcomeVisible = !active && _scanOutcomeUtc is { } finishedAt && DateTimeOffset.UtcNow - finishedAt < TimeSpan.FromSeconds(8);
         return new
         {
             active,
-            paused = active && _libraryScan.IsPaused,
+            paused,
+            cancelling,
             filesFound = _scanFilesFound,
             directoriesVisited = _scanDirectoriesVisited,
-            currentPath = active ? _scanCurrentPath : null
+            currentPath = active ? _scanCurrentPath : null,
+            outcome = outcomeVisible ? _scanOutcomeKind : null,
+            message = outcomeVisible ? _scanOutcomeMessage : null
         };
     }
 

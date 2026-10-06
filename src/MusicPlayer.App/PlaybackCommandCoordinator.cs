@@ -30,6 +30,9 @@ internal sealed class PlaybackCommandCoordinator(
     public PlaybackCommandResult StartTrack(Track track, bool resetQueue, int? queueIndex = null)
     {
         ArgumentNullException.ThrowIfNull(track);
+        if (!File.Exists(track.Path))
+            return new(PlaybackCommandKind.TrackUnavailable, track,
+                Notice: $"File not found at its saved location: {track.Path}");
 
         if (resetQueue)
         {
@@ -69,6 +72,9 @@ internal sealed class PlaybackCommandCoordinator(
 
     public PlaybackCommandResult Resume()
     {
+        if (playback.CurrentTrack is { } current && !File.Exists(current.Path))
+            return new(PlaybackCommandKind.TrackUnavailable, current,
+                Notice: $"File not found at its saved location: {current.Path}");
         playback.PlayLoaded();
         return new(PlaybackCommandKind.Resumed, playback.CurrentTrack);
     }

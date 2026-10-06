@@ -11,7 +11,8 @@ public sealed partial class MainWindow
         {
             case "playTrack":
             {
-                var track = RequireTrack(payload, "id");
+                var track = await ResolveTrackForPlaybackAsync(String(payload, "id"));
+                if (track is null) return null;
                 _libraryQueries.SetContext(payload);
                 var paths = _libraryQueries.CurrentTrackPaths();
                 _playbackQueue.SelectTrack(paths, track.Path);
@@ -105,7 +106,7 @@ public sealed partial class MainWindow
             case "removeQueue":
                 RemoveQueueEntry(Int(payload, "index", -1)); PublishQueueState(force: true); return null;
             case "clearQueue": ClearUpcomingQueue(); PublishQueueState(force: true); return null;
-            case "playQueueEntry": PlayQueueEntry(Int(payload, "index", -1)); PublishQueueState(force: true); return null;
+            case "playQueueEntry": await PlayQueueEntryAsync(Int(payload, "index", -1)); PublishQueueState(force: true); return null;
             default: throw new InvalidOperationException("This Music Player command is not available in the playback handler.");
         }
     }

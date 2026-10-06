@@ -52,9 +52,16 @@ public sealed partial class MainWindow : Window
         PublishQueueStateIfChanged();
     }
 
-    private void PlayQueueEntry(int index)
+    private async Task PlayQueueEntryAsync(int index)
     {
-        ApplyPlaybackCommandResult(_playbackCommands.PlayQueueEntry(index));
+        if (index < 0 || index >= _queue.Count)
+        {
+            ApplyPlaybackCommandResult(_playbackCommands.PlayQueueEntry(index));
+            return;
+        }
+
+        var track = await ResolveTrackForPlaybackAsync(_libraryQueries.TrackId(_queue[index]));
+        if (track is not null) ApplyPlaybackCommandResult(_playbackCommands.StartTrack(track, resetQueue: false, index));
     }
 
     private void PlayTrack(Track track, bool resetQueue, int? queueIndex = null)
@@ -72,9 +79,8 @@ public sealed partial class MainWindow : Window
             {
                 var track = result.Track;
                 if (track is null) return;
-                _countedCurrentPlay = false;
-                _heardMilliseconds = 0;
-                _lastPlayCountPosition = 0;
+                var availabilityChanged = _trackAvailability.MarkAvailable(track.Path);
+                _playbackListening.ResetForTrack();
                 _crossfadeInProgress = false;
                 _crossfadeFailureSource = null;
                 _crossfadeSourceQueueIndex = null;
@@ -83,6 +89,7 @@ public sealed partial class MainWindow : Window
                 if (result.PersistSession) SaveSession();
                 if (result.QueueChanged) PublishQueueState(force: true);
                 else PublishQueueStateIfChanged();
+                if (availabilityChanged) PublishLibraryChanged();
                 PublishPlaybackState();
                 return;
             }
@@ -91,7 +98,7 @@ public sealed partial class MainWindow : Window
                 PublishPlaybackState();
                 return;
             case PlaybackCommandKind.Resumed:
-                _lastPlayCountPosition = _playback.Position;
+                _playbackListening.MarkResumed(_playback.Position);
                 if (result.Track is { } resumedTrack) UpdateSystemMediaControls(resumedTrack, true);
                 PublishPlaybackState();
                 return;
@@ -109,7 +116,15 @@ public sealed partial class MainWindow : Window
                 PublishPlaybackState();
                 return;
             case PlaybackCommandKind.TrackUnavailable:
-                _ = ShowNoticeAsync(result.Notice ?? "That track is no longer available.", InfoBarSeverity.Warning);
+                if (result.Track is { } missing && !File.Exists(missing.Path))
+                {
+                    var fileConfirmedMissing = ReconcileMissingTrack(missing.Path);
+                    var notice = fileConfirmedMissing
+                        ? $"File not found: {Path.GetFileName(missing.Path)}. Its stale library entry was removed; playlist and queue references were kept."
+                        : $"The file location is unavailable: {Path.GetFileName(missing.Path)}. Its library and playlist references were kept; reconnect the drive and rescan when it is available.";
+                    _ = ShowNoticeAsync(notice, InfoBarSeverity.Warning);
+                }
+                else _ = ShowNoticeAsync(result.Notice ?? "That track is no longer available.", InfoBarSeverity.Warning);
                 return;
             case PlaybackCommandKind.AdvanceFallback:
                 AdvanceQueue(false);
@@ -206,7 +221,7 @@ public sealed partial class MainWindow : Window
     {
         var validPaths = paths.Where(path => LibraryScanner.IsSupportedAudioFile(path) && File.Exists(path)).ToArray();
         if (validPaths.Length == 0) return [];
-        var artworkDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BrackenVale", "Artwork");
+        var artworkDirectory = Path.Combine(BrackenVale.Core.AppDataPaths.Root, "Artwork");
         return await Task.Run(() =>
         {
             var tracks = new List<Track>(validPaths.Length);
@@ -378,19 +393,8 @@ public sealed partial class MainWindow : Window
             var timeline = new SystemMediaTransportControlsTimelineProperties { StartTime = TimeSpan.Zero, EndTime = TimeSpan.FromMilliseconds(duration), Position = TimeSpan.FromMilliseconds(position) };
             _systemControls.UpdateTimelineProperties(timeline);
         }
-        if (_playback.CurrentTrack is not null)
-        {
-            if (_playback.IsPlaying)
-            {
-                var heardNow = position - _lastPlayCountPosition;
-                if (heardNow is > 0 and <= 3000) _heardMilliseconds += heardNow;
-            }
-            _lastPlayCountPosition = position;
-        }
-        if (!_countedCurrentPlay && _playback.CurrentTrack is { } track && PlayCompletion.HasReachedHalf(TimeSpan.FromMilliseconds(duration), TimeSpan.FromMilliseconds(_heardMilliseconds)))
-        {
-            _store.RecordPlayed(track.Path, DateTime.UtcNow); _countedCurrentPlay = true;
-        }
+        if (_playback.CurrentTrack is { } track && _playbackListening.Observe(true, _playback.IsPlaying, position, duration))
+            _store.RecordPlayed(track.Path, DateTime.UtcNow);
         var automaticNext = _playbackQueue.NextIndex(automatic: true);
         if (_playback.IsPlaying && _repeatMode != "Track" && _repeatA is null && !_crossfadeInProgress && !SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path) && automaticNext >= 0 &&
             _crossfadeSeconds > 0 && duration > 0 && duration - position <= _crossfadeSeconds * 1000)
@@ -402,7 +406,7 @@ public sealed partial class MainWindow : Window
     private void Playback_TrackEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() => AdvanceQueue(true));
     private void Playback_CrossfadeCompleted(Track track) => DispatcherQueue.TryEnqueue(() =>
     {
-        _crossfadeInProgress = false; _crossfadeFailureSource = null; _crossfadeSourceQueueIndex = null; _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = 0;
+        _crossfadeInProgress = false; _crossfadeFailureSource = null; _crossfadeSourceQueueIndex = null; _playbackListening.ResetForTrack();
         UpdateCurrentTrack(track); UpdateSystemMediaControls(track, true); PublishQueueState(force: true); PublishPlaybackState();
     });
 
@@ -425,8 +429,56 @@ public sealed partial class MainWindow : Window
         if (!SameTrack(_playback.CurrentTrack?.Path, track.Path)) return;
         _crossfadeInProgress = false;
         if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Stopped;
+        if (!File.Exists(track.Path))
+        {
+            _playback.Stop();
+            var fileConfirmedMissing = ReconcileMissingTrack(track.Path);
+            PublishPlaybackState();
+            var notice = fileConfirmedMissing
+                ? $"File not found: {Path.GetFileName(track.Path)}. Its stale library entry was removed; playlist and queue references were kept."
+                : $"The file location is unavailable: {Path.GetFileName(track.Path)}. Its library and playlist references were kept; reconnect the drive and rescan when it is available.";
+            _ = ShowNoticeAsync(notice, InfoBarSeverity.Warning);
+            return;
+        }
         _ = ShowNoticeAsync($"Could not play {track.Title}. See Settings → Open log folder for details.", InfoBarSeverity.Error);
     });
+
+    private bool ReconcileMissingTrack(string path)
+    {
+        var confirmedMissing = _trackAvailability.MarkUnavailable(path);
+        _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(path), fileUnavailable = true });
+        PublishLibraryChanged();
+        PublishQueueState(force: true);
+        return confirmedMissing;
+    }
+
+    private async Task<Track?> ResolveTrackForPlaybackAsync(string id)
+    {
+        var track = _libraryQueries.ResolveTrack(id);
+        var path = track?.Path ?? _libraryQueries.ResolveTrackPath(id);
+        if (path is null) throw new KeyNotFoundException("That track is no longer in the indexed library.");
+        if (File.Exists(path))
+        {
+            if (track is not null) return track;
+
+            var recovered = (await ReadExternalTracksAsync([path])).FirstOrDefault();
+            if (recovered is null)
+            {
+                await ShowNoticeAsync($"Music Player could not read {Path.GetFileName(path)}. Rescan the folder to refresh its library entry.", InfoBarSeverity.Warning);
+                return null;
+            }
+
+            _trackAvailability.MarkAvailable(path);
+            return recovered;
+        }
+
+        var fileConfirmedMissing = ReconcileMissingTrack(path);
+        var notice = fileConfirmedMissing
+            ? $"File not found: {Path.GetFileName(path)}. Its stale library entry was removed; playlist and queue references were kept."
+            : $"The file location is unavailable: {Path.GetFileName(path)}. Its library and playlist references were kept; reconnect the drive and rescan when it is available.";
+        await ShowNoticeAsync(notice, InfoBarSeverity.Warning);
+        return null;
+    }
 
     private void UpdateCurrentTrack(Track track)
     {
@@ -472,7 +524,7 @@ public sealed partial class MainWindow : Window
         _playbackQueue.Restore(session, current?.Path);
         if (current is not null)
         {
-            _playback.LoadPaused(current, session.PositionMilliseconds); _countedCurrentPlay = false; _heardMilliseconds = 0; _lastPlayCountPosition = session.PositionMilliseconds;
+            _playback.LoadPaused(current, session.PositionMilliseconds); _playbackListening.RestorePaused(session.PositionMilliseconds);
             UpdateCurrentTrack(current); UpdateSystemMediaControls(current, false);
         }
     }
@@ -496,7 +548,10 @@ public sealed partial class MainWindow : Window
         _volumeSaveDebounce?.Stop();
         PersistPendingVolumeSetting();
         SaveSession(); _clock.Stop(); _playback.Dispose(); _libraryScan.Cancel();
+        _libraryFileWatcher.Dispose();
         _tray?.Dispose();
+        foreach (var icon in _windowIconHandles) _ = DestroyIcon(icon);
+        _windowIconHandles.Clear();
     }
 
 }

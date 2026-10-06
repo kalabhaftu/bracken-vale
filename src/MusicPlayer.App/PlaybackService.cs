@@ -47,7 +47,19 @@ public sealed class PlaybackService : IDisposable
     public Track? CurrentTrack { get { lock (_gate) return _currentTrack; } }
     public bool IsPlaying { get { lock (_gate) return !_disposed && _active.IsPlaying; } }
     public long Position { get { lock (_gate) return _disposed ? 0 : _restorePosition > _active.Time ? _restorePosition : _active.Time; } }
-    public long Duration { get { lock (_gate) return _disposed ? 0 : _active.Length; } }
+    public long Duration
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_disposed) return 0;
+                var engineDuration = _active.Length;
+                if (engineDuration > 0) return engineDuration;
+                return Math.Max(0, (long)(_currentTrack?.Duration.TotalMilliseconds ?? 0));
+            }
+        }
+    }
     public int Volume
     {
         get { lock (_gate) return (int)_volume; }
