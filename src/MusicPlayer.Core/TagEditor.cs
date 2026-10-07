@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Buffers;
 using TagLib;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public sealed class TagEditor(string backupDirectory)
 {
@@ -248,7 +248,7 @@ public sealed class TagEditor(string backupDirectory)
     }
 
     private static string TemporaryPath(string path, string purpose) => Path.Combine(Path.GetDirectoryName(path)!,
-        $".bracken-{purpose}-{Guid.NewGuid():N}{Path.GetExtension(path)}");
+        $".musicplayer-{purpose}-{Guid.NewGuid():N}{Path.GetExtension(path)}");
 
     private static string[] Split(string value) => value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 

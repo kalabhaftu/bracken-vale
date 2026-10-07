@@ -1,4 +1,4 @@
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 /// <summary>
 /// Tracks credited listening time for the current playback item without depending on

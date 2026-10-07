@@ -1,11 +1,11 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Xunit;
 
-namespace BrackenVale.Tests;
+namespace MusicPlayer.Tests;
 
 public sealed class ScannerGameExclusionTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "bracken-vale-game-scan-tests-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "music-player-game-scan-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
     public async Task Default_scan_skips_game_library_names_at_any_location_but_keeps_user_music()

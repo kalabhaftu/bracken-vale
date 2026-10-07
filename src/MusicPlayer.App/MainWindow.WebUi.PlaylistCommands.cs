@@ -1,7 +1,7 @@
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow
 {

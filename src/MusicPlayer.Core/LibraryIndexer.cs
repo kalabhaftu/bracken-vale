@@ -1,6 +1,6 @@
 using System.Security;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public sealed record IndexResult(int Indexed, int Skipped, int Removed = 0, IReadOnlyList<string>? UnavailableRoots = null, IReadOnlyList<string>? IncompletePaths = null);
 
@@ -140,7 +140,10 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
             for (var offset = 0; ; offset += pageSize)
             {
                 control.Token.ThrowIfCancellationRequested();
-                var page = store.GetTracksPage(sort: TrackSort.Title, offset: offset, pageSize: pageSize);
+                // Artwork repair updates metadata too, which can change titles. Page
+                // by immutable path so those updates cannot shift unseen rows between
+                // offsets and leave stale artwork behind.
+                var page = store.GetTracksPage(sort: TrackSort.Path, offset: offset, pageSize: pageSize);
                 foreach (var track in page)
                 {
                     if (string.IsNullOrWhiteSpace(track.ArtworkPath) || File.Exists(track.ArtworkPath)) continue;

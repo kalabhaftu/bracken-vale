@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>MusicPlayer.Core</AssemblyName>
-    <RootNamespace>BrackenVale.Core</RootNamespace>
+    <RootNamespace>MusicPlayer.Core</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />

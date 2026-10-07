@@ -1,12 +1,12 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.Data.Sqlite;
 using Xunit;
 
-namespace BrackenVale.Tests;
+namespace MusicPlayer.Tests;
 
 public sealed class LibraryScanPruningTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "bracken-vale-scan-prune-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "music-player-scan-prune-" + Guid.NewGuid().ToString("N"));
     private readonly LibraryStore _store;
 
     public LibraryScanPruningTests()

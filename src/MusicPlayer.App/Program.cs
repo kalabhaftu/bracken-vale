@@ -1,11 +1,11 @@
 using System.Runtime.InteropServices;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 using Windows.ApplicationModel.Activation;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 internal enum FileActivationAction
 {

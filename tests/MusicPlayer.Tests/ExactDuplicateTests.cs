@@ -1,13 +1,13 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.Data.Sqlite;
 using System.Reflection;
 using Xunit;
 
-namespace BrackenVale.Tests;
+namespace MusicPlayer.Tests;
 
 public sealed class ExactDuplicateTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "bracken-vale-duplicates-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "music-player-duplicates-" + Guid.NewGuid().ToString("N"));
     private readonly LibraryStore _store;
 
     public ExactDuplicateTests()

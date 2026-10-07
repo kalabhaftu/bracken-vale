@@ -1,4 +1,4 @@
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public sealed record Track(
     string Path,

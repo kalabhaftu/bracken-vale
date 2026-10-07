@@ -1,6 +1,6 @@
 <!-- Native window shell. All player and library presentation is rendered by the local WebView2 UI. -->
 <Window
-    x:Class="BrackenVale.App.MainWindow"
+    x:Class="MusicPlayer.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Music Player">

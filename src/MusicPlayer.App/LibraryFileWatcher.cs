@@ -1,6 +1,6 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>Watches configured music folders for changes so the index follows the filesystem.</summary>
 internal sealed class LibraryFileWatcher : IDisposable
@@ -43,9 +43,18 @@ internal sealed class LibraryFileWatcher : IDisposable
                         EnableRaisingEvents = false
                     };
                     watcher.Deleted += (_, args) => QueueRemoved(args.FullPath);
-                    watcher.Created += (_, args) => { if (LibraryScanner.IsSupportedAudioFile(args.FullPath)) QueueRescan(); };
+                    watcher.Created += (_, args) =>
+                    {
+                        // Moving or copying a populated directory does not emit a
+                        // Created event for every file in its subtree.
+                        if (LibraryScanner.IsSupportedAudioFile(args.FullPath) || Directory.Exists(args.FullPath)) QueueRescan();
+                    };
                     watcher.Changed += (_, args) => { if (LibraryScanner.IsSupportedAudioFile(args.FullPath)) QueueRescan(); };
-                    watcher.Renamed += (_, args) => { QueueRemoved(args.OldFullPath); if (LibraryScanner.IsSupportedAudioFile(args.FullPath)) QueueRescan(); };
+                    watcher.Renamed += (_, args) =>
+                    {
+                        QueueRemoved(args.OldFullPath);
+                        if (LibraryScanner.IsSupportedAudioFile(args.FullPath) || Directory.Exists(args.FullPath)) QueueRescan();
+                    };
                     watcher.Error += (_, args) =>
                     {
                         LocalAppLog.Shared.Warning("library-watch", $"A library folder change could not be observed under '{root}'.", args.GetException());

@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public enum TrackSort { Title, Artist, Album, Genre, Year, Added, Duration, PlayCount, LastPlayed, Path, Rating, TrackNumber }
 public sealed record IndexedFileState(long Length, DateTime ModifiedUtc);
@@ -284,8 +284,10 @@ public sealed partial class LibraryStore
     {
         var query = BuildTrackQuery(search, sort, descending, filter, groupColumn, groupValue);
         if (hideExactDuplicates && !fingerprintsAlreadyCurrent) EnsureExactFingerprintsCurrent(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         using var connection = Open();
         using var command = connection.CreateCommand();
+        using var cancellation = cancellationToken.Register(command.Cancel);
         if (countOnly && hideExactDuplicates)
         {
             // Counts need one row per identity, but do not need the representative ranking
@@ -307,7 +309,12 @@ public sealed partial class LibraryStore
         }
         BindTrackQuery(command, query);
         if (offset.HasValue) { Add(command, "$limit", pageSize); Add(command, "$offset", offset.Value); }
-        if (countOnly) return (Array.Empty<Track>(), Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture));
+        if (countOnly)
+        {
+            var count = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            cancellationToken.ThrowIfCancellationRequested();
+            return (Array.Empty<Track>(), count);
+        }
         using var reader = command.ExecuteReader();
         var result = new List<Track>(offset.HasValue ? pageSize : 0);
         while (reader.Read()) { cancellationToken.ThrowIfCancellationRequested(); result.Add(ReadTrack(reader)); }
@@ -379,33 +386,44 @@ public sealed partial class LibraryStore
     }
 
     /// <summary>Returns a bounded page of album, artist, or genre cards with representative artwork.</summary>
-    public IReadOnlyList<LibraryGroup> GetGroupsPage(string column, string? search = null, int offset = 0, int pageSize = 100)
+    public IReadOnlyList<LibraryGroup> GetGroupsPage(string column, string? search = null, int offset = 0, int pageSize = 100,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
         if (pageSize is < 1 or > 200) throw new ArgumentOutOfRangeException(nameof(pageSize), "Group page size must be between 1 and 200.");
         var safeColumn = column switch { "album" => "album", "artist" => "artist", "genre" => "genre", _ => throw new ArgumentOutOfRangeException(nameof(column)) };
         var terms = SplitSearchTerms(search);
         var match = BuildColumnSearchPredicate(safeColumn, terms, "$groupSearch");
         using var connection = Open(); using var command = connection.CreateCommand();
+        using var cancellation = cancellationToken.Register(command.Cancel);
         command.CommandText = $"SELECT {safeColumn},COUNT(*),MIN(artwork_path),MIN(artist),MIN(year) FROM tracks WHERE {safeColumn}<>'' AND {match} GROUP BY {safeColumn} ORDER BY {safeColumn} COLLATE NOCASE LIMIT $limit OFFSET $offset";
         BindColumnSearch(command, terms, "$groupSearch");
         Add(command, "$limit", pageSize); Add(command, "$offset", offset);
         using var reader = command.ExecuteReader();
         var groups = new List<LibraryGroup>(pageSize);
-        while (reader.Read()) groups.Add(new(reader.GetString(0), reader.GetInt32(1), reader.IsDBNull(2) ? null : reader.GetString(2),
-            reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? 0 : checked((uint)reader.GetInt64(4))));
+        while (reader.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            groups.Add(new(reader.GetString(0), reader.GetInt32(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? 0 : checked((uint)reader.GetInt64(4))));
+        }
         return groups;
     }
 
-    public int CountGroups(string column, string? search = null)
+    public int CountGroups(string column, string? search = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var safeColumn = column switch { "album" => "album", "artist" => "artist", "genre" => "genre", _ => throw new ArgumentOutOfRangeException(nameof(column)) };
         var terms = SplitSearchTerms(search);
         var match = BuildColumnSearchPredicate(safeColumn, terms, "$groupSearch");
         using var connection = Open(); using var command = connection.CreateCommand();
+        using var cancellation = cancellationToken.Register(command.Cancel);
         command.CommandText = $"SELECT COUNT(DISTINCT {safeColumn}) FROM tracks WHERE {safeColumn}<>'' AND {match}";
         BindColumnSearch(command, terms, "$groupSearch");
-        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        var count = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        cancellationToken.ThrowIfCancellationRequested();
+        return count;
     }
 
     public IReadOnlyList<LibraryGroup> GetArtistAlbumsPage(string artist, int offset = 0, int pageSize = 50)

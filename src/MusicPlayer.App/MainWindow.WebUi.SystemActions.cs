@@ -1,14 +1,14 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.UI.Xaml;
 using Windows.Devices.Enumeration;
 using Windows.Media.Devices;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow
 {

@@ -1,6 +1,6 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>Owns the active library scan and its pause, resume, and cancellation control.</summary>
 internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
@@ -33,7 +33,7 @@ internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
     {
         var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var scanRoots = roots.Select(Path.GetFullPath).Distinct(pathComparer).ToArray();
-        if (scanRoots.Length == 0) return Task.FromResult<IndexResult?>(null);
+        if (scanRoots.Length == 0 && !forceRefresh) return Task.FromResult<IndexResult?>(null);
 
         ScanControl control;
         lock (_gate)

@@ -15,7 +15,7 @@
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\MusicPlayer.ico</ApplicationIcon>
-    <RootNamespace>BrackenVale.App</RootNamespace>
+    <RootNamespace>MusicPlayer.App</RootNamespace>
     <AssemblyName>MusicPlayer</AssemblyName>
     <Version>0.1.0</Version>
     <AppxPackageSigningEnabled Condition="'$(AppxPackageSigningEnabled)' == ''">false</AppxPackageSigningEnabled>

@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json;
 using TagLib;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public sealed record LyricsSearchResult(
     [property: JsonPropertyName("trackName")] string TrackName,

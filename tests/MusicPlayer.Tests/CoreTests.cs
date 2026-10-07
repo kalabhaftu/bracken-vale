@@ -1,14 +1,14 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using System.IO.Compression;
 using Microsoft.Data.Sqlite;
 using TagLib;
 using Xunit;
 
-namespace BrackenVale.Tests;
+namespace MusicPlayer.Tests;
 
 public sealed class CoreTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "bracken-vale-tests-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "music-player-tests-" + Guid.NewGuid().ToString("N"));
     private readonly LibraryStore _store;
 
     public CoreTests()
@@ -87,7 +87,7 @@ public sealed class CoreTests : IDisposable
         var folder = Path.Combine(_root, "ExportLogs");
         var log = new LocalAppLog(folder);
         log.Error("playback", "Could not decode track.", new InvalidDataException("bad frame"));
-        var archivePath = Path.Combine(_root, "BrackenVale-logs.zip");
+        var archivePath = Path.Combine(_root, "MusicPlayer-logs.zip");
 
         log.ExportTo(archivePath);
 
@@ -498,7 +498,7 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(5, Directory.GetFiles(Path.Combine(_root, "backups"), "*.bak").Length);
         using var media = TagLib.File.Create(path);
         Assert.StartsWith("Concurrent edit ", media.Tag.Title);
-        Assert.Empty(Directory.GetFiles(_root, ".parallel.bracken-stage-*.wav"));
+        Assert.Empty(Directory.GetFiles(_root, ".parallel.musicplayer-stage-*.wav"));
     }
 
     [Fact]

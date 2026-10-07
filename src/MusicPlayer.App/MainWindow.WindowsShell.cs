@@ -4,7 +4,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.UI.Composition;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
@@ -25,7 +25,7 @@ using Windows.UI;
 using Windows.UI.ViewManagement;
 using WinRT.Interop;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow : Window
 {
@@ -146,13 +146,13 @@ public sealed partial class MainWindow : Window
 
     private static void ApplyAccent(Color color)
     {
-        Application.Current.Resources["BrackenAccentColor"] = color;
-        Application.Current.Resources["BrackenAccentBrush"] = new SolidColorBrush(color);
+        Application.Current.Resources["MusicAccentColor"] = color;
+        Application.Current.Resources["MusicAccentBrush"] = new SolidColorBrush(color);
     }
 
     private static void ResetAccent()
     {
-        foreach (var key in new[] { "BrackenAccentColor", "BrackenAccentBrush" }) Application.Current.Resources.Remove(key);
+        foreach (var key in new[] { "MusicAccentColor", "MusicAccentBrush" }) Application.Current.Resources.Remove(key);
     }
 
     private static bool TryParseColor(string? value, out Color color)

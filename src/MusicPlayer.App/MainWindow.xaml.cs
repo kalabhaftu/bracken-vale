@@ -1,9 +1,9 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Windows.Media;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow : Window
 {

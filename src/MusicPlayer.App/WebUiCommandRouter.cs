@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>
 /// Owns the explicit command contract exposed to the Web UI and routes each command
@@ -21,7 +21,7 @@ internal sealed class WebUiCommandRouter
         Func<string, JsonElement, Task<object?>> utilities)
     {
         Register(data,
-            "getBootstrap", "getHome", "search", "getTracks", "getGroups", "getFolders", "getArtistAlbums",
+            "getBootstrap", "getHome", "beginSearch", "search", "getTracks", "getGroups", "getFolders", "getArtistAlbums",
             "getPlaylists", "getPlaylistTracks", "getQueue", "getCurrentTrack", "getLyrics", "getAudioSettings",
             "getSettings", "getDuplicates", "getDuplicateFiles", "getTrackDetails", "getTags", "getExclusions", "setView");
         Register(playback,

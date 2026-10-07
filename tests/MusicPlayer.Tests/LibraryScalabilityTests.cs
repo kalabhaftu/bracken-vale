@@ -1,15 +1,15 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.Data.Sqlite;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace BrackenVale.Tests;
+namespace MusicPlayer.Tests;
 
 public sealed class LibraryScalabilityTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "bracken-vale-scale-tests-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "music-player-scale-tests-" + Guid.NewGuid().ToString("N"));
     private readonly LibraryStore _store;
     private readonly ITestOutputHelper _output;
 

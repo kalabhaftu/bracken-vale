@@ -1,7 +1,7 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.UI.Xaml.Controls;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow
 {

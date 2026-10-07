@@ -1,11 +1,11 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Xunit;
 
-namespace BrackenVale.Tests;
+namespace MusicPlayer.Tests;
 
 public sealed class TagEditorReliabilityTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "bracken-vale-tag-tests-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "music-player-tag-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
     public async Task Save_async_keeps_only_five_recovery_copies_per_track()
@@ -71,7 +71,7 @@ public sealed class TagEditorReliabilityTests : IDisposable
             new TagEditor(backupFolder).SaveAsync(track, new TagEdit(Title: "Must not commit"), progress, cancellation.Token));
 
         Assert.Equal(original, File.ReadAllBytes(track));
-        Assert.Empty(Directory.GetFiles(_root, ".bracken-stage-*"));
+        Assert.Empty(Directory.GetFiles(_root, ".musicplayer-stage-*"));
         Assert.Empty(Directory.GetFiles(backupFolder, "*.partial"));
     }
 

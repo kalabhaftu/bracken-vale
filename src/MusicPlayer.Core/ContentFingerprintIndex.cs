@@ -4,7 +4,7 @@ using System.Security;
 using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 /// <summary>A byte-identical file group in the current query, with a stable representative.</summary>
 public sealed record ExactDuplicateGroup(string Sha256, long FileSize, int CopyCount, Track Representative);

@@ -2,9 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 internal sealed record GitHubRelease(
     [property: JsonPropertyName("tag_name")] string Tag,

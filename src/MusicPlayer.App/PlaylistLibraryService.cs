@@ -1,6 +1,6 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>
 /// Owns playlist mutations against the library store without depending on the window or UI.

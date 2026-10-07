@@ -1,4 +1,4 @@
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 /// <summary>Resolves the Music Player per-user data folder.</summary>
 public static class AppDataPaths

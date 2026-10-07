@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 internal sealed class FilePathLock : IDisposable
 {

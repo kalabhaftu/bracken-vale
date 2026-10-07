@@ -17,7 +17,7 @@ if errorlevel 1 (
 )
 
 echo Closing any running Music Player window so an older copy cannot receive this launch...
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; Get-Process -Name MusicPlayer,BrackenVale -ErrorAction SilentlyContinue | ForEach-Object { $p = $_; if ($p.MainWindowHandle -ne 0 -and -not $p.CloseMainWindow()) { throw 'Could not close a running Music Player window.' }; if (-not $p.WaitForExit(20000)) { throw 'Music Player did not close within 20 seconds. Close it and run this file again.' } }; exit 0"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; Get-Process -Name MusicPlayer -ErrorAction SilentlyContinue | ForEach-Object { $p = $_; if ($p.MainWindowHandle -ne 0 -and -not $p.CloseMainWindow()) { throw 'Could not close a running Music Player window.' }; if (-not $p.WaitForExit(20000)) { throw 'Music Player did not close within 20 seconds. Close it and run this file again.' } }; exit 0"
 if errorlevel 1 goto :failed
 
 echo Building the latest source for Windows x64...

@@ -1,15 +1,14 @@
 using System.Globalization;
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow
 {
     private object PlaylistTrackPage(JsonElement payload)
     {
         var id = PlaylistId(payload);
-        _libraryQueries.SetPlaylistContext(id);
         var offset = Math.Max(0, Int(payload, "offset"));
         var size = Math.Clamp(Int(payload, "pageSize", 100), 1, 200);
         var search = String(payload, "search");

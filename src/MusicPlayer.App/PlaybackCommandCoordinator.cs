@@ -1,6 +1,6 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 internal enum PlaybackCommandKind
 {

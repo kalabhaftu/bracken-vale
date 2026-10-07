@@ -1,7 +1,7 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using LibVLCSharp.Shared;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>Serializes LibVLC state changes and creates the crossfade player only when it is first needed.</summary>
 public sealed class PlaybackService : IDisposable

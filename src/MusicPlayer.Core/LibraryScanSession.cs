@@ -1,7 +1,7 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 /// <summary>Database-backed scan state. Unseen tracks are removed only when a complete root is committed.</summary>
 public sealed class LibraryScanSession : IDisposable

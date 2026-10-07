@@ -1,7 +1,7 @@
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>
 /// Projects and persists the settings exposed by the local player UI without depending on WinUI.

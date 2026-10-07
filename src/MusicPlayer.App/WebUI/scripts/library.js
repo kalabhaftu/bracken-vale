@@ -1,6 +1,8 @@
 export function createLibraryViews({state,$,$$,svg,paintIcons,esc,initials,cover,titleOf,subOf,fmtDuration,bytesLabel,call,toast,setTheme,applyNavigationSettings,openModal,updatePlayer,updatePanel}) {
 let renderRevision=0;
 let searchRevision=0;
+let searchRequestSerial=0;
+function nextSearchRequestId(){return Date.now()*1000+(++searchRequestSerial%1000);}
 function trackRow(track,index) {
   const id=esc(track.id); const album=esc(track.album||""); const artist=esc(track.artist||"");
   const remove=state.view==="Playlist"&&Number.isInteger(track.position)?`<button class="ctrl" data-action="remove-playlist-track" data-position="${track.position}" aria-label="Remove from playlist">×</button>`:"";
@@ -47,6 +49,7 @@ function viewHeader(title,subtitle,actions="") { return `<div class="page-head">
 function toolbar(actions="") { return `<div class="toolbar">${actions}</div>`; }
 
 async function navigate(view,push=true,query=undefined) {
+  if(state.view==="Search"&&view!=="Search") await call("beginSearch",{requestId:nextSearchRequestId()},false);
   if (push && state.view!==view) { state.history=state.history.slice(0,state.historyIndex+1); state.history.push(view); state.historyIndex=state.history.length-1; }
   state.view=view; state.offset=0; if(!["Album","Artist","Genre","Folder"].includes(view)) state.group=null; if(view!=="Playlist") state.playlist=null; if(query!==undefined) state.search=query;
   const navView=view==="Playlist"?"Playlists":view;
@@ -120,13 +123,15 @@ async function renderHome() {
 }
 
 async function renderSearch() {
-  const requestRevision=++searchRevision;
+  const requestRevision=++searchRevision,requestId=nextSearchRequestId();
   const query=state.search.trim(),filter=state.filter;let html=viewHeader("Search",query?`Results in your local library for “${query}”`:"Find songs, artists, albums, and playlists.");
+  await call("beginSearch",{requestId},false);
+  if(requestRevision!==searchRevision||query!==state.search.trim()||filter!==state.filter||state.view!=="Search")return null;
   if(!query) return html+`<div class="empty-state"><b>Search your library</b>Type in the single search field above to get started.</div>`;
   if(state.searchQuery!==query){state.searchQuery=query;state.searchPages={songs:0,albums:0,artists:0,playlists:0};state.searchResults={};}
   const definitions={songs:{filter:"song",label:"Songs",kind:"track",pageSize:40},albums:{filter:"album",label:"Albums",kind:"album",pageSize:24},artists:{filter:"artist",label:"Artists",kind:"artist",pageSize:24},playlists:{filter:"playlist",label:"Playlists",kind:"playlist",pageSize:20}};
   const selected=filter==="all"?Object.keys(definitions):[{song:"songs",album:"albums",artist:"artists",playlist:"playlists"}[filter]].filter(Boolean);
-  const pages=await Promise.all(selected.map(async key=>{const def=definitions[key],page=state.searchPages[key]||0;try{const result=await call("search",{query,filter:def.filter,offset:page*def.pageSize,pageSize:def.pageSize},false);if(!result||!Array.isArray(result.items))throw new Error("The library returned an invalid search response.");return [key,result];}catch(error){return [key,{error:error.message||"Search failed."}];}}));
+  const pages=await Promise.all(selected.map(async key=>{const def=definitions[key],page=state.searchPages[key]||0;try{const result=await call("search",{query,filter:def.filter,offset:page*def.pageSize,pageSize:def.pageSize,requestId},false);if(!result||!Array.isArray(result.items))throw new Error("The library returned an invalid search response.");return [key,result];}catch(error){return [key,{error:error.message||"Search failed."}];}}));
   if(requestRevision!==searchRevision||query!==state.search.trim()||filter!==state.filter||state.view!=="Search")return null;
   for(const [key,data] of pages)if(!data.error)state.searchResults[key]=data;
   html+=`<div class="pill-row">${["all","song","album","artist","playlist"].map(f=>`<button class="chip ${filter===f?"active":""}" data-filter="${f}">${f==="all"?"All":`${f[0].toUpperCase()}${f.slice(1)}s`}</button>`).join("")}</div>`;

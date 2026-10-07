@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2" xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap uap2 uap3 rescap">
-  <Identity Name="Kalabhaftu.BrackenVale" Publisher="CN=Bracken Vale" Version="0.1.0.0" ProcessorArchitecture="neutral" />
+  <Identity Name="Kalabhaftu.MusicPlayer" Publisher="CN=Kalabhaftu" Version="0.1.0.0" ProcessorArchitecture="neutral" />
   <Properties>
     <DisplayName>Music Player</DisplayName>
     <PublisherDisplayName>Kalabhaftu</PublisherDisplayName>
@@ -18,7 +18,7 @@
       </uap:VisualElements>
       <Extensions>
         <uap:Extension Category="windows.fileTypeAssociation">
-          <uap3:FileTypeAssociation Name="brackenvale-audio" MultiSelectModel="Player">
+          <uap3:FileTypeAssociation Name="musicplayer-audio" MultiSelectModel="Player">
             <uap:DisplayName>Music Player audio</uap:DisplayName>
             <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
             <uap2:SupportedVerbs>

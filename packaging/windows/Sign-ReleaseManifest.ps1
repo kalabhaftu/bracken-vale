@@ -69,7 +69,7 @@ try {
         [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
     )
     if (-not $certificate.HasPrivateKey) { throw 'Signing certificate has no private key.' }
-    if ($certificate.Subject -ne 'CN=Bracken Vale') { throw 'Signing certificate subject does not match CN=Bracken Vale.' }
+    if ($certificate.Subject -ne 'CN=Kalabhaftu') { throw 'Signing certificate subject does not match CN=Kalabhaftu.' }
 
     $content = [System.Security.Cryptography.Pkcs.ContentInfo]::new([IO.File]::ReadAllBytes($manifestPath))
     $signedManifest = [System.Security.Cryptography.Pkcs.SignedCms]::new($content, $true)

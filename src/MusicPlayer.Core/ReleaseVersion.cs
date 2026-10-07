@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public readonly record struct ReleaseVersion(int Major, int Minor, int Patch, int? PreviewNumber) : IComparable<ReleaseVersion>
 {

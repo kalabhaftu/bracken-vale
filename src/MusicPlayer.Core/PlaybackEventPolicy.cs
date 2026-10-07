@@ -1,4 +1,4 @@
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 /// <summary>Rejects stale LibVLC callbacks that arrive while a reused player is changing media.</summary>
 public static class PlaybackEventPolicy

@@ -2,9 +2,9 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>
 /// Owns database-backed browsing queries and the projection/identity mapping used by the
@@ -27,10 +27,22 @@ internal sealed class LibraryQueryService
     private readonly object _availabilityGate = new();
     private readonly HashSet<string> _unavailableRootPaths = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly object _rootAvailabilityGate = new();
+    private readonly object _folderCacheGate = new();
+    private readonly object _searchGate = new();
     private IReadOnlyList<string>? _folderCache;
+    private SearchBatch? _activeSearch;
+    private long _latestSearchRequestId;
     private ViewContext _context = new("Home", "", null, null, null);
     private TrackSort _sort = TrackSort.Title;
     private bool _descending;
+
+    private sealed class SearchBatch(long requestId)
+    {
+        public long RequestId { get; } = requestId;
+        public CancellationTokenSource Cancellation { get; } = new();
+        public int ActiveRequests { get; set; }
+        public bool Retired { get; set; }
+    }
 
     public LibraryQueryService(LibraryStore store, string appDataDirectory)
     {
@@ -97,23 +109,68 @@ internal sealed class LibraryQueryService
         };
     }
 
-    public object Search(JsonElement payload)
+    public void BeginSearch(long requestId)
     {
+        if (requestId <= 0) throw new ArgumentOutOfRangeException(nameof(requestId), "A search request id is required.");
+        lock (_searchGate)
+        {
+            if (requestId <= _latestSearchRequestId) return;
+            _latestSearchRequestId = requestId;
+            if (_activeSearch is { } previous)
+            {
+                previous.Retired = true;
+                previous.Cancellation.Cancel();
+                DisposeSearchIfFinished(previous);
+            }
+            _activeSearch = new SearchBatch(requestId);
+        }
+    }
+
+    public async Task<object> SearchAsync(JsonElement payload)
+    {
+        var requestId = Int64(payload, "requestId");
+        SearchBatch? batch;
+        lock (_searchGate)
+        {
+            batch = _activeSearch is { } current && current.RequestId == requestId ? current : null;
+            if (batch is not null) batch.ActiveRequests++;
+        }
+        if (batch is null) throw new OperationCanceledException("This search was superseded by a newer request.");
+        try
+        {
+            var request = payload.Clone();
+            return await Task.Run(() => Search(request, batch.Cancellation.Token), batch.Cancellation.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_searchGate)
+            {
+                batch.ActiveRequests--;
+                DisposeSearchIfFinished(batch);
+            }
+        }
+    }
+
+    private object Search(JsonElement payload, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         var query = String(payload, "query");
         var filter = String(payload, "filter");
         var offset = Math.Max(0, Int(payload, "offset"));
         var size = Math.Clamp(Int(payload, "pageSize", 40), 1, 100);
-        return filter switch
+        var result = filter switch
         {
-            "song" => SearchTrackPage(query, offset, size),
-            "album" => SearchGroupPage("album", query, offset, size),
-            "artist" => SearchGroupPage("artist", query, offset, size),
-            "playlist" => SearchPlaylistPage(query, offset, size),
+            "song" => SearchTrackPage(query, offset, size, cancellationToken),
+            "album" => SearchGroupPage("album", query, offset, size, cancellationToken),
+            "artist" => SearchGroupPage("artist", query, offset, size, cancellationToken),
+            "playlist" => SearchPlaylistPage(query, offset, size, cancellationToken),
             _ => throw new ArgumentException("Choose a search result type.")
         };
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
     }
 
-    public object TrackPage(JsonElement payload)
+    internal PreparedTrackPage PrepareTrackPage(JsonElement payload)
     {
         SetContext(payload);
         var filter = _context.View switch
@@ -140,11 +197,18 @@ internal sealed class LibraryQueryService
         _descending = descendingSpecified
             ? Boolean(payload, "descending")
             : _context.View is "Most Played" or "Recently Played" or "Recently Added";
-        var result = _store.GetTracksPageWithCount(_context.Search, sort, _descending, filter,
-            _context.GroupColumn, _context.GroupValue, Math.Max(0, Int(payload, "offset")),
-            Math.Clamp(Int(payload, "pageSize", 100), 1, 200), HideExactDuplicates);
+        return new(_context.View, _context.Search, _context.GroupColumn, _context.GroupValue, sort, _descending,
+            filter, Math.Max(0, Int(payload, "offset")), Math.Clamp(Int(payload, "pageSize", 100), 1, 200));
+    }
+
+    internal object TrackPage(PreparedTrackPage request)
+    {
+        var result = _store.GetTracksPageWithCount(request.Search, request.Sort, request.Descending, request.Filter,
+            request.GroupColumn, request.GroupValue, request.Offset, request.PageSize, HideExactDuplicates);
         return new { tracks = result.Tracks.Select(track => TrackDto(track)).ToArray(), totalCount = result.TotalCount };
     }
+
+    public object TrackPage(JsonElement payload) => TrackPage(PrepareTrackPage(payload));
 
     public object GroupPage(JsonElement payload)
     {
@@ -178,7 +242,8 @@ internal sealed class LibraryQueryService
         if (Boolean(payload, "rootsOnly"))
             return new { roots = rootDtos, folders = Array.Empty<object>(), folderCount = 0, folderOffset = 0, scan = scanState };
 
-        var allFolders = _folderCache ??= _store.GetFolders();
+        IReadOnlyList<string> allFolders;
+        lock (_folderCacheGate) allFolders = _folderCache ??= _store.GetFolders();
         var offset = Math.Max(0, Int(payload, "offset"));
         var size = Math.Clamp(Int(payload, "pageSize", 50), 1, 100);
         var folders = allFolders.Skip(offset).Take(size).Select(path => new
@@ -414,30 +479,48 @@ internal sealed class LibraryQueryService
         catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException) { return null; }
     }
 
-    public void InvalidateFolders() => _folderCache = null;
+    public void InvalidateFolders() { lock (_folderCacheGate) _folderCache = null; }
 
     private bool HideExactDuplicates => _store.GetSetting("hide-exact-duplicates") != "false";
 
-    private object SearchTrackPage(string query, int offset, int size)
+    private object SearchTrackPage(string query, int offset, int size, CancellationToken cancellationToken)
     {
         var page = _store.GetTracksPageWithCount(query, TrackSort.Title, false, hideExactDuplicates: HideExactDuplicates,
-            offset: offset, pageSize: size);
+            offset: offset, pageSize: size, cancellationToken: cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return new { items = page.Tracks.Select(track => TrackDto(track)).ToArray(), totalCount = page.TotalCount };
     }
 
-    private object SearchGroupPage(string column, string query, int offset, int size) => new
+    private object SearchGroupPage(string column, string query, int offset, int size, CancellationToken cancellationToken)
     {
-        items = _store.GetGroupsPage(column, query, offset, size).Select(group => GroupDto(group, column)).ToArray(),
-        totalCount = _store.CountGroups(column, query)
-    };
+        var groups = _store.GetGroupsPage(column, query, offset, size, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var count = _store.CountGroups(column, query, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new { items = groups.Select(group => GroupDto(group, column)).ToArray(), totalCount = count };
+    }
 
-    private object SearchPlaylistPage(string query, int offset, int size)
+    private object SearchPlaylistPage(string query, int offset, int size, CancellationToken cancellationToken)
     {
         var terms = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var playlists = _store.GetPlaylistSummaries().Where(playlist => terms.All(term =>
-            playlist.Name.Contains(term, StringComparison.OrdinalIgnoreCase))).ToArray();
-        return new { items = playlists.Skip(offset).Take(size).Select(PlaylistDto).ToArray(), totalCount = playlists.Length };
+        var playlists = new List<PlaylistSummary>();
+        foreach (var playlist in _store.GetPlaylistSummaries())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (terms.All(term => playlist.Name.Contains(term, StringComparison.OrdinalIgnoreCase))) playlists.Add(playlist);
+        }
+        return new { items = playlists.Skip(offset).Take(size).Select(PlaylistDto).ToArray(), totalCount = playlists.Count };
     }
+
+    private void DisposeSearchIfFinished(SearchBatch batch)
+    {
+        if (!batch.Retired || batch.ActiveRequests != 0) return;
+        batch.Cancellation.Dispose();
+        if (ReferenceEquals(_activeSearch, batch)) _activeSearch = null;
+    }
+
+    internal sealed record PreparedTrackPage(string View, string Search, string? GroupColumn, string? GroupValue,
+        TrackSort Sort, bool Descending, string? Filter, int Offset, int PageSize);
 
     private T[] ReadJsonSetting<T>(string key, T[] fallback)
     {
@@ -460,6 +543,10 @@ internal sealed class LibraryQueryService
 
     private static int Int(JsonElement element, string key, int fallback = 0) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(key, out var value) && value.TryGetInt32(out var result)
+            ? result : fallback;
+
+    private static long Int64(JsonElement element, string key, long fallback = 0) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(key, out var value) && value.TryGetInt64(out var result)
             ? result : fallback;
 
     private static bool Boolean(JsonElement element, string key) =>

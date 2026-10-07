@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using TagLib;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public static class TrackReader
 {

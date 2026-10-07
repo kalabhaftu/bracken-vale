@@ -1,4 +1,4 @@
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public static class QueueNavigation
 {

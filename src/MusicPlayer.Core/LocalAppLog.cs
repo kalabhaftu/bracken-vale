@@ -1,7 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public sealed class LocalAppLog
 {

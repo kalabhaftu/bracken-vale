@@ -4,7 +4,7 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <AssemblyName>MusicPlayer.Tests</AssemblyName>
-    <RootNamespace>BrackenVale.Tests</RootNamespace>
+    <RootNamespace>MusicPlayer.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

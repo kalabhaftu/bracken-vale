@@ -1,8 +1,8 @@
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Windows.ApplicationModel.DataTransfer;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow
 {

@@ -1,7 +1,7 @@
 using System.Security;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>Distinguishes removed files from temporarily unreachable library locations.</summary>
 internal sealed class TrackAvailabilityService(
@@ -128,6 +128,11 @@ internal sealed class TrackAvailabilityService(
         try { fullPath = Path.GetFullPath(path); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
 
+        // A ready host volume is not proof that a path below a mounted folder or
+        // junction is reachable. Preserve indexed rows behind a broken reparse
+        // boundary until its target is available again.
+        if (HasUnavailableReparseBoundary(fullPath)) return false;
+
         var parent = Path.GetDirectoryName(fullPath);
         var parentAvailable = !string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent);
         var accessibleConfiguredRootContainsPath = !parentAvailable && locations.GetLibraryRoots()
@@ -154,6 +159,43 @@ internal sealed class TrackAvailabilityService(
         {
             return false;
         }
+    }
+
+    private static bool HasUnavailableReparseBoundary(string fullPath)
+    {
+        var directory = Path.GetDirectoryName(fullPath);
+        while (!string.IsNullOrWhiteSpace(directory))
+        {
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(directory); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                directory = Path.GetDirectoryName(directory);
+                continue;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+            {
+                return true;
+            }
+
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                try
+                {
+                    var target = new DirectoryInfo(directory).ResolveLinkTarget(returnFinalTarget: true);
+                    if (target is null || !Directory.Exists(target.FullName)) return true;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or ArgumentException or NotSupportedException)
+                {
+                    return true;
+                }
+            }
+
+            var parent = Path.GetDirectoryName(directory);
+            if (string.Equals(parent, directory, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) break;
+            directory = parent;
+        }
+        return false;
     }
 
     private static string? TryNormalizePrefix(string path)

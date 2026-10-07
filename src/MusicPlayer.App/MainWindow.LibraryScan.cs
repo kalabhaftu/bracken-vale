@@ -4,7 +4,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.UI.Composition;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
@@ -25,7 +25,7 @@ using Windows.UI;
 using Windows.UI.ViewManagement;
 using WinRT.Interop;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow : Window
 {
@@ -74,7 +74,9 @@ public sealed partial class MainWindow : Window
     {
         if (_libraryScan.IsRunning) return;
         var scanRoots = roots.Select(Path.GetFullPath).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
-        if (scanRoots.Length == 0) return;
+        // An explicit rebuild with no currently configured roots still refreshes
+        // the indexed paths. Ordinary scans continue to require a selected root.
+        if (scanRoots.Length == 0 && !forceRefresh) return;
         _scanStartedUtc = DateTimeOffset.UtcNow;
         ClearScanOutcome();
         _scanCurrentPath = "Preparing scan…";

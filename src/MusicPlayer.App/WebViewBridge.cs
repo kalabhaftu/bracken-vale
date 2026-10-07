@@ -1,9 +1,9 @@
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>Owns the WebView2 boundary and only forwards named, explicitly allowed UI commands.</summary>
 internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRouter)

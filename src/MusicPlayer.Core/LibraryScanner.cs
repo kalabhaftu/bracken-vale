@@ -1,6 +1,6 @@
 using System.Security;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public sealed class ScanControl : IDisposable
 {

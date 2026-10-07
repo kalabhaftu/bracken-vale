@@ -1,6 +1,6 @@
 # GitHub release process
 
-GitHub Releases is the distribution channel for Music Player. The Microsoft Store is not part of this release process. The executable uses the Music Player product name, and user data is stored under `%LOCALAPPDATA%\MusicPlayer`. The MSIX package identity and publisher remain fixed for package continuity.
+GitHub Releases is the distribution channel for Music Player. The Microsoft Store is not part of this release process. The executable uses the Music Player product name, and user data is stored under `%LOCALAPPDATA%\MusicPlayer`. The MSIX identity is `Kalabhaftu.MusicPlayer` with publisher `CN=Kalabhaftu`.
 
 ## Before merging changes to `main`
 
@@ -8,11 +8,11 @@ Open a pull request. `main` is configured to require the `Core tests · Linux`, 
 
 ## Private signing preflight
 
-The Actions secrets are named `BRACKENVALE_SIGNING_PFX_BASE64` and `BRACKENVALE_SIGNING_PFX_PASSWORD`. Secret presence is not proof the certificate is valid or trusted.
+The Actions secrets must be named `MUSICPLAYER_SIGNING_PFX_BASE64` and `MUSICPLAYER_SIGNING_PFX_PASSWORD`. Configure both with a trusted Code Signing certificate whose subject is `CN=Kalabhaftu`; the previous secret names and certificate identity are obsolete. Secret presence is not proof the certificate is valid or trusted.
 
-Use **Actions → Signed Windows release → Run workflow** on `main` to run the private preflight. A manual run checks the signing certificate's trust chain, validity period, Code Signing purpose, private key and exact `CN=Bracken Vale` publisher. It signs and verifies a disposable executable copy and tests detached SHA-256 manifest signing, removes the temporary signing files, and does not build or publish release assets. The log reports only pass/fail and never prints secret values.
+Use **Actions → Signed Windows release → Run workflow** on `main` to run the private preflight. A manual run checks the signing certificate's trust chain, validity period, Code Signing purpose, private key and exact `CN=Kalabhaftu` publisher. It signs and verifies a disposable executable copy and tests detached SHA-256 manifest signing, removes the temporary signing files, and does not build or publish release assets. The log reports only pass/fail and never prints secret values.
 
-The latest recorded preflight ([run 37403559751](https://github.com/kalabhaftu/music-player/actions/runs/37403559751), October 6, 2026) failed during signing validation on `main`; its publish job was skipped, and it produced no release assets. Both signing secret names were configured, but that revision reported only a generic failure and did not identify the validation stage. The current workflow revision logs the stage and exception type while suppressing certificate and password details. Do not describe signing as successful until a later preflight and packaged-artifact verification pass.
+The latest recorded preflight ([run 37403559751](https://github.com/kalabhaftu/music-player/actions/runs/37403559751), October 6, 2026) failed during signing validation on `main`; its publish job was skipped, and it produced no release assets. That run used the previous package publisher and secret names, so it does not validate the current identity. Configure the current secrets and certificate, then run preflight again. The workflow logs the failing stage and exception type while suppressing certificate and password details. Do not describe signing as successful until a later preflight and packaged-artifact verification pass.
 
 Preview and stable releases both fail closed unless the signing secrets are present and the certificate passes trust, identity, validity, Code Signing purpose, private-key, and disposable-signature checks. A failed or missing preflight creates no packages and publishes no GitHub Release. Do not use a self-signed certificate for ordinary public distribution.
 
@@ -37,6 +37,6 @@ To verify a downloaded release, place all release assets in one directory and ru
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Verify-MusicPlayer-ReleaseManifest.ps1 -ManifestPath .\MusicPlayer-VERSION-SHA256SUMS.txt
 ```
 
-The script verifies the detached signature, the trusted `CN=Bracken Vale` Code Signing certificate and its online revocation status, then checks the SHA-256 hash and presence of every listed asset. It fails if any binary is missing or changed. The manifest signature is not timestamped, so certificate validity and trust must still pass when the manifest is verified.
+The script verifies the detached signature, the trusted `CN=Kalabhaftu` Code Signing certificate and its online revocation status, then checks the SHA-256 hash and presence of every listed asset. It fails if any binary is missing or changed. The manifest signature is not timestamped, so certificate validity and trust must still pass when the manifest is verified.
 
 Signing does not remove every Windows warning. Windows SmartScreen may warn while a new publisher builds reputation, and third-party antivirus results cannot be guaranteed. Test signed installers and MSIX install, launch, upgrade and uninstall behavior on Windows before a stable release. Keep the format/device matrix pending until playback is checked on real audio files and devices.

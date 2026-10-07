@@ -1,7 +1,7 @@
 using Microsoft.UI.Xaml;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public partial class App : Application
 {

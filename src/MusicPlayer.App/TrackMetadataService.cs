@@ -1,6 +1,6 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>
 /// Owns file-backed tag and lyrics operations for the application without depending on a window or UI framework.

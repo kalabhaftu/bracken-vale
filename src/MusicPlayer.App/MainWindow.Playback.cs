@@ -4,7 +4,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Microsoft.UI.Composition;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
@@ -25,7 +25,7 @@ using Windows.UI;
 using Windows.UI.ViewManagement;
 using WinRT.Interop;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow : Window
 {
@@ -221,7 +221,7 @@ public sealed partial class MainWindow : Window
     {
         var validPaths = paths.Where(path => LibraryScanner.IsSupportedAudioFile(path) && File.Exists(path)).ToArray();
         if (validPaths.Length == 0) return [];
-        var artworkDirectory = Path.Combine(BrackenVale.Core.AppDataPaths.Root, "Artwork");
+        var artworkDirectory = Path.Combine(MusicPlayer.Core.AppDataPaths.Root, "Artwork");
         return await Task.Run(() =>
         {
             var tracks = new List<Track>(validPaths.Length);

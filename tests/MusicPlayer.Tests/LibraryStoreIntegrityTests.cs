@@ -1,11 +1,11 @@
-using BrackenVale.Core;
+using MusicPlayer.Core;
 using Xunit;
 
-namespace BrackenVale.Tests;
+namespace MusicPlayer.Tests;
 
 public sealed class LibraryStoreIntegrityTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "bracken-vale-store-integrity-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "music-player-store-integrity-" + Guid.NewGuid().ToString("N"));
     private readonly LibraryStore _store;
 
     public LibraryStoreIntegrityTests()

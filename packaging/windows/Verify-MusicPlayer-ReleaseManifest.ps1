@@ -26,7 +26,7 @@ $signedManifest.CheckSignature($true)
 
 $signerCertificate = $signedManifest.SignerInfos[0].Certificate
 if ($null -eq $signerCertificate) { throw 'The manifest signature does not include its signing certificate.' }
-if ($signerCertificate.Subject -ne 'CN=Bracken Vale') { throw 'Manifest signer does not match the Music Player release publisher.' }
+if ($signerCertificate.Subject -ne 'CN=Kalabhaftu') { throw 'Manifest signer does not match the Music Player release publisher.' }
 $now = [DateTime]::UtcNow
 if ($signerCertificate.NotBefore.ToUniversalTime() -gt $now -or $signerCertificate.NotAfter.ToUniversalTime() -le $now) {
     throw 'Manifest signing certificate is outside its validity period.'

@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace BrackenVale.Core;
+namespace MusicPlayer.Core;
 
 public static class Playlists
 {

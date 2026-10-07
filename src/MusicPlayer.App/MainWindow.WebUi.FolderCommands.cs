@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 public sealed partial class MainWindow
 {
@@ -16,7 +16,8 @@ public sealed partial class MainWindow
                 if (!_libraryScan.IsRunning)
                 {
                     var roots = _libraryLocations.GetLibraryRoots();
-                    if (roots.Length == 0) await AddFolderFromWebAsync();
+                    if (roots.Length == 0 && name == "rebuildLibraryIndex") StartScan(roots, forceRefresh: true);
+                    else if (roots.Length == 0) await AddFolderFromWebAsync();
                     else StartScan(roots, forceRefresh: name == "rebuildLibraryIndex");
                 }
                 else await ShowNoticeAsync("A library scan is already running.");

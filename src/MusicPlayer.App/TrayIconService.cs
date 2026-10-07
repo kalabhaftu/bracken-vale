@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 internal sealed class TrayIconService : IDisposable
 {

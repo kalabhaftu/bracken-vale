@@ -1,7 +1,7 @@
 using System.Text.Json;
-using BrackenVale.Core;
+using MusicPlayer.Core;
 
-namespace BrackenVale.App;
+namespace MusicPlayer.App;
 
 /// <summary>Validates and persists library-root and scan-exclusion preferences.</summary>
 internal sealed class LibraryLocationService(LibraryStore store)

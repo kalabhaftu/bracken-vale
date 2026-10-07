@@ -12,10 +12,10 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
 
 $extensions = @('.mp3', '.flac', '.wav', '.wave', '.aif', '.aiff', '.m4a', '.m4b', '.mp4', '.aac', '.ogg', '.oga', '.opus', '.wma', '.ape', '.wv', '.tta', '.mpc', '.dsf', '.dff')
 $registeredAppsKey = 'HKCU:\Software\RegisteredApplications'
-$capabilitiesRelativePath = "Software\BrackenVale\Capabilities\$ApplicationName"
+$capabilitiesRelativePath = "Software\MusicPlayer\Capabilities\$ApplicationName"
 $capabilities = "HKCU:\$capabilitiesRelativePath"
-$associationName = "BrackenVale.$($ApplicationName -replace '[^A-Za-z0-9]', '')"
-$integrationRoot = "HKCU:\Software\BrackenVale\ShellIntegration\$($ApplicationName -replace '[^A-Za-z0-9]', '')"
+$associationName = "MusicPlayer.$($ApplicationName -replace '[^A-Za-z0-9]', '')"
+$integrationRoot = "HKCU:\Software\MusicPlayer\ShellIntegration\$($ApplicationName -replace '[^A-Za-z0-9]', '')"
 $appKey = 'HKCU:\Software\Classes\Applications\MusicPlayer.exe'
 $storedExecutable = Join-Path $integrationRoot 'ExecutablePath'
 
@@ -46,12 +46,12 @@ function Remove-OpenWithProgId([string] $Extension, [string] $ProgId) {
     }
 }
 
-if (-not ('BrackenValeShellAssociations' -as [type])) {
+if (-not ('MusicPlayerShellAssociations' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 
-public static class BrackenValeShellAssociations
+public static class MusicPlayerShellAssociations
 {
     [DllImport("shell32.dll")]
     public static extern void SHChangeNotify(uint eventId, uint flags, IntPtr item1, IntPtr item2);
@@ -61,7 +61,7 @@ public static class BrackenValeShellAssociations
 
 function Refresh-ShellAssociations {
     # SHCNE_ASSOCCHANGED; refresh Open With and file association caches.
-    [BrackenValeShellAssociations]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+    [MusicPlayerShellAssociations]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 }
 
 if ($Unregister) {
@@ -77,8 +77,8 @@ if ($Unregister) {
             $progId = "$associationName.$($extension.TrimStart('.'))"
             Remove-OpenWithProgId -Extension $extension -ProgId $progId
             Remove-Item -LiteralPath "HKCU:\Software\Classes\$progId" -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath "HKCU:\Software\Classes\SystemFileAssociations\$extension\shell\BrackenValeAddToQueue" -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath "HKCU:\Software\Classes\SystemFileAssociations\$extension\shell\BrackenValeCreatePlaylist" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "HKCU:\Software\Classes\SystemFileAssociations\$extension\shell\MusicPlayerAddToQueue" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "HKCU:\Software\Classes\SystemFileAssociations\$extension\shell\MusicPlayerCreatePlaylist" -Recurse -Force -ErrorAction SilentlyContinue
         }
         Refresh-ShellAssociations
         if (-not $Quiet) { Write-Host 'Removed Music Player Open with and context-menu registrations for this install.' }
@@ -109,8 +109,8 @@ foreach ($extension in $extensions) {
     Set-DefaultValue "HKCU:\Software\Classes\$progId\shell\open\command" ('"' + $executable + '" "%1"')
 
     foreach ($action in @(
-        @{ Key = 'BrackenValeAddToQueue'; Label = 'Add to Music Player queue'; Argument = '--add-to-queue' },
-        @{ Key = 'BrackenValeCreatePlaylist'; Label = 'Create Music Player playlist'; Argument = '--create-playlist' }
+        @{ Key = 'MusicPlayerAddToQueue'; Label = 'Add to Music Player queue'; Argument = '--add-to-queue' },
+        @{ Key = 'MusicPlayerCreatePlaylist'; Label = 'Create Music Player playlist'; Argument = '--create-playlist' }
     )) {
         $verb = "HKCU:\Software\Classes\SystemFileAssociations\$extension\shell\$($action.Key)"
         Set-DefaultValue $verb $action.Label
