@@ -482,7 +482,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateCurrentTrack(Track track)
     {
-        if (_store.GetSetting("accent-mode") == "Artwork" && _store.GetSetting("accent-manual") != "true") _ = ApplyArtworkAccentAsync(track.ArtworkPath);
+        if (_store.GetSetting("accent-mode") == "Artwork") _ = ApplyArtworkAccentAsync(track.ArtworkPath);
         _webBridge?.SendEvent("trackChanged", new { track = _libraryQueries.TrackDto(track, true), playing = _playback.IsPlaying,
             positionSeconds = Math.Max(0, _playback.Position) / 1000d, durationSeconds = Math.Max(0, _playback.Duration) / 1000d,
             volume = _playback.Volume, shuffle = _shuffle, repeat = _repeatMode, repeatA = _repeatA?.TotalSeconds, repeatB = _repeatB?.TotalSeconds });
@@ -550,6 +550,7 @@ public sealed partial class MainWindow : Window
         SaveSession(); _clock.Stop(); _playback.Dispose(); _libraryScan.Cancel();
         _libraryFileWatcher.Dispose();
         _tray?.Dispose();
+        _taskbarPeekControls?.Dispose();
         foreach (var icon in _windowIconHandles) _ = DestroyIcon(icon);
         _windowIconHandles.Clear();
     }

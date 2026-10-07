@@ -28,6 +28,7 @@ public sealed partial class MainWindow
 
     private void PublishQueueState(bool force = false)
     {
+        _taskbarPeekControls?.Update(_playback.CurrentTrack is not null || _queue.Count > 0, _playback.IsPlaying);
         var signature = $"{_queueIndex}:{string.Join(';', _queue.Select(_libraryQueries.OpaqueId))}";
         if (!force && signature == _lastWebQueueSignature) return;
         _lastWebQueueSignature = signature;

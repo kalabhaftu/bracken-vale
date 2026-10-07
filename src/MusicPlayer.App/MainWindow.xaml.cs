@@ -23,6 +23,7 @@ public sealed partial class MainWindow : Window
     private readonly PlaybackService _playback = new();
     private readonly PlaybackCommandCoordinator _playbackCommands;
     private SystemMediaTransportControls? _systemControls;
+    private TaskbarPeekControls? _taskbarPeekControls;
     private TrayIconService? _tray;
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private bool _shuffle { get => _playbackQueue.Shuffle; set => _playbackQueue.SetShuffle(value); }
@@ -69,7 +70,6 @@ public sealed partial class MainWindow : Window
         _libraryFileWatcher.RescanRequested += RequestLibraryWatcherRescan;
         _trackMetadata = new(_appData);
         _libraryScan = new(new LibraryIndexer(_store, Path.Combine(_appData, "Artwork")));
-        Title = "Music Player";
         _volumeSaveDebounce = DispatcherQueue.CreateTimer();
         _volumeSaveDebounce.Interval = TimeSpan.FromMilliseconds(250);
         _volumeSaveDebounce.IsRepeating = false;
@@ -85,6 +85,7 @@ public sealed partial class MainWindow : Window
         _playback.CrossfadeFailed += Playback_CrossfadeFailed;
         _playback.PlaybackFailed += Playback_Failed;
         InitializeSystemMediaControls();
+        InitializeTaskbarPeekControls();
         ApplyTraySetting();
         _clock.Tick += Clock_Tick;
         _clock.Start();
