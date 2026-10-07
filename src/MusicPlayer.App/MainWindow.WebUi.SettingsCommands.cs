@@ -21,10 +21,11 @@ public sealed partial class MainWindow
                 if (appearanceChanged)
                 {
                     _webArtworkAccent = null;
+                    _webArtworkPalette = null;
                     ApplyStoredAppearance();
                     ApplyTraySetting();
                     ResetAccent();
-                    _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null });
+                    _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null });
                 }
                 PublishSettingsChanged();
                 PublishLibraryChanged();

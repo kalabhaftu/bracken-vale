@@ -65,6 +65,32 @@
   --scroll-thumb: #b4bcb3;
 }
 
+:root[data-artwork="true"] {
+  color-scheme: dark;
+  --bg: var(--art-background);
+  --panel: var(--art-panel);
+  --panel-2: var(--art-panel);
+  --panel-3: var(--art-raised);
+  --soft: var(--art-hover);
+  --line: rgba(255,255,255,.105);
+  --text: #f7f6f2;
+  --muted: #d1d0c9;
+  --muted-2: #aaa9a2;
+  --sidebar-surface: var(--art-sidebar);
+  --main-surface: var(--art-main);
+  --right-surface: var(--art-sidebar);
+  --player-surface: var(--art-sidebar);
+  --surface-raised: var(--art-raised);
+  --surface-hover: var(--art-hover);
+  --surface-control: var(--art-control);
+  --text-strong: #f7f6f2;
+  --text-subtle: #e0dfd8;
+  --row-hover: var(--art-hover);
+  --range-track: rgba(255,255,255,.22);
+  --range-fill: #f0eee6;
+  --scroll-thumb: rgba(255,255,255,.26);
+}
+
 * { box-sizing: border-box; }
 html, body { width:100%; height:100%; margin:0; overflow:hidden; background:var(--bg); color:var(--text); }
 button, input, select, textarea { font:inherit; color:inherit; }

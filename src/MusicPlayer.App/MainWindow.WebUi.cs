@@ -1,5 +1,6 @@
 using MusicPlayer.Core;
 using Microsoft.UI.Xaml;
+using Windows.UI;
 
 namespace MusicPlayer.App;
 
@@ -10,6 +11,8 @@ public sealed partial class MainWindow
     private bool _webUiBootstrapped;
     private GitHubRelease? _webAvailableRelease;
     private string? _webArtworkAccent;
+    private object? _webArtworkPalette;
+    private Color? _webArtworkTitleBarColor;
     private string? _lastWebQueueSignature;
     private DateTimeOffset _lastWebScanUpdateUtc;
     private readonly Dictionary<string, string> _webArtworkPaths = new(StringComparer.Ordinal);

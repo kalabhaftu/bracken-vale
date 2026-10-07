@@ -15,7 +15,7 @@ namespace MusicPlayer.App;
 public sealed partial class MainWindow
 {
     private object WebSettings()
-        => _playerSettings.ProjectWebSettings(ShellRoot.ActualTheme == ElementTheme.Light ? "Light" : "Dark", _webArtworkAccent);
+        => _playerSettings.ProjectWebSettings(ShellRoot.ActualTheme == ElementTheme.Light ? "Light" : "Dark", _webArtworkAccent, _webArtworkPalette);
 
     private async Task<object> AudioSettingsAsync()
     {
@@ -104,14 +104,14 @@ public sealed partial class MainWindow
         ApplyStoredAppearance(); ApplyTraySetting();
         if (accentSettingsChanged)
         {
-            if (_store.GetSetting("accent-manual") == "true") _webArtworkAccent = null;
-            else if (_store.GetSetting("accent-mode") == "Artwork" && _playback.CurrentTrack is { } current)
+            if (_store.GetSetting("accent-mode") == "Artwork" && _playback.CurrentTrack is { } current)
                 await ApplyArtworkAccentAsync(current.ArtworkPath);
             else
             {
                 _webArtworkAccent = null;
+                _webArtworkPalette = null;
                 ResetAccent();
-                _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null });
+                _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null });
             }
         }
         PublishSettingsChanged(); PublishLibraryChanged();

@@ -75,9 +75,20 @@
         <button class="ctrl" id="repeatBtn" title="Repeat off" aria-label="Repeat off" data-icon="repeat"></button>
         <button class="ctrl" id="abBtn" title="A–B repeat off" aria-label="A–B repeat off">A–B</button>
       </div><div class="timeline"><span id="currentTime">0:00</span><input id="progressRange" type="range" min="0" max="1" value="0" aria-label="Track position"><span id="totalTime">0:00</span></div></div>
-      <div class="player-right"><button class="ctrl" data-view="Lyrics" title="Lyrics" aria-label="Lyrics" data-icon="lyrics"></button><button class="ctrl" data-view="Queue" title="Queue" aria-label="Queue" data-icon="queue"></button><button class="ctrl" data-view="Audio" title="Equalizer" aria-label="Equalizer" data-icon="equalizer"></button><button class="ctrl" id="muteBtn" title="Mute" aria-label="Mute" data-icon="volume"></button><input id="volumeRange" type="range" min="0" max="100" value="75" aria-label="Volume"></div>
+      <div class="player-right"><button class="ctrl" data-view="Lyrics" title="Lyrics" aria-label="Lyrics" data-icon="lyrics"></button><button class="ctrl" data-view="Queue" title="Queue" aria-label="Queue" data-icon="queue"></button><button class="ctrl" data-view="Audio" title="Equalizer" aria-label="Equalizer" data-icon="equalizer"></button><button class="ctrl" id="immersiveToggle" title="Full-screen player" aria-label="Full-screen player" data-icon="expand"></button><button class="ctrl" id="muteBtn" title="Mute" aria-label="Mute" data-icon="volume"></button><input id="volumeRange" type="range" min="0" max="100" value="75" aria-label="Volume"></div>
     </footer>
   </div>
+  <section class="immersive-player" id="immersivePlayer" aria-label="Full-screen player" hidden>
+    <div class="immersive-art-backdrop"><img id="immersiveBackdrop" alt=""></div>
+    <div class="immersive-topbar"><span>NOW PLAYING</span><button class="immersive-exit" id="immersiveExit" aria-label="Exit full screen" title="Exit full screen"><span data-icon="minimize"></span><span>Exit full screen</span></button></div>
+    <div class="immersive-content">
+      <div class="immersive-art" id="immersiveArtwork"></div>
+      <div class="immersive-meta"><div><h1 id="immersiveTitle">Nothing playing</h1><p id="immersiveArtist">Choose a song from your library</p></div><button class="ctrl heart" id="immersiveHeart" aria-label="Add to favorites" title="Add to favorites" aria-pressed="false" data-icon="heart"></button></div>
+      <div class="immersive-timeline"><div class="immersive-time-labels"><span id="immersiveCurrentTime">0:00</span><span id="immersiveTotalTime">0:00</span></div><input id="immersiveProgress" type="range" min="0" max="1" value="0" aria-label="Track position"></div>
+      <div class="immersive-controls"><button class="ctrl" id="immersivePrev" aria-label="Previous track" title="Previous track" data-icon="skip-back"></button><button class="ctrl immersive-play" id="immersivePlay" aria-label="Play" title="Play" data-icon="play"></button><button class="ctrl" id="immersiveNext" aria-label="Next track" title="Next track" data-icon="skip-forward"></button></div>
+      <div class="immersive-shortcuts"><button class="ctrl" data-view="Audio" title="Equalizer" aria-label="Equalizer" data-icon="equalizer"></button><button class="ctrl" data-view="Lyrics" title="Lyrics" aria-label="Lyrics" data-icon="lyrics"></button><button class="ctrl" data-view="Queue" title="Queue" aria-label="Queue" data-icon="queue"></button></div>
+    </div>
+  </section>
   <div class="context-menu" id="contextMenu" role="menu"></div>
   <div class="modal-layer" id="modalLayer" hidden><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><header><h2 id="modalTitle"></h2><button class="icon-btn" id="modalClose" aria-label="Close" data-icon="close"></button></header><div class="modal-body" id="modalBody"></div><footer id="modalActions"></footer></section></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

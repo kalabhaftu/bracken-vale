@@ -37,7 +37,7 @@ internal sealed class WebUiCommandRouter
         Register(settings,
             "setAudioDevice", "setCrossfade", "refreshAudioDevices", "setEqualizerPreset", "setEqualizerBand",
             "saveEqualizerPreset", "updateSettings", "resetUiSettings", "addExclusion", "removeExclusion", "checkUpdates");
-    Register(utilities, "openLogs", "exportLogs", "openRelease", "setPanelMode", "openDefaultApps", "copyTrackPath", "reportFrontendError");
+    Register(utilities, "openLogs", "exportLogs", "openRelease", "setPanelMode", "setImmersiveMode", "openDefaultApps", "copyTrackPath", "reportFrontendError");
     }
 
     public bool CanRoute(string name) => _routes.ContainsKey(name);

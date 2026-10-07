@@ -4,7 +4,7 @@ export function createPlayerUi({state,$,$$,call,command,cover,esc,fmtDuration,sv
   let trackDetailsTrackId = null;
   let panelCurrentTrackId = null;
 function currentPosition(){return state.playing?Math.min(state.duration||Infinity,state.position+Math.max(0,performance.now()-(state.positionUpdatedAt||performance.now()))/1000):state.position;}
-function renderProgress(){const position=currentPosition(),seek=$("#progressRange");$("#currentTime").textContent=fmtDuration(state.seekPreviewSeconds??position);$("#totalTime").textContent=fmtDuration(state.duration);if(!state.seeking&&!seek.matches(":active")){seek.max=String(Math.max(1,state.duration));seek.value=String(Math.min(state.duration,position));}seek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(seek.value)/Math.max(1,Number(seek.max)||1)*100))}%`);updateActiveLyric();}
+function renderProgress(){const position=currentPosition(),seek=$("#progressRange");$("#currentTime").textContent=fmtDuration(state.seekPreviewSeconds??position);$("#totalTime").textContent=fmtDuration(state.duration);if(!state.seeking&&!seek.matches(":active")){seek.max=String(Math.max(1,state.duration));seek.value=String(Math.min(state.duration,position));}seek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(seek.value)/Math.max(1,Number(seek.max)||1)*100))}%`);const fullSeek=$("#immersiveProgress");if(fullSeek){fullSeek.max=seek.max;if(!state.seeking&&!fullSeek.matches(":active"))fullSeek.value=seek.value;fullSeek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(fullSeek.value)/Math.max(1,Number(fullSeek.max)||1)*100))}%`);$("#immersiveCurrentTime").textContent=fmtDuration(state.seekPreviewSeconds??position);$("#immersiveTotalTime").textContent=fmtDuration(state.duration);}updateActiveLyric();}
 function updatePlayer() {
   const t=state.track;
   const coverEl=$("#nowCover");
@@ -16,6 +16,10 @@ function updatePlayer() {
       coverEl.className=`now-cover cover ${[...art.classList].filter(x=>x.startsWith("c")).join(" ")}`;
       coverEl.innerHTML=art.innerHTML;coverEl.dataset.trackId=t.id;coverEl.dataset.artworkUrl=t.artworkUrl||"";
     }
+    $("#immersiveTitle").textContent=t.title||"Unknown track";
+    $("#immersiveArtist").textContent=t.artist||"Unknown artist";
+    const backdrop=$("#immersiveBackdrop");backdrop.hidden=!t.artworkUrl;if(t.artworkUrl){if(backdrop.getAttribute("src")!==t.artworkUrl)backdrop.src=t.artworkUrl;}else backdrop.removeAttribute("src");
+    const immersiveArt=$("#immersiveArtwork");if(immersiveArt.dataset.trackId!==t.id||immersiveArt.dataset.artworkUrl!==(t.artworkUrl||"")){immersiveArt.innerHTML=cover(t,"immersive-cover");immersiveArt.dataset.trackId=t.id;immersiveArt.dataset.artworkUrl=t.artworkUrl||"";const image=immersiveArt.querySelector("img");if(image)image.loading="eager";}
   } else {
     $("#nowTitle").textContent="Nothing playing";
     $("#nowArtist").textContent="Choose a song from your library";
@@ -24,6 +28,7 @@ function updatePlayer() {
       coverEl.innerHTML='<div class="cover-art">MP</div>';
       coverEl.dataset.trackId="__empty__";
     }
+    $("#immersiveTitle").textContent="Nothing playing";$("#immersiveArtist").textContent="Choose a song from your library";$("#immersiveBackdrop").hidden=true;$("#immersiveArtwork").innerHTML=cover({title:"Music Player"},"immersive-cover");$("#immersiveArtwork").dataset.trackId="__empty__";
   }
   $("#playBtn").dataset.icon=state.playing?"pause":"play"; $("#playBtn").title=state.playing?"Pause":"Play"; $("#playBtn").setAttribute("aria-label",state.playing?"Pause":"Play"); $("#playBtn").setAttribute("aria-pressed",String(state.playing)); $("#playBtn").innerHTML=svg(state.playing?"pause":"play");
   const shuffleBtn=$("#shuffleBtn"); shuffleBtn.classList.toggle("active",state.shuffle); shuffleBtn.title=state.shuffle?"Shuffle on":"Shuffle off"; shuffleBtn.setAttribute("aria-label",shuffleBtn.title); shuffleBtn.setAttribute("aria-pressed",String(state.shuffle));
@@ -31,6 +36,9 @@ function updatePlayer() {
   const abBtn=$("#abBtn"); abBtn.classList.toggle("active",state.repeatA!==null); abBtn.title=state.repeatB!==null?"A–B repeat on":state.repeatA!==null?"Mark point B":"A–B repeat off"; abBtn.setAttribute("aria-label",abBtn.title); abBtn.setAttribute("aria-pressed",String(state.repeatA!==null));
   const favoriteLabel=t?.favorite?"Remove from favorites":"Add to favorites";
   const heartBtn=$("#heartBtn"); heartBtn.classList.toggle("on",!!t?.favorite); heartBtn.title=favoriteLabel; heartBtn.setAttribute("aria-label",favoriteLabel); heartBtn.setAttribute("aria-pressed",String(!!t?.favorite)); heartBtn.innerHTML=svg("heart");
+  const fullPlay=$("#immersivePlay");fullPlay.innerHTML=svg(state.playing?"pause":"play");fullPlay.title=state.playing?"Pause":"Play";fullPlay.setAttribute("aria-label",fullPlay.title);
+  const fullHeart=$("#immersiveHeart");fullHeart.classList.toggle("on",!!t?.favorite);fullHeart.title=favoriteLabel;fullHeart.setAttribute("aria-label",favoriteLabel);fullHeart.setAttribute("aria-pressed",String(!!t?.favorite));fullHeart.innerHTML=svg("heart");
+  const fullToggle=$("#immersiveToggle");fullToggle.disabled=!t;fullToggle.setAttribute("aria-disabled",String(!t));
   renderProgress();
   if(state.volume>0){state.lastVolume=state.volume;state.muted=false;}else state.muted=true;
   $("#volumeRange").value=String(state.volume); $("#volumeRange").style.setProperty("--range-progress",`${Math.max(0,Math.min(100,state.volume))}%`); const muteBtn=$("#muteBtn"); muteBtn.title=state.muted?"Unmute":"Mute"; muteBtn.setAttribute("aria-label",muteBtn.title); muteBtn.setAttribute("aria-pressed",String(state.muted)); muteBtn.innerHTML=svg(state.muted?"mute":"volume");

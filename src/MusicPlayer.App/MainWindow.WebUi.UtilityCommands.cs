@@ -33,6 +33,9 @@ public sealed partial class MainWindow
             case "openRelease": OpenRelease(String(payload, "url")); return null;
             case "setPanelMode":
                 _store.SetSetting("right-sidebar-mode", String(payload, "mode") == "info" ? "Info" : "Queue"); return null;
+            case "setImmersiveMode":
+                SetImmersiveMode(payload.TryGetProperty("enabled", out var immersive) && immersive.ValueKind == JsonValueKind.True);
+                return null;
             case "openDefaultApps":
                 if (!await Windows.System.Launcher.LaunchUriAsync(new Uri("ms-settings:defaultapps"))) throw new InvalidOperationException("Windows Settings could not be opened.");
                 return null;

@@ -11,7 +11,8 @@ internal sealed class PlayerSettingsService(LibraryStore store)
     private static readonly Dictionary<string, string> WebSettingKeys = new(StringComparer.Ordinal)
     {
         ["theme"] = "theme", ["accentMode"] = "accent-mode", ["accentManual"] = "accent-manual", ["accentColor"] = "accent-color",
-        ["windowMaterial"] = "window-material", ["motionStyle"] = "motion-style", ["hideDuplicates"] = "hide-exact-duplicates",
+        ["transparentWindow"] = "transparent-window", ["windowTransparency"] = "window-transparency",
+        ["motionStyle"] = "motion-style", ["hideDuplicates"] = "hide-exact-duplicates",
         ["autoOpenPanel"] = "auto-open-side-panel", ["showArtwork"] = "show-list-artwork", ["showArtist"] = "show-list-artist",
         ["showAlbum"] = "show-list-album", ["showAdded"] = "show-list-added", ["showYear"] = "show-list-year", ["showDuration"] = "show-list-duration",
         ["showFavorite"] = "show-list-favorite", ["checkUpdates"] = "check-updates", ["minimizeToTray"] = "minimize-to-tray",
@@ -21,7 +22,7 @@ internal sealed class PlayerSettingsService(LibraryStore store)
         ["songColumnWidths"] = "song-column-widths"
     };
 
-    public object ProjectWebSettings(string resolvedTheme, string? artworkAccent)
+    public object ProjectWebSettings(string resolvedTheme, string? artworkAccent, object? artworkPalette)
     {
         var stored = store.GetSettings("");
         string Value(string key, string fallback) => stored.TryGetValue(key, out var value) ? value : fallback;
@@ -30,8 +31,9 @@ internal sealed class PlayerSettingsService(LibraryStore store)
         return new
         {
             theme = Value("theme", "System"), accentMode = Value("accent-mode", "Native"), accentManual = On("accent-manual"),
-            resolvedTheme, accentColor = Value("accent-color", "#b7ff2d"), artworkAccent,
-            windowMaterial = Value("window-material", "Acrylic"), motionStyle = Value("motion-style", "Subtle"),
+            resolvedTheme, accentColor = Value("accent-color", "#b7ff2d"), artworkAccent, artworkPalette,
+            transparentWindow = On("transparent-window"), windowTransparency = Value("window-transparency", "0"),
+            motionStyle = Value("motion-style", "Subtle"),
             hideDuplicates = Value("hide-exact-duplicates", "true") != "false", autoOpenPanel = Value("auto-open-side-panel", "true") != "false",
             showArtwork = Value("show-list-artwork", "true") != "false", showArtist = Value("show-list-artist", "true") != "false",
             showAlbum = Value("show-list-album", "true") != "false", showAdded = Value("show-list-added", "true") != "false",
@@ -93,7 +95,8 @@ internal sealed class PlayerSettingsService(LibraryStore store)
             store.SetSetting("accent-mode", "Native");
             store.SetSetting("accent-manual", "false");
             store.SetSetting("accent-color", "#b7ff2d");
-            store.SetSetting("window-material", "Acrylic");
+            store.SetSetting("transparent-window", "false");
+            store.SetSetting("window-transparency", "0");
             store.SetSetting("motion-style", "Subtle");
         }
         if (selected.Contains("layout", StringComparer.Ordinal))
@@ -155,8 +158,8 @@ internal sealed class PlayerSettingsService(LibraryStore store)
         {
             "theme" => value is "System" or "Light" or "Dark",
             "accentMode" => value is "Native" or "Artwork",
-            "accentManual" or "hideDuplicates" or "autoOpenPanel" or "showArtwork" or "showArtist" or "showAlbum" or "showAdded" or "showYear" or "showDuration" or "showFavorite" or "checkUpdates" or "minimizeToTray" => value is "true" or "false",
-            "windowMaterial" => value is "Mica" or "Acrylic" or "Opaque",
+            "accentManual" or "transparentWindow" or "hideDuplicates" or "autoOpenPanel" or "showArtwork" or "showArtist" or "showAlbum" or "showAdded" or "showYear" or "showDuration" or "showFavorite" or "checkUpdates" or "minimizeToTray" => value is "true" or "false",
+            "windowTransparency" => int.TryParse(value, out var transparency) && transparency is >= 0 and <= 60,
             "motionStyle" => value is "Off" or "Subtle" or "Expressive",
             "accentColor" => System.Text.RegularExpressions.Regex.IsMatch(value, "^#[0-9a-fA-F]{6}$"),
             "navigationWidth" => int.TryParse(value, out var nav) && nav is >= 180 and <= 360,

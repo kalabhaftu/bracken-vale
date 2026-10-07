@@ -51,13 +51,10 @@ public sealed partial class MainWindow : Window
     private void ApplyStoredAppearance()
     {
         ShellRoot.RequestedTheme = _store.GetSetting("theme") switch { "Light" => ElementTheme.Light, "Dark" => ElementTheme.Dark, _ => ElementTheme.Default };
-        SystemBackdrop = _store.GetSetting("window-material") switch
-        {
-            "Mica" => new MicaBackdrop(),
-            "Opaque" => null,
-            _ => new DesktopAcrylicBackdrop()
-        };
+        SystemBackdrop = _store.GetSetting("transparent-window") == "true" ? new DesktopAcrylicBackdrop() : null;
         if (_store.GetSetting("accent-manual") == "true" && TryParseColor(_store.GetSetting("accent-color"), out var color)) ApplyAccent(color);
+        else if (_store.GetSetting("accent-mode") == "Artwork" && TryParseColor(_webArtworkAccent, out var artworkAccent)) ApplyAccent(artworkAccent);
+        else ResetAccent();
         ApplyNativeWindowChrome();
     }
 
@@ -68,6 +65,7 @@ public sealed partial class MainWindow : Window
             var hwnd = WindowNative.GetWindowHandle(this);
             var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
             var appWindow = AppWindow.GetFromWindowId(windowId);
+            appWindow.Title = string.Empty;
             var iconPath = ActiveProductIconPath();
             if (File.Exists(iconPath))
             {
@@ -76,20 +74,30 @@ public sealed partial class MainWindow : Window
             }
 
             var titleBar = appWindow.TitleBar;
+            titleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
             if (!AppWindowTitleBar.IsCustomizationSupported()) return;
-            var dark = ShellRoot.RequestedTheme == ElementTheme.Dark ||
+            var artworkSurface = _store.GetSetting("accent-mode") == "Artwork" && _webArtworkTitleBarColor is { };
+            var dark = artworkSurface || ShellRoot.RequestedTheme == ElementTheme.Dark ||
                 (ShellRoot.RequestedTheme == ElementTheme.Default && ShellRoot.ActualTheme == ElementTheme.Dark);
-            var background = dark ? Color.FromArgb(255, 16, 18, 16) : Color.FromArgb(255, 231, 234, 230);
+            var background = artworkSurface ? _webArtworkTitleBarColor!.Value :
+                dark ? Color.FromArgb(255, 16, 18, 16) : Color.FromArgb(255, 240, 242, 239);
             var foreground = dark ? Color.FromArgb(255, 247, 248, 246) : Color.FromArgb(255, 25, 29, 25);
+            static Color Shift(Color color, int amount) => Color.FromArgb(255,
+                (byte)Math.Clamp(color.R + amount, 0, 255),
+                (byte)Math.Clamp(color.G + amount, 0, 255),
+                (byte)Math.Clamp(color.B + amount, 0, 255));
+            var inactiveForeground = dark ? Color.FromArgb(255, 160, 167, 159) : Color.FromArgb(255, 116, 124, 116);
+            var hoverBackground = artworkSurface ? Shift(background, 15) : dark ? Color.FromArgb(255, 36, 38, 36) : Color.FromArgb(255, 212, 217, 211);
+            var pressedBackground = artworkSurface ? Shift(background, 24) : dark ? Color.FromArgb(255, 48, 52, 48) : Color.FromArgb(255, 200, 206, 199);
             titleBar.BackgroundColor = background;
             titleBar.ForegroundColor = foreground;
             titleBar.ButtonBackgroundColor = background;
             titleBar.ButtonForegroundColor = foreground;
             titleBar.ButtonInactiveBackgroundColor = background;
-            titleBar.ButtonInactiveForegroundColor = dark ? Color.FromArgb(255, 160, 167, 159) : Color.FromArgb(255, 116, 124, 116);
-            titleBar.ButtonHoverBackgroundColor = dark ? Color.FromArgb(255, 36, 38, 36) : Color.FromArgb(255, 212, 217, 211);
+            titleBar.ButtonInactiveForegroundColor = inactiveForeground;
+            titleBar.ButtonHoverBackgroundColor = hoverBackground;
             titleBar.ButtonHoverForegroundColor = foreground;
-            titleBar.ButtonPressedBackgroundColor = dark ? Color.FromArgb(255, 48, 52, 48) : Color.FromArgb(255, 200, 206, 199);
+            titleBar.ButtonPressedBackgroundColor = pressedBackground;
             titleBar.ButtonPressedForegroundColor = foreground;
         }
         catch (Exception ex) when (ex is InvalidOperationException or COMException or ArgumentException)
@@ -100,7 +108,7 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> ApplyArtworkAccentAsync(string? artworkPath)
     {
-        if (string.IsNullOrWhiteSpace(artworkPath) || !System.IO.File.Exists(artworkPath)) { _webArtworkAccent = null; ResetAccent(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null }); return false; }
+        if (string.IsNullOrWhiteSpace(artworkPath) || !System.IO.File.Exists(artworkPath)) { _webArtworkAccent = null; _webArtworkPalette = null; _webArtworkTitleBarColor = null; ResetAccent(); ApplyNativeWindowChrome(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null }); return false; }
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(artworkPath);
@@ -109,15 +117,56 @@ public sealed partial class MainWindow : Window
             var data = await decoder.GetPixelDataAsync(BitmapPixelFormat.Rgba8, BitmapAlphaMode.Ignore,
                 new BitmapTransform { ScaledWidth = 32, ScaledHeight = 32 }, ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
             var pixels = data.DetachPixelData();
-            if (pixels.Length < 3) { _webArtworkAccent = null; ResetAccent(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null }); return false; }
-            if (!SameTrack(_playback.CurrentTrack?.ArtworkPath, artworkPath) || _store.GetSetting("accent-mode") != "Artwork" || _store.GetSetting("accent-manual") == "true") return false;
-            var accent = SelectArtworkAccent(pixels); ApplyAccent(accent);
+            if (pixels.Length < 3) { _webArtworkAccent = null; _webArtworkPalette = null; _webArtworkTitleBarColor = null; ResetAccent(); ApplyNativeWindowChrome(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null }); return false; }
+            if (!SameTrack(_playback.CurrentTrack?.ArtworkPath, artworkPath) || _store.GetSetting("accent-mode") != "Artwork") return false;
+            var accent = SelectArtworkAccent(pixels);
             _webArtworkAccent = $"#{accent.R:X2}{accent.G:X2}{accent.B:X2}";
-            _webBridge?.SendEvent("artworkAccentChanged", new { color = _webArtworkAccent });
+            var selectedPalette = SelectArtworkPalette(pixels, accent);
+            _webArtworkPalette = selectedPalette.Palette;
+            _webArtworkTitleBarColor = selectedPalette.MainSurface;
+            if (_store.GetSetting("accent-manual") != "true") ApplyAccent(accent);
+            ApplyNativeWindowChrome();
+            _webBridge?.SendEvent("artworkAccentChanged", new { color = _webArtworkAccent, palette = _webArtworkPalette });
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
-        { LocalAppLog.Shared.Warning("artwork-accent", $"Could not read artwork '{artworkPath}'.", ex); _webArtworkAccent = null; ResetAccent(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null }); return false; }
+        { LocalAppLog.Shared.Warning("artwork-accent", $"Could not read artwork '{artworkPath}'.", ex); _webArtworkAccent = null; _webArtworkPalette = null; _webArtworkTitleBarColor = null; ResetAccent(); ApplyNativeWindowChrome(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null }); return false; }
+    }
+
+    private static (object Palette, Color MainSurface) SelectArtworkPalette(byte[] pixels, Color accent)
+    {
+        double red = 0, green = 0, blue = 0;
+        var count = 0;
+        for (var index = 0; index + 2 < pixels.Length; index += 4)
+        {
+            red += pixels[index]; green += pixels[index + 1]; blue += pixels[index + 2]; count++;
+        }
+        if (count == 0) count = 1;
+        var averageRed = red / count; var averageGreen = green / count; var averageBlue = blue / count;
+        var gray = averageRed * .299 + averageGreen * .587 + averageBlue * .114;
+        Color Tone(double shade) => Color.FromArgb(255,
+            (byte)Math.Clamp(Math.Round(10 + ((averageRed * .82 + gray * .18) - 10) * shade), 0, 255),
+            (byte)Math.Clamp(Math.Round(10 + ((averageGreen * .82 + gray * .18) - 10) * shade), 0, 255),
+            (byte)Math.Clamp(Math.Round(10 + ((averageBlue * .82 + gray * .18) - 10) * shade), 0, 255));
+        static Color Lift(Color color, int amount) => Color.FromArgb(255,
+            (byte)Math.Clamp(color.R + amount, 0, 255), (byte)Math.Clamp(color.G + amount, 0, 255), (byte)Math.Clamp(color.B + amount, 0, 255));
+        static string Hex(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+        // Keep large surfaces dark enough for the existing light-on-dark player
+        // typography while carrying the cover's dominant hue through the UI.
+        var background = Tone(.29);
+        var mainSurface = Tone(.31);
+        var palette = new
+        {
+            background = Hex(background),
+            sidebar = Hex(Tone(.27)),
+            main = Hex(mainSurface),
+            panel = Hex(Tone(.29)),
+            raised = Hex(Lift(background, 10)),
+            hover = Hex(Lift(background, 18)),
+            control = Hex(Lift(background, 22)),
+            accent = Hex(accent)
+        };
+        return (palette, mainSurface);
     }
 
     private static Color SelectArtworkAccent(byte[] pixels)
@@ -333,6 +382,55 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException) { LocalAppLog.Shared.Warning("system-media-controls", "Could not initialize Windows media controls.", ex); }
     }
 
+    private void InitializeTaskbarPeekControls()
+    {
+        try
+        {
+            _taskbarPeekControls = new TaskbarPeekControls(
+                WindowNative.GetWindowHandle(this), DispatcherQueue,
+                PlayPreviousTrack,
+                () =>
+                {
+                    if (_playback.IsPlaying) PausePlayback();
+                    else if (_playback.CurrentTrack is null && GetCurrentQueuePaths().FirstOrDefault() is { } path && _store.GetTrack(path) is { } firstTrack) PlayTrack(firstTrack, true);
+                    else ResumePlayback();
+                },
+                () => AdvanceQueue(false));
+            _taskbarPeekControls.Update(_playback.CurrentTrack is not null, _playback.IsPlaying);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException)
+        { LocalAppLog.Shared.Warning("taskbar-controls", "Could not initialize taskbar preview playback controls.", ex); }
+    }
+
+    private bool _immersiveMode;
+    private bool _immersiveWasMaximized;
+
+    private void SetImmersiveMode(bool enabled)
+    {
+        if (_immersiveMode == enabled) return;
+        var hwnd = WindowNative.GetWindowHandle(this);
+        var appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
+        if (enabled)
+        {
+            _immersiveWasMaximized = IsZoomed(hwnd);
+            appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+            _immersiveMode = true;
+            return;
+        }
+
+        appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+        if (_immersiveWasMaximized) ShowWindow(hwnd, SwMaximize);
+        _immersiveMode = false;
+    }
+
+    private const int SwMaximize = 3;
+    [DllImport("user32.dll", EntryPoint = "ShowWindow")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(nint hwnd, int command);
+
+    [DllImport("user32.dll", EntryPoint = "IsZoomed")]
+    private static extern bool IsZoomed(nint hwnd);
+
     private void SystemControls_ButtonPressed(SystemMediaTransportControls sender, SystemMediaTransportControlsButtonPressedEventArgs args)
     {
         DispatcherQueue.TryEnqueue(() =>
@@ -353,6 +451,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateSystemMediaControls(Track? track, bool playing)
     {
+        _taskbarPeekControls?.Update(track is not null || _queue.Count > 0, playing);
         if (_systemControls is null || track is null) return;
         _systemControls.IsEnabled = true;
         _systemControls.PlaybackStatus = playing ? MediaPlaybackStatus.Playing : MediaPlaybackStatus.Paused;
