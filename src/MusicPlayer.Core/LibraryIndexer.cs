@@ -2,7 +2,7 @@ using System.Security;
 
 namespace MusicPlayer.Core;
 
-public sealed record IndexResult(int Indexed, int Skipped, int Removed = 0, IReadOnlyList<string>? UnavailableRoots = null, IReadOnlyList<string>? IncompletePaths = null);
+public sealed record IndexResult(int Indexed, int Skipped, int Removed = 0, IReadOnlyList<string>? UnavailableRoots = null, IReadOnlyList<string>? IncompletePaths = null, int FilesFound = 0);
 
 public sealed class LibraryIndexer(LibraryStore store, string artworkCache, LocalAppLog? log = null)
 {
@@ -24,6 +24,7 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         var ignored = ignoredDirectories.Select(Path.GetFullPath).ToArray();
         var indexed = 0;
         var skipped = 0;
+        var filesFound = 0;
         var unavailableRoots = new List<string>();
         var incompletePaths = new List<string>();
         void FlushPending()
@@ -39,6 +40,7 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
             await scanner.ScanAsync(scanRoots, ignored, control, (path, token) =>
             {
                 token.ThrowIfCancellationRequested();
+                filesFound++;
                 var fullPath = Path.GetFullPath(path);
                 try
                 {
@@ -87,7 +89,7 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         if (removed > 0) store.InvalidateExactFingerprintSnapshot();
         store.PruneUnreferencedArtwork(artworkCache);
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        return new(indexed, skipped, removed, unavailableRoots.Distinct(comparer).ToArray(), incompletePaths.Distinct(comparer).ToArray());
+        return new(indexed, skipped, removed, unavailableRoots.Distinct(comparer).ToArray(), incompletePaths.Distinct(comparer).ToArray(), filesFound);
     }
 
     private async Task<int> RefreshIndexedFilesAsync(bool forceRefresh, IReadOnlyList<string> scanRoots, ScanControl control)

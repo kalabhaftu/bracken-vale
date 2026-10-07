@@ -205,6 +205,12 @@ internal sealed class LibraryQueryService
     {
         var result = _store.GetTracksPageWithCount(request.Search, request.Sort, request.Descending, request.Filter,
             request.GroupColumn, request.GroupValue, request.Offset, request.PageSize, HideExactDuplicates);
+        if (result.TotalCount == 0 && string.IsNullOrWhiteSpace(request.Search) && request.Filter is null && request.GroupColumn is null)
+        {
+            var indexedCount = _store.GetLibraryStats().TotalTracks;
+            if (indexedCount > 0)
+                LocalAppLog.Shared.Warning("library-query", $"An unfiltered track page returned 0 results while the database contains {indexedCount:N0} indexed tracks (view={request.View}, pageOffset={request.Offset}, duplicateFilter={HideExactDuplicates}).");
+        }
         return new { tracks = result.Tracks.Select(track => TrackDto(track)).ToArray(), totalCount = result.TotalCount };
     }
 

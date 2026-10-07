@@ -32,12 +32,15 @@ public sealed partial class MainWindow : Window
     private void StartStartupScan()
     {
         var roots = _libraryLocations.GetLibraryRoots().ToList();
-        if (_store.GetSetting("library-roots-configured") != "true")
+        var rootsWereConfigured = _store.GetSetting("library-roots-configured") == "true";
+        if (!rootsWereConfigured)
         {
             if (roots.Count == 0) roots = DefaultMusicRoots().ToList();
             _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
             _store.SetSetting("library-roots-configured", "true");
         }
+        var libraryTracks = _store.GetLibraryStats().TotalTracks;
+        LocalAppLog.Shared.Info("scanner", $"Startup scan prepared: configuredRoots={roots.Count}, rootsPreviouslyConfigured={rootsWereConfigured}, indexedTracks={libraryTracks}, roots=[{string.Join(", ", roots.Select(DescribeRoot))}].");
         _libraryFileWatcher.SetRoots(roots);
         if (roots.Count > 0) StartScan(roots);
         else _ = ReconcileIndexedLibraryAtStartupAsync();
@@ -72,11 +75,17 @@ public sealed partial class MainWindow : Window
 
     private async void StartScan(IEnumerable<string> roots, bool forceRefresh = false)
     {
-        if (_libraryScan.IsRunning) return;
+        if (_libraryScan.IsRunning)
+        {
+            LocalAppLog.Shared.Info("scanner", "Ignored a scan request because another library scan is already running.");
+            return;
+        }
         var scanRoots = roots.Select(Path.GetFullPath).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
         // An explicit rebuild with no currently configured roots still refreshes
         // the indexed paths. Ordinary scans continue to require a selected root.
         if (scanRoots.Length == 0 && !forceRefresh) return;
+        var indexedBefore = _store.GetLibraryStats().TotalTracks;
+        LocalAppLog.Shared.Info("scanner", $"Starting {(forceRefresh ? "index rebuild" : "library scan")}: roots={scanRoots.Length}, indexedTracksBefore={indexedBefore}, roots=[{string.Join(", ", scanRoots.Select(DescribeRoot))}].");
         _scanStartedUtc = DateTimeOffset.UtcNow;
         ClearScanOutcome();
         _scanCurrentPath = "Preparing scan…";
@@ -139,6 +148,14 @@ public sealed partial class MainWindow : Window
                     var heading = forceRefresh ? "Index rebuilt" : "Scan complete";
                     var removedCount = result.Removed + reconciliation.RemovedPaths.Count;
                     var message = $"{heading} · {result.Indexed:N0} tracks updated · {removedCount:N0} missing tracks removed · {result.Skipped:N0} files skipped";
+                    var indexedAfter = _store.GetLibraryStats().TotalTracks;
+                    LocalAppLog.Shared.Info("scanner", $"Completed {(forceRefresh ? "index rebuild" : "library scan")}: roots={scanRoots.Length}, supportedAudioFilesFound={result.FilesFound}, tracksUpdated={result.Indexed}, tracksRemoved={removedCount}, filesSkipped={result.Skipped}, indexedTracksAfter={indexedAfter}, unavailableRoots={unavailableRoots.Count}, incompleteFolders={result.IncompletePaths?.Count ?? 0}.");
+                    if (result.FilesFound == 0 && scanRoots.Length > 0)
+                    {
+                        message += indexedAfter > 0
+                            ? $" · No supported audio files were found in the selected folders; {indexedAfter:N0} indexed tracks were preserved. Add the folder where your music is saved to discover new songs."
+                            : " · No supported audio files were found in the selected folders. Check the folder selection or add the folder where your music is saved.";
+                    }
                     if (reconciliation.UnavailableCount > 0)
                         message += $" · {reconciliation.UnavailableCount:N0} tracks retained because their locations are unavailable";
                     if (unavailableRoots.Count > 0)
@@ -186,5 +203,12 @@ public sealed partial class MainWindow : Window
         _scanOutcomeKind = kind;
         _scanOutcomeMessage = message;
         _scanOutcomeUtc = DateTimeOffset.UtcNow;
+    }
+
+    private static string DescribeRoot(string path)
+    {
+        var label = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
+        if (string.IsNullOrWhiteSpace(label)) label = Path.GetPathRoot(path) ?? "root";
+        return $"{label} ({(Directory.Exists(path) ? "available" : "missing")})";
     }
 }
