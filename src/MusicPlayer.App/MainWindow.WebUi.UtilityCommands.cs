@@ -14,7 +14,18 @@ public sealed partial class MainWindow
             {
                 var kind = String(payload, "kind");
                 if (kind is "script" or "rejection")
-                    LocalAppLog.Shared.Warning("web-ui", $"The local interface reported an unhandled {kind} error.");
+                {
+                    static string SafeToken(string value) => System.Text.RegularExpressions.Regex.IsMatch(value, @"^[A-Za-z0-9._-]{1,80}$") ? value : "unknown";
+                    var errorName = SafeToken(String(payload, "name"));
+                    var command = SafeToken(String(payload, "command"));
+                    var source = SafeToken(String(payload, "source"));
+                    var line = Math.Clamp(Int(payload, "line"), 0, 1_000_000);
+                    var column = Math.Clamp(Int(payload, "column"), 0, 1_000_000);
+                    var context = kind == "script"
+                        ? $"{errorName} at {source}:{line}:{column}"
+                        : $"{errorName}" + (command == "unknown" ? "" : $" in '{command}'");
+                    LocalAppLog.Shared.Warning("web-ui", $"The local interface reported an unhandled {kind} ({context}).");
+                }
                 return null;
             }
             case "openLogs": OpenLogsFolder_Click(this, new Microsoft.UI.Xaml.RoutedEventArgs()); return null;
