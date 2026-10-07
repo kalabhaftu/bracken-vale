@@ -18,7 +18,7 @@ internal sealed record FileActivationRequest(FileActivationAction Action, IReadO
 
 internal static class Program
 {
-    private const string InstanceKey = "bracken-vale-main";
+    private const string InstanceKey = "music-player-main";
     private static readonly object ActivationGate = new();
     private static readonly Queue<FileActivationRequest> PendingActivations = new();
     private static AppInstance? _instance;
@@ -45,7 +45,6 @@ internal static class Program
             return;
         }
 
-        AppDataPaths.MigrateFromDevelopmentFolder();
         _instance = instance;
         InitialActivation = ParseActivation(activation, args);
         instance.Activated += Instance_Activated;

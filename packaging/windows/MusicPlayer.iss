@@ -31,7 +31,8 @@ SetupIconFile={#SourceDir}\Assets\MusicPlayer.ico
 Uninstallable=yes
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "MicrosoftEdgeWebView2Setup.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\MicrosoftEdgeWebView2Setup.exe"; Flags: dontcopy
 
 [Icons]
 Name: "{autoprograms}\Music Player"; Filename: "{app}\MusicPlayer.exe"
@@ -46,3 +47,23 @@ Filename: "{app}\MusicPlayer.exe"; Description: "Launch Music Player"; Flags: po
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -ExecutionPolicy Bypass -File ""{app}\Register-MusicPlayer-FileActions.ps1"" -Unregister -Quiet"; Flags: runhidden waituntilterminated
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  ExtractTemporaryFile('MicrosoftEdgeWebView2Setup.exe');
+  if not Exec(ExpandConstant('{tmp}\MicrosoftEdgeWebView2Setup.exe'), '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Result := 'Music Player requires the Microsoft Edge WebView2 Runtime. The installer could not start its Microsoft-signed runtime installer.';
+    exit;
+  end;
+  if (ResultCode = 3010) or (ResultCode = 1641) then
+  begin
+    NeedsRestart := True;
+    exit;
+  end;
+  if ResultCode <> 0 then
+    Result := 'The Microsoft Edge WebView2 Runtime could not be installed. Connect to the internet and try Setup again.';
+end;

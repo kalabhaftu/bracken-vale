@@ -68,7 +68,7 @@ On Windows 11, these classic context-menu actions are under Show more options.
 Your library database, settings, artwork cache, and logs are stored in:
 %LOCALAPPDATA%\MusicPlayer
 
-This package contains the Windows __ARCHITECTURE__ app and its required runtime files.
+This package contains the self-contained Windows __ARCHITECTURE__ app and its .NET and Windows App SDK runtime files. It uses the shared Microsoft Edge WebView2 Evergreen Runtime installed on Windows. If WebView2 is missing, install it from https://developer.microsoft.com/microsoft-edge/webview2/ before launching Music Player.
 See LICENSE and ThirdPartyNotices.md for license information.
 '@
 $readme = $readme.Replace('__VERSION__', $Version).Replace('__ARCHITECTURE__', $Architecture)

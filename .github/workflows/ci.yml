@@ -80,8 +80,8 @@ jobs:
             Start-Sleep -Seconds 8
             $process.Refresh()
             if ($process.HasExited) {
-              $logs = Join-Path $env:LOCALAPPDATA 'BrackenVale/Logs'
-              if (Test-Path $logs) { Get-ChildItem $logs -Filter 'bracken-vale-*.log' | Get-Content }
+              $logs = Join-Path $env:LOCALAPPDATA 'MusicPlayer/Logs'
+              if (Test-Path $logs) { Get-ChildItem $logs -Filter 'music-player-*.log' | Get-Content }
               throw "Music Player exited during startup with code $($process.ExitCode)."
             }
           } finally {

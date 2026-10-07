@@ -200,8 +200,18 @@ jobs:
                 & $signtool verify /pa /all $app
                 if ($LASTEXITCODE -ne 0) { throw "App signature verification failed for $($arch.name)." }
                 $iscc = (Get-Command ISCC.exe -ErrorAction Stop).Source
-                & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" packaging/windows/MusicPlayer.iss
-                if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $($arch.name)." }
+                $webViewBootstrapper = Join-Path $out 'MicrosoftEdgeWebView2Setup.exe'
+                try {
+                  Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $webViewBootstrapper
+                  $bootstrapperSignature = Get-AuthenticodeSignature -LiteralPath $webViewBootstrapper
+                  if ($bootstrapperSignature.Status -ne 'Valid' -or $bootstrapperSignature.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation') {
+                    throw 'The WebView2 Evergreen bootstrapper did not have a valid Microsoft signature.'
+                  }
+                  & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" packaging/windows/MusicPlayer.iss
+                  if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $($arch.name)." }
+                } finally {
+                  Remove-Item -LiteralPath $webViewBootstrapper -Force -ErrorAction SilentlyContinue
+                }
                 $setup = Join-Path $PWD "artifacts/MusicPlayer-Setup-$($arch.name).exe"
                 & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $setup
                 if ($LASTEXITCODE -ne 0) { throw "Signing installer failed for $($arch.name)." }
@@ -222,7 +232,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $manifestVersion = "$($version.Split('-')[0]).0"
-          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:PackageCertificateKeyFile="$env:RUNNER_TEMP\bracken-vale-signing.pfx" -p:PackageCertificatePassword="$env:SIGNING_PASSWORD" -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
+          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release -p:Platform=x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:PackageCertificateKeyFile="$env:RUNNER_TEMP\bracken-vale-signing.pfx" -p:PackageCertificatePassword="$env:SIGNING_PASSWORD" -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
           if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle packaging/signing failed.' }
           $bundle = Get-ChildItem src/MusicPlayer.App -Recurse -Filter *.msixbundle | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $bundle) { throw 'Windows packaging completed without producing an MSIX bundle.' }
@@ -294,9 +304,7 @@ jobs:
           if (-not (Test-Path $notes)) { throw 'Release notes artifact is missing.' }
           $null = gh release view $tag --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag @assets --clobber
-            if ($LASTEXITCODE -ne 0) { throw 'Could not replace the existing release assets.' }
-            gh release edit $tag --title $title --notes-file $notes
+            throw "Release $tag already exists. Published release assets are immutable; use a new version for a corrected build."
           } elseif ($env:RELEASE_PREVIEW -eq 'true') {
             gh release create $tag @assets --title $title --notes-file $notes --prerelease
           } else {

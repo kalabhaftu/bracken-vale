@@ -1,9 +1,14 @@
 # Music Player changelog
 
-Changes to Music Player are documented here. The visible product name and executable use Music Player/MusicPlayer; internal C# namespaces, the MSIX identity, and the local app-data folder retain their existing identifiers.
+Changes to Music Player are documented here. The visible product name and executable use Music Player/MusicPlayer. The app stores its database, settings, artwork, and logs under `%LOCALAPPDATA%\MusicPlayer`; internal C# namespaces and the MSIX package identity remain implementation details.
 
 ## [Unreleased]
 
+- Repair missing cached album artwork when a library scan encounters an existing track, and keep album navigation from restoring a detail route without an album.
+- Reconcile indexed file availability at startup and after scans. Remove confirmed-missing tracks even when their old parent folder was deleted, while retaining entries on offline volumes and under roots or paths the scan could not inspect.
+- Ignore out-of-order library/search responses, and reject lyric edits or searches that target a track that is no longer indexed.
+- Correct light-theme contrast for settings, controls, and side panels.
+- Package the Microsoft-signed WebView2 Evergreen bootstrapper inside Setup and install the shared runtime only when missing; fail release uploads rather than replacing assets for an already-published version.
 - Replace the previous WinUI screen layout with Music Player's locally packaged WebView2 interface while keeping playback and library behavior in C#.
 - Add durable collapsed-sidebar and resizable-panel preferences, resettable UI groups, built-in history/most-played/with-lyrics playlists, and remove those smart lists from primary navigation.
 - Detect removed audio files in the background, reconcile index rows without user clicks, retain playlist and queue references, and expose unavailable library roots and scan skips.
