@@ -343,7 +343,6 @@ public sealed partial class MainWindow : Window
                     if (_playback.CurrentTrack is null && GetCurrentQueuePaths().FirstOrDefault() is { } firstPath && _store.GetTrack(firstPath) is { } firstTrack)
                         PlayTrack(firstTrack, true);
                     else ResumePlayback();
-                    if (_systemControls is not null) _systemControls.PlaybackStatus = MediaPlaybackStatus.Playing;
                     break;
                 case SystemMediaTransportControlsButton.Pause: PausePlayback(); break;
                 case SystemMediaTransportControlsButton.Next: AdvanceQueue(false); break;

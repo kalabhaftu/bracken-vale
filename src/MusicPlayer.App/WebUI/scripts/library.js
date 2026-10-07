@@ -57,7 +57,7 @@ async function navigate(view,push=true,query=undefined) {
   if(view!=="Search" && $("#globalSearch").value) { $("#globalSearch").value=""; state.search=""; }
   const currentSearch=state.search,currentGroup=state.group,currentPlaylistId=state.playlist?.id||null;
   await call("setView",{view,search:currentSearch,group:currentGroup,playlistId:currentPlaylistId});
-  if(state.view!==view||state.search!==currentSearch||state.group!==currentGroup||state.playlist?.id!==currentPlaylistId)return;
+  if(state.view!==view||state.search!==currentSearch||state.group!==currentGroup||(state.playlist?.id||null)!==currentPlaylistId)return;
   await renderView();
 }
 
@@ -92,18 +92,20 @@ async function renderView(append=false) {
 }
 
 async function renderHome() {
+  const revision=renderRevision;
   const data=await call("getHome",{pageSize:8});
+  if(revision!==renderRevision)return null;
   const quick=(data.quick||[]).slice(0,6); const rec=(data.recent||[]).slice(0,8);
   const recentAlbums=[...new Map(rec.filter(track=>track.album).map(track=>[`${track.album}\0${track.albumArtist||track.artist}`,{...track,id:track.album,name:track.album,title:track.album,artist:track.albumArtist||track.artist,album:track.album}])).values()].slice(0,5);
-  const playlistData=await call("getPlaylists"); let libraryCards=(playlistData.playlists||[]).slice(0,5); let libraryType="playlist",libraryView="Playlists";
-  if(!libraryCards.length){const albums=await call("getGroups",{column:"album",offset:0,pageSize:5});libraryCards=albums.groups||[];libraryType="album";libraryView="Albums";}
+  const playlistData=await call("getPlaylists"); if(revision!==renderRevision)return null; let libraryCards=(playlistData.playlists||[]).slice(0,5); let libraryType="playlist",libraryView="Playlists";
+  if(!libraryCards.length){const albums=await call("getGroups",{column:"album",offset:0,pageSize:5});if(revision!==renderRevision)return null;libraryCards=albums.groups||[];libraryType="album";libraryView="Albums";}
   state.indexedBytes=Number(data.totalBytes)||0;
   const hour=new Date().getHours(),greeting=hour<12?"Good morning":hour<18?"Good afternoon":"Good evening";
   const subtitle=rec.length?"Pick up where you left off.":data.totalTracks?`${Number(data.totalTracks).toLocaleString()} tracks in your local library`:"Your music library";
   let html=viewHeader(greeting,subtitle);
   html=html.replace('class="page-head"','class="page-head home-head"');
   if(!data.totalTracks) {
-    const folderData=await call("getFolders",{rootsOnly:true}),hasRoots=!!folderData.roots?.length,scanning=!!folderData.scan?.active;
+    const folderData=await call("getFolders",{rootsOnly:true});if(revision!==renderRevision)return null;const hasRoots=!!folderData.roots?.length,scanning=!!folderData.scan?.active;
     state.homeHasRoots=hasRoots;
     const title=hasRoots?(scanning?"Scanning your music folders":"No indexed tracks yet"):"No music folders added";
     const message=hasRoots?(scanning?"Tracks will appear here as the scan indexes your files.":"Scan your selected folders to add tracks to the library."):"Add a folder to scan your local collection.";
@@ -146,7 +148,9 @@ async function renderSearch() {
 
 function viewFilter(view) { return ({"Favorites":"favorites","Most Played":"most-played","Recently Played":"recent","Recently Added":"recently-added","With Lyrics":"with-lyrics"})[view]||null; }
 async function renderTracksView(append=false) {
+  const revision=renderRevision;
   const page=await call("getTracks",{view:state.view,search:state.search,sort:state.sort,descending:state.descending,offset:state.offset,pageSize:state.pageSize});
+  if(revision!==renderRevision)return null;
   const pageTracks=page.tracks||[];const previousCount=append?state.items.length:0;
   state.total=page.totalCount||0; state.items=append?[...state.items,...pageTracks]:pageTracks;
   const subtitle=`${Number(state.total).toLocaleString()} tracks`;
@@ -157,8 +161,10 @@ async function renderTracksView(append=false) {
 }
 
 async function renderGroupsView(append=false) {
+  const revision=renderRevision;
   const column=({Albums:"album",Artists:"artist",Genres:"genre"})[state.view];
   const data=await call("getGroups",{column,offset:state.offset,pageSize:60,search:state.search});
+  if(revision!==renderRevision)return null;
   const pageGroups=(data.groups||[]).filter(item=>{
     const label=String(item?.name??item?.title??"").trim();
     return !!label&&!/^(?:undefined|null)$/i.test(label);
@@ -168,7 +174,7 @@ async function renderGroupsView(append=false) {
 }
 
 async function renderFolders(append=false) {
-  const offset=append?(state.folderOffset||0)+50:0;const data=await call("getFolders",{offset,pageSize:50});const roots=data.roots||[];const status=data.scan||null;
+  const revision=renderRevision;const offset=append?(state.folderOffset||0)+50:0;const data=await call("getFolders",{offset,pageSize:50});if(revision!==renderRevision)return null;const roots=data.roots||[];const status=data.scan||null;
   state.folderItems=append?[...(state.folderItems||[]),...(data.folders||[])]:data.folders||[];state.folderOffset=data.folderOffset||0;state.folderCount=data.folderCount||0;
   if(append)return cardGrid(state.folderItems.slice(-50),"folder")+(state.folderOffset+50<state.folderCount?`<button class="action load-more" data-action="load-folders">Load more folders</button>`:"");
   return viewHeader("Music folders","Choose where Music Player should look for local audio.",`<button class="action primary" data-action="add-folder">＋ Add folder</button><button class="action" data-action="scan">Scan now</button><button class="action" data-action="rebuild-index" title="Read file metadata again and reconcile missing tracks">Rebuild index</button><button class="action" data-action="manage-roots">Manage folders</button><button class="action" data-action="manage-exclusions">Scan exclusions</button>`)
@@ -179,7 +185,7 @@ async function renderFolders(append=false) {
 }
 
 async function renderPlaylists() {
-  const data=await call("getPlaylists"); const lists=data.playlists||[];
+  const revision=renderRevision;const data=await call("getPlaylists");if(revision!==renderRevision)return null; const lists=data.playlists||[];
   const smart=[["Most Played","trending","Songs played most often"],["With Lyrics","lyrics","Songs with available lyrics"],["Recently Played","clock","Your recent listening history"]];
   const smartRows=smart.map(([view,icon,description])=>`<button class="smart-playlist" data-view="${esc(view)}"><span class="smart-playlist-icon" data-icon="${icon}"></span><span><b>${esc(view)}</b><small>${esc(description)}</small></span><span class="smart-playlist-open">›</span></button>`).join("");
   return viewHeader("Playlists","Your playlists are stored on this PC.",`<button class="action" data-action="import-playlist">Import M3U / M3U8</button><button class="action primary" data-action="new-playlist">＋ New playlist</button>`)+`<section class="section smart-playlists"><div class="section-head"><h2>Smart playlists</h2></div><div class="smart-playlist-grid">${smartRows}</div></section><section class="section"><div class="section-head"><h2>Your playlists</h2></div>${cardGrid(lists,"playlist")}</section>`;
@@ -187,7 +193,8 @@ async function renderPlaylists() {
 
 async function renderPlaylistDetail(append=false) {
   if(!state.playlist) return renderPlaylists();
-  const page=await call("getPlaylistTracks",{playlistId:state.playlist.id,search:state.search,offset:state.offset,pageSize:state.pageSize});
+  const revision=renderRevision;const playlist=state.playlist;
+  const page=await call("getPlaylistTracks",{playlistId:playlist.id,search:state.search,offset:state.offset,pageSize:state.pageSize});if(revision!==renderRevision)return null;
   state.total=page.totalCount||0; state.items=page.tracks||[];
   const listing=state.items.length?songTable(state.items,state.offset):`<div class="empty-state"><b>${state.search?"No tracks match this search":"This playlist is empty"}</b>${state.search?"Try another title, artist, or album.":"Add tracks from your library to get started."}</div>`;
   const pageContent=listing+(state.offset+state.items.length<state.total?`<button class="action load-more" data-action="load-more">Load more tracks</button>`:"");
@@ -195,12 +202,13 @@ async function renderPlaylistDetail(append=false) {
 }
 
 async function renderGroupDetail(append=false) {
-  const group=state.group; if(!group) { await navigate(state.view==="Album"?"Albums":state.view==="Artist"?"Artists":state.view==="Folder"?"Folders":"Genres",false); return null; }
+  const revision=renderRevision;const group=state.group; if(!group||!group.name||/^(?:undefined|null)$/i.test(String(group.name))) { await navigate(state.view==="Album"?"Albums":state.view==="Artist"?"Artists":state.view==="Folder"?"Folders":"Genres",false); return null; }
   const detailSort=group.column==="artist"?"PlayCount":group.column==="album"?"TrackNumber":state.sort;
   const detailDescending=group.column==="artist"?true:group.column==="album"?false:state.descending;
   const page=await call("getTracks",{view:state.view,groupColumn:group.column,groupValue:group.name,offset:state.offset,pageSize:state.pageSize,sort:detailSort,descending:detailDescending});
+  if(revision!==renderRevision)return null;
   const pageTracks=page.tracks||[],previousCount=append?state.items.length:0;state.total=page.totalCount||0;state.items=append?[...state.items,...pageTracks]:pageTracks;
-  const sample=state.items[0]||group;let albums=[];if(group.column==="artist"&&!append){state.artistAlbumsOffset=0;const a=await call("getArtistAlbums",{artist:group.name,offset:0,pageSize:30});albums=a.groups||[];state.artistAlbumItems=albums;state.artistAlbumsOffset=albums.length;state.artistAlbumsHaveMore=albums.length===30;}
+  const sample=state.items[0]||group;let albums=[];if(group.column==="artist"&&!append){const a=await call("getArtistAlbums",{artist:group.name,offset:0,pageSize:30});if(revision!==renderRevision)return null;albums=a.groups||[];state.artistAlbumItems=albums;state.artistAlbumsOffset=albums.length;state.artistAlbumsHaveMore=albums.length===30;}
   const tracksTitle=group.column==="artist"?"Popular tracks":"Tracks";
   if(append)return songTable(pageTracks,previousCount)+(state.items.length<state.total?`<button class="action load-more" data-action="load-more">Load more tracks</button>`:"");
   const albumSection=albums.length?`<section class="section"><div class="section-head"><h2>Albums</h2></div><div class="card-grid" id="artistAlbumsGrid">${albums.map(item=>card(item,"album")).join("")}</div>${state.artistAlbumsHaveMore?`<button class="action load-more" data-action="load-artist-albums">More albums</button>`:""}</section>`:"";
@@ -209,7 +217,7 @@ async function renderGroupDetail(append=false) {
 }
 
 async function renderQueue(append=false) {
-  const data=await call("getQueue",{offset:state.offset,pageSize:200}); state.queueItems=data.entries||[]; state.queuePageOffset=state.offset; state.queueTotal=data.totalCount||0; state.queueIndex=data.queueIndex??-1;
+  const revision=renderRevision;const data=await call("getQueue",{offset:state.offset,pageSize:200});if(revision!==renderRevision)return null; state.queueItems=data.entries||[]; state.queuePageOffset=state.offset; state.queueTotal=data.totalCount||0; state.queueIndex=data.queueIndex??-1;
   let html=append?"":viewHeader("Queue",`${state.queueTotal} queued tracks`,toolbar(`<button class="action" data-action="clear-queue">Clear upcoming</button>`));
   html+=state.queueItems.length?`<div class="table-wrap"><table class="song-table queue-table"><thead><tr><th class="index">#</th><th>Title</th><th class="queue-actions-col">Actions</th></tr></thead><tbody>${state.queueItems.map((t,i)=>{const index=state.queuePageOffset+i;const subtitle=t.fileUnavailable?(t.artist==="Unavailable"?"File unavailable":`${t.artist} · File unavailable`):t.artist;return `<tr data-queue-index="${index}" data-context="track" data-context-id="${esc(t.id)}" class="${t.fileUnavailable?"unavailable-track":""}"><td class="index">${index===state.queueIndex?"▶":index+1}</td><td><div class="song-cell">${cover(t,"song-thumb")}<div class="song-info"><b>${esc(t.title)}</b><span>${esc(subtitle)}</span></div></div></td><td class="queue-actions-col"><div class="queue-actions"><button class="ctrl queue-action" data-action="play-queue" data-index="${index}" title="Play queue entry" aria-label="Play queue entry">▶</button><button class="ctrl queue-action" data-action="queue-up" data-index="${index}" title="Move up" aria-label="Move queue entry up">↑</button><button class="ctrl queue-action" data-action="queue-down" data-index="${index}" title="Move down" aria-label="Move queue entry down">↓</button><button class="ctrl queue-action" data-action="queue-remove" data-index="${index}" title="Remove" aria-label="Remove from queue">×</button></div></td></tr>`;}).join("")}</tbody></table></div>`:`<div class="empty-state"><b>Queue is empty</b>Songs you add will appear here.</div>`;
   if(state.queuePageOffset+state.queueItems.length<state.queueTotal) html+=`<button class="action load-more" data-action="load-more">Load more queued tracks</button>`;
@@ -217,21 +225,23 @@ async function renderQueue(append=false) {
 }
 
 async function renderNowPlaying() {
-  const data=await call("getCurrentTrack"); state.track=data.track||null;
+  const revision=renderRevision;const data=await call("getCurrentTrack");if(revision!==renderRevision)return null; state.track=data.track||null;
   if(!state.track) return viewHeader("Now Playing","Nothing is playing.")+`<div class="empty-state"><b>Choose a song to begin</b>Playback stays active as you move between views.</div>`;
   return `<div class="detail-hero now-detail">${cover(state.track)}<div><div class="eyebrow">Now playing</div><h1>${esc(state.track.title)}</h1><p>${esc(state.track.artist)}${state.track.album?` · ${esc(state.track.album)}`:""}${state.track.fileUnavailable?" · File unavailable":""}</p><div class="toolbar"><button class="action" data-action="favorite" data-id="${esc(state.track.id)}">${state.track.favorite?"♥ Favorited":"♡ Favorite"}</button><button class="action" data-action="show-location" data-id="${esc(state.track.id)}">Show in folder</button><button class="action" data-action="details" data-id="${esc(state.track.id)}">Track details</button></div></div></div>`;
 }
 
 async function renderLyrics() {
-  const data=await call("getLyrics",{id:state.trackId||state.track?.id}); state.track=data.track||null; state.lyricLines=data.lines||[];state.lyricText=data.plainText||"";
-  if(!state.track) return viewHeader("Lyrics","Choose a song to view lyrics.")+`<div class="empty-state"><b>No track selected</b>Lyrics appear here when a track is playing.</div>`;
+  const revision=renderRevision;
+  const lyricsTrackId=state.trackId||state.track?.id;
+  const data=await call("getLyrics",{id:lyricsTrackId});if(revision!==renderRevision)return null; state.lyricsTrack=data.track||null; state.lyricLines=data.lines||[];state.lyricText=data.plainText||"";
+  if(!state.lyricsTrack) return viewHeader("Lyrics","Choose a song to view lyrics.")+`<div class="empty-state"><b>No track selected</b>Lyrics appear here when a track is playing.</div>`;
   const lyrics=state.lyricLines.length?state.lyricLines.map((line,i)=>`<p data-lyric-index="${i}" class="${line.active?"active":""}">${esc(line.text)}</p>`).join(""):state.lyricText?`<div class="lyrics-plain">${esc(state.lyricText)}</div>`:`<div class="empty-state"><b>No lyrics found</b>Lyrics may be embedded, stored beside the file, or searched on LRCLIB when you ask.</div>`;
   const source=({sidecar:"Sidecar file",embedded:"Embedded in audio tags",none:"Not saved"})[data.source]||"Source unavailable";
-  return viewHeader("Lyrics",`${state.track.title} · ${state.track.artist}`,toolbar(`<button class="action" data-action="edit-lyrics">Edit lyrics</button><button class="action" data-action="search-lyrics">Search LRCLIB</button>`))+`<div class="lyric-source">Lyrics source · ${esc(source)}</div><div class="lyrics-lines">${lyrics}</div>`;
+  return viewHeader("Lyrics",`${state.lyricsTrack.title} · ${state.lyricsTrack.artist}`,toolbar(`<button class="action" data-action="edit-lyrics">Edit lyrics</button><button class="action" data-action="search-lyrics">Search LRCLIB</button>`))+`<div class="lyric-source">Lyrics source · ${esc(source)}</div><div class="lyrics-lines">${lyrics}</div>`;
 }
 
 async function renderAudio() {
-  const data=await call("getAudioSettings");
+  const revision=renderRevision;const data=await call("getAudioSettings");if(revision!==renderRevision)return null;
   const devices=data.devices||[];
   const deviceControl=devices.length
     ? `<select class="select" id="outputDevice">${devices.map(d=>`<option value="${esc(d.id)}" ${d.id===data.selectedId?"selected":""}>${esc(d.name)}</option>`).join("")}</select>`
@@ -244,8 +254,8 @@ async function renderAudio() {
 }
 
 async function renderSettings() {
-  const s=await call("getSettings"); state.settings=s; setTheme(s);
-  let indexedBytes=state.indexedBytes||0;try{const library=await call("getHome",{pageSize:1});indexedBytes=Number(library.totalBytes)||0;state.indexedBytes=indexedBytes;}catch{/* The settings page remains available if library summary is unavailable. */}
+  const revision=renderRevision;const s=await call("getSettings");if(revision!==renderRevision)return null; state.settings=s; setTheme(s);
+  let indexedBytes=state.indexedBytes||0;try{const library=await call("getHome",{pageSize:1});if(revision!==renderRevision)return null;indexedBytes=Number(library.totalBytes)||0;state.indexedBytes=indexedBytes;}catch(error){if(revision!==renderRevision)return null;/* The settings page remains available if library summary is unavailable. */}
   const resolvedTheme=String(s.theme||"System").toLowerCase()==="light"||String(s.theme||"System").toLowerCase()==="system"&&s.resolvedTheme==="Light"?"light":"dark";
   const activeAccent=s.accentManual&&s.accentColor?s.accentColor:s.accentMode==="Artwork"&&s.artworkAccent?s.artworkAccent:resolvedTheme==="light"?"#548c00":"#b7ff2d";
   const row=(key,title,desc,type="toggle",values=[])=>{const bounds=key==="navigationWidth"?"min=\"180\" max=\"360\"":key==="browseWidth"?"min=\"180\" max=\"480\"":"";return `<div class="setting-row"><div><b>${esc(title)}</b><span>${esc(desc)}</span></div>${type==="toggle"?`<button class="toggle ${s[key]?"on":""}" data-setting="${key}" role="switch" aria-checked="${!!s[key]}"><i></i></button>`:type==="select"?`<select class="select" data-setting="${key}">${values.map(v=>`<option ${String(s[key])===String(v.value)?"selected":""} value="${esc(v.value)}">${esc(v.label)}</option>`).join("")}</select>`:type==="number"?`<input class="field setting-number" type="number" ${bounds} step="1" data-setting="${key}" value="${esc(s[key]||"")}">`:`<input class="field ${type==="color"?"setting-color":""}" ${type==="color"?`type="color"`:"type=\"text\""} data-setting="${key}" value="${esc(s[key]||"")}">`}</div>`;};
@@ -259,7 +269,7 @@ async function renderSettings() {
 function navigationSettingsMarkup(settings){const views=$$("#navigation .nav-item[data-view]").map(item=>item.dataset.view);const custom=[...new Set((settings.navigationOrder||[]).filter(view=>view!=="Home"&&views.includes(view)))];const order=["Home",...custom,...views.filter(view=>view!=="Home"&&!custom.includes(view))];const hidden=new Set(settings.hiddenPanels||[]);hidden.delete("Home");return order.map((view,index)=>`<div class="setting-row"><b>${esc(view)}</b><div class="toolbar">${view==="Home"?`<span class="muted">Always shown</span>`:`<button class="action" data-nav-move="-1" data-nav-view="${esc(view)}" ${index===1?"disabled":""}>↑</button><button class="action" data-nav-move="1" data-nav-view="${esc(view)}" ${index===order.length-1?"disabled":""}>↓</button><button class="toggle ${hidden.has(view)?"":"on"}" data-nav-visible="${esc(view)}" role="switch" aria-checked="${!hidden.has(view)}"><i></i></button>`}</div></div>`).join("");}
 
 async function renderDuplicates() {
-  const pageSize=100,data=await call("getDuplicates",{offset:state.duplicateOffset,pageSize,search:state.search,sort:state.duplicateSort,descending:state.duplicateDescending}),groups=data.groups||[],total=data.totalCount||0;
+  const revision=renderRevision;const pageSize=100,data=await call("getDuplicates",{offset:state.duplicateOffset,pageSize,search:state.search,sort:state.duplicateSort,descending:state.duplicateDescending});if(revision!==renderRevision)return null;const groups=data.groups||[],total=data.totalCount||0;
   const pages=Math.max(1,Math.ceil(total/pageSize)),page=Math.floor(state.duplicateOffset/pageSize);
   const controls=toolbar(`<label class="muted">Sort</label><select class="select" id="duplicateSort">${["Title","Artist","Album","Year","Added","Duration","PlayCount","LastPlayed","Path","Rating"].map(value=>`<option ${state.duplicateSort===value?"selected":""}>${value}</option>`).join("")}</select><button class="action" data-action="duplicate-direction">${state.duplicateDescending?"Descending":"Ascending"}</button>`);
   const table=groups.length?`<div class="table-wrap"><table class="song-table"><thead><tr><th>Title</th><th>Artist</th><th class="time">Copies</th><th>Locations</th></tr></thead><tbody>${groups.map(g=>`<tr data-duplicate="${esc(g.id)}"><td>${esc(g.title)}</td><td>${esc(g.artist)}</td><td class="time">${g.copyCount}</td><td><button class="action" data-action="duplicate-files" data-id="${esc(g.id)}">Show locations</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="empty-state"><b>${state.search?"No duplicate groups match":"No exact duplicates found"}</b>${state.search?"Try another title, artist, or album.":"Duplicate groups are created as the library is indexed."}</div>`;

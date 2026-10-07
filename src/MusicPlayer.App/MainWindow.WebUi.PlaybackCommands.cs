@@ -69,14 +69,23 @@ public sealed partial class MainWindow
                 }
                 return null;
             }
-            case "seek": _playback.Seek((long)(Double(payload, "seconds") * 1000)); return null;
+            case "seek":
+                CancelCrossfadeAndRestoreQueue();
+                _playback.Seek((long)(Double(payload, "seconds") * 1000));
+                PublishQueueState(force: true);
+                PublishPlaybackState();
+                return null;
             case "setVolume": SetPlaybackVolume(Int(payload, "volume", 75)); return null;
             case "toggleFavorite":
             {
                 var track = RequireTrack(payload, "id");
                 _store.SetFavorite(track.Path, !track.Favorite);
                 var updated = _store.GetTrack(track.Path) ?? track with { Favorite = !track.Favorite };
-                if (SameTrack(_playback.CurrentTrack?.Path, updated.Path)) UpdateCurrentTrack(updated);
+                if (SameTrack(_playback.CurrentTrack?.Path, updated.Path))
+                {
+                    _playback.UpdateTrackMetadata(updated);
+                    UpdateCurrentTrack(updated);
+                }
                 _webBridge?.SendEvent("favoriteChanged", new { id = _libraryQueries.TrackId(updated.Path), favorite = updated.Favorite });
                 PublishLibraryChanged(); return null;
             }
@@ -84,6 +93,11 @@ public sealed partial class MainWindow
             {
                 var track = RequireTrack(payload, "id");
                 _store.SetRating(track.Path, Int(payload, "rating", 0));
+                if (SameTrack(_playback.CurrentTrack?.Path, track.Path) && _store.GetTrack(track.Path) is { } updated)
+                {
+                    _playback.UpdateTrackMetadata(updated);
+                    UpdateCurrentTrack(updated);
+                }
                 PublishLibraryChanged(); return null;
             }
             case "playNext":

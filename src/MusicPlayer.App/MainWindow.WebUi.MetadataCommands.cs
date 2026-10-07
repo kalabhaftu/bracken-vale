@@ -11,7 +11,7 @@ public sealed partial class MainWindow
         switch (name)
         {
             case "saveLyrics": await SaveLyricsAsync(payload); return null;
-            case "searchLyrics": return await SearchLyricsAsync(TrackFrom(payload, "id") ?? _playback.CurrentTrack);
+            case "searchLyrics": return await SearchLyricsAsync(ResolveRequestedLyricsTrack(payload));
             case "saveTags": await SaveTagsAsync(payload); return null;
             case "restoreTags": await RestoreTagsAsync(payload); return null;
             case "pickArtwork": return await PickArtworkAsync();
@@ -21,7 +21,8 @@ public sealed partial class MainWindow
 
     private async Task SaveLyricsAsync(JsonElement payload)
     {
-        var track = TrackFrom(payload, "id") ?? _playback.CurrentTrack ?? throw new InvalidOperationException("Choose a track before editing lyrics.");
+        var track = ResolveRequestedLyricsTrack(payload) ?? throw new InvalidOperationException("Choose a track before editing lyrics.");
+        EnsureMetadataTargetAvailable(track);
         var text = String(payload, "text"); var mode = String(payload, "mode"); var offset = Int(payload, "offsetMilliseconds");
         await _trackMetadata.SaveLyricsAsync(track.Path, text, mode == "embed", offset);
         await RefreshEditedTrackAsync(track.Path); PublishLibraryChanged();
@@ -37,6 +38,7 @@ public sealed partial class MainWindow
     private async Task SaveTagsAsync(JsonElement payload)
     {
         var track = RequireTrack(payload, "id");
+        EnsureMetadataTargetAvailable(track);
         var tags = payload.TryGetProperty("tags", out var value) && value.ValueKind == JsonValueKind.Object ? value : default;
         string? Optional(string name) => tags.ValueKind == JsonValueKind.Object && tags.TryGetProperty(name, out var item) && item.ValueKind != JsonValueKind.Null ? item.ToString() : null;
         var custom = JsonDictionary(tags, "customFields"); var additional = JsonDictionary(tags, "additionalFields");
@@ -53,12 +55,22 @@ public sealed partial class MainWindow
     private async Task RestoreTagsAsync(JsonElement payload)
     {
         var track = RequireTrack(payload, "id");
+        EnsureMetadataTargetAvailable(track);
         var backups = _trackMetadata.ListTagBackups(track.Path);
         if (backups.Count == 0) throw new InvalidOperationException("No saved tag backups are available for this track.");
         var selectedId = String(payload, "backupId");
         var backup = string.IsNullOrWhiteSpace(selectedId) ? backups[0] : backups.FirstOrDefault(item => _libraryQueries.OpaqueId(item.BackupPath) == selectedId)
             ?? throw new InvalidOperationException("That tag backup is no longer available.");
         await _trackMetadata.RestoreTagsAsync(backup); await RefreshEditedTrackAsync(track.Path); PublishLibraryChanged();
+    }
+
+    private void EnsureMetadataTargetAvailable(Track track)
+    {
+        if (File.Exists(track.Path)) return;
+        _trackAvailability.MarkUnavailable(track.Path);
+        _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(track.Path), fileUnavailable = true });
+        PublishLibraryChanged();
+        throw new FileNotFoundException("This audio file is unavailable. Reconnect its drive or restore the file before editing its tags or lyrics.");
     }
 
     private static IReadOnlyDictionary<string, string> JsonDictionary(JsonElement root, string name)

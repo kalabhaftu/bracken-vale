@@ -44,9 +44,10 @@ public sealed partial class MainWindow
                 track = _playback.CurrentTrack is { } current ? _libraryQueries.TrackDto(current, true) : null,
                 playing = _playback.IsPlaying, positionSeconds = Math.Max(0, _playback.Position) / 1000d,
                 durationSeconds = Math.Max(0, _playback.Duration) / 1000d, volume = _playback.Volume,
-                shuffle = _shuffle, repeat = _repeatMode, repeatA = _repeatA?.TotalSeconds, repeatB = _repeatB?.TotalSeconds
+                shuffle = _shuffle, repeat = _repeatMode, repeatA = _repeatA?.TotalSeconds, repeatB = _repeatB?.TotalSeconds,
+                queueIndex = _queueIndex
             };
-            case "getLyrics": return LyricsData(TrackFrom(payload, "id") ?? _playback.CurrentTrack);
+            case "getLyrics": return LyricsData(ResolveRequestedLyricsTrack(payload));
             case "getAudioSettings": return await AudioSettingsAsync();
             case "getSettings": return WebSettings();
             case "getDuplicates": return await DuplicatePageAsync(payload);

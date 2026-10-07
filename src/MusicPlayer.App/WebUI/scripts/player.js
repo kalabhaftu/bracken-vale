@@ -3,16 +3,18 @@ export function createPlayerUi({state,$,$$,call,command,cover,esc,fmtDuration,sv
   let trackDetailsRequest = 0;
   let trackDetailsTrackId = null;
   let panelCurrentTrackId = null;
+function currentPosition(){return state.playing?Math.min(state.duration||Infinity,state.position+Math.max(0,performance.now()-(state.positionUpdatedAt||performance.now()))/1000):state.position;}
+function renderProgress(){const position=currentPosition(),seek=$("#progressRange");$("#currentTime").textContent=fmtDuration(state.seekPreviewSeconds??position);$("#totalTime").textContent=fmtDuration(state.duration);if(!state.seeking&&!seek.matches(":active")){seek.max=String(Math.max(1,state.duration));seek.value=String(Math.min(state.duration,position));}seek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(seek.value)/Math.max(1,Number(seek.max)||1)*100))}%`);updateActiveLyric();}
 function updatePlayer() {
   const t=state.track;
   const coverEl=$("#nowCover");
   if(t) {
     $("#nowTitle").textContent=t.title;
     $("#nowArtist").textContent=[t.artist,t.album,t.fileUnavailable?"File unavailable":null].filter(Boolean).join(" · ");
-    if(coverEl.dataset.trackId!==t.id){
+    if(coverEl.dataset.trackId!==t.id||coverEl.dataset.artworkUrl!==(t.artworkUrl||"")){
       const holder=document.createElement("div");holder.innerHTML=cover(t);const art=holder.firstElementChild;
       coverEl.className=`now-cover cover ${[...art.classList].filter(x=>x.startsWith("c")).join(" ")}`;
-      coverEl.innerHTML=art.innerHTML;coverEl.dataset.trackId=t.id;
+      coverEl.innerHTML=art.innerHTML;coverEl.dataset.trackId=t.id;coverEl.dataset.artworkUrl=t.artworkUrl||"";
     }
   } else {
     $("#nowTitle").textContent="Nothing playing";
@@ -29,14 +31,14 @@ function updatePlayer() {
   const abBtn=$("#abBtn"); abBtn.classList.toggle("active",state.repeatA!==null); abBtn.title=state.repeatB!==null?"A–B repeat on":state.repeatA!==null?"Mark point B":"A–B repeat off"; abBtn.setAttribute("aria-label",abBtn.title); abBtn.setAttribute("aria-pressed",String(state.repeatA!==null));
   const favoriteLabel=t?.favorite?"Remove from favorites":"Add to favorites";
   const heartBtn=$("#heartBtn"); heartBtn.classList.toggle("on",!!t?.favorite); heartBtn.title=favoriteLabel; heartBtn.setAttribute("aria-label",favoriteLabel); heartBtn.setAttribute("aria-pressed",String(!!t?.favorite)); heartBtn.innerHTML=svg("heart");
-  $("#currentTime").textContent=fmtDuration(state.seekPreviewSeconds??state.position); $("#totalTime").textContent=fmtDuration(state.duration); const seek=$("#progressRange"); if(!state.seeking&&!seek.matches(":active")) { seek.max=String(Math.max(1,state.duration)); seek.value=String(Math.min(state.duration,state.position)); } const seekMax=Math.max(1,Number(seek.max)||1); seek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(seek.value)/seekMax*100))}%`);
+  renderProgress();
   if(state.volume>0){state.lastVolume=state.volume;state.muted=false;}else state.muted=true;
   $("#volumeRange").value=String(state.volume); $("#volumeRange").style.setProperty("--range-progress",`${Math.max(0,Math.min(100,state.volume))}%`); const muteBtn=$("#muteBtn"); muteBtn.title=state.muted?"Unmute":"Mute"; muteBtn.setAttribute("aria-label",muteBtn.title); muteBtn.setAttribute("aria-pressed",String(state.muted)); muteBtn.innerHTML=svg(state.muted?"mute":"volume");
   const audioVolume=$("#audioVolume");if(audioVolume)audioVolume.value=String(state.volume);
   updateActiveLyric();
 }
 
-function updateActiveLyric(){ if(state.view!=="Lyrics"||!state.lyricLines.length)return;let active=-1;for(let i=0;i<state.lyricLines.length;i++)if(Number(state.lyricLines[i].seconds)<=state.position)active=i;$("[data-lyric-index].active")?.classList.remove("active");if(active>=0) $(`[data-lyric-index="${active}"]`)?.classList.add("active"); }
+function updateActiveLyric(){ if(state.view!=="Lyrics"||!state.lyricLines.length||!state.lyricsTrack||state.lyricsTrack.id!==state.track?.id)return;let active=-1;for(let i=0;i<state.lyricLines.length;i++)if(Number(state.lyricLines[i].seconds)<=currentPosition())active=i;$("[data-lyric-index].active")?.classList.remove("active");if(active>=0) $(`[data-lyric-index="${active}"]`)?.classList.add("active"); }
 
 function updatePanel() {
   const current=state.track; const currentBox=$("#panelCurrent"); const content=$("#panelContent");
@@ -80,10 +82,11 @@ async function loadTrackDetails(track) {
   } catch { /* Audio properties are optional; full track details remain available on demand. */ }
 }
 
-async function refreshCurrent() { const data=await call("getCurrentTrack"); state.track=data.track||null; state.playing=!!data.playing; state.position=data.positionSeconds||0; state.duration=data.durationSeconds||0; state.volume=data.volume??state.volume; state.shuffle=!!data.shuffle; state.repeat=data.repeat||"Off"; state.repeatA=data.repeatA??null; state.repeatB=data.repeatB??null; const q=await call("getQueue",{offset:0,pageSize:100}); state.queue=q.entries||[];state.queueOffset=0;state.queueTotal=q.totalCount||0;state.queueIndex=q.queueIndex??-1; updatePlayer(); updatePanel(); }
+async function refreshCurrent() { const data=await call("getCurrentTrack"); state.track=data.track||null; state.playing=!!data.playing; state.position=data.positionSeconds||0; state.positionUpdatedAt=performance.now(); state.duration=data.durationSeconds||0; state.volume=data.volume??state.volume; state.shuffle=!!data.shuffle; state.repeat=data.repeat||"Off"; state.repeatA=data.repeatA??null; state.repeatB=data.repeatB??null; state.queueIndex=data.queueIndex??-1;const offset=Math.max(0,state.queueIndex-1);const q=await call("getQueue",{offset,pageSize:100}); state.queue=q.entries||[];state.queueOffset=offset;state.queueTotal=q.totalCount||0;state.queueIndex=q.queueIndex??state.queueIndex; updatePlayer(); updatePanel(); }
 
 async function setVolume(value){state.volume=Math.max(0,Math.min(100,Number(value)||0));if(state.volume>0){state.lastVolume=state.volume;state.muted=false;}else state.muted=true;updatePlayer();await call("setVolume",{volume:state.volume});}
 async function toggleMute(){if(state.muted){await setVolume(state.lastVolume||75);}else{state.lastVolume=state.volume||state.lastVolume||75;await setVolume(0);}}
 
+  setInterval(renderProgress,100);
   return {updatePlayer,updateActiveLyric,updatePanel,loadTrackDetails,refreshCurrent,setVolume,toggleMute};
 }

@@ -48,7 +48,7 @@ public sealed partial class MainWindow
         {
             track = _libraryQueries.TrackDto(track, true), raw, plainText, source = reading.Source,
             offsetMilliseconds = (long)doc.Offset.TotalMilliseconds,
-            lines = doc.Lines.Select(line => new { seconds = line.Time.TotalSeconds, text = line.Text }).ToArray()
+            lines = doc.Lines.Select(line => new { seconds = (line.Time + doc.Offset).TotalSeconds, text = line.Text }).ToArray()
         };
     }
 
@@ -79,6 +79,9 @@ public sealed partial class MainWindow
     }
 
     private Track? TrackFrom(JsonElement payload, string key) => _libraryQueries.ResolveTrack(String(payload, key));
+
+    private Track? ResolveRequestedLyricsTrack(JsonElement payload) =>
+        string.IsNullOrWhiteSpace(String(payload, "id")) ? _playback.CurrentTrack : RequireTrack(payload, "id");
 
     private Track RequireTrack(JsonElement payload, string key) =>
         TrackFrom(payload, key) ?? throw new KeyNotFoundException("That track is no longer in the indexed library.");
