@@ -31,6 +31,8 @@ const icons = {
   shuffle:"m18 14 4 4-4 4m0-20 4 4-4 4M2 18h2.5a5 5 0 0 0 4-2l7-8a5 5 0 0 1 4-2H22M2 6h2.5a5 5 0 0 1 4 2l1.5 1.7m4 4.6 1.5 1.7a5 5 0 0 0 4 2H22",
   "skip-back":"M19 20 9 12l10-8v16ZM5 19V5", "skip-forward":"m5 4 10 8-10 8V4Zm14 1v14",
   play:"m7 4 14 8-14 8V4Z", pause:"M7 5h3v14H7zm7 0h3v14h-3z", repeat:"m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3",
+  expand:"M3 9V4a1 1 0 0 1 1-1h5M15 3h5a1 1 0 0 1 1 1v5M21 15v5a1 1 0 0 1-1 1h-5M9 21H4a1 1 0 0 1-1-1v-5",
+  minimize:"M8 3v5H3m13-5v5h5M8 21v-5H3m13 5v-5h5",
   speaker:"M3 9v6h4l5 4V5L7 9H3Zm13-2a7 7 0 0 1 0 10m2-13a11 11 0 0 1 0 16", volume:"M3 9v6h4l5 4V5L7 9H3Zm13-2a7 7 0 0 1 0 10", mute:"M3 9v6h4l5 4V5L7 9H3Zm13 1 5 5m0-5-5 5"
 };
 
@@ -95,7 +97,16 @@ function setTheme(settings) {
   const theme=String(settings?.theme||"System").toLowerCase();
   const resolvedTheme=theme==="light"||theme==="system"&&settings?.resolvedTheme==="Light"?"light":"dark";
   document.documentElement.dataset.theme=resolvedTheme;
-  document.documentElement.dataset.material=String(settings?.windowMaterial||"Acrylic").toLowerCase();
+  const root=document.documentElement;
+  const transparency=settings?.transparentWindow?clamp(settings.windowTransparency??0,0,60):0;
+  root.dataset.transparent=String(!!settings?.transparentWindow);
+  root.style.setProperty("--window-transparency",`${transparency}%`);
+  const palette=settings?.accentMode==="Artwork"?settings?.artworkPalette:null;
+  root.dataset.artwork=String(!!palette);
+  if(palette){
+    const colors={"--art-background":palette.background,"--art-sidebar":palette.sidebar,"--art-main":palette.main,"--art-panel":palette.panel,"--art-raised":palette.raised,"--art-hover":palette.hover,"--art-control":palette.control};
+    for(const [key,value] of Object.entries(colors))if(/^#[0-9a-f]{6}$/i.test(String(value||"")))root.style.setProperty(key,value);
+  }
   document.documentElement.dataset.motion=String(settings?.motionStyle||"Subtle").toLowerCase();
   const iconVariant=resolvedTheme==="light"?"light":settings?.accentMode==="Artwork"?"accent":"dark";
   const brandLogo=$("#brandLogo");
@@ -110,6 +121,8 @@ function setTheme(settings) {
     document.documentElement.style.setProperty("--accent-ink",luminance>.58?"#101210":"#ffffff");
   }
   if(settings?.browseWidth) document.documentElement.style.setProperty("--browse-width",`${Number(settings.browseWidth)}px`);
+  const transparencySlider=$('[data-setting="windowTransparency"]');
+  if(transparencySlider){transparencySlider.disabled=!settings?.transparentWindow;const output=transparencySlider.parentElement?.querySelector("output");if(output)output.value=`${transparency}%`;}
   applyNavigationSettings(settings);
   applyLayoutPreferences();
 }
@@ -139,7 +152,7 @@ function openModal(title,body,actions) { state.modal={title,body,actions}; $("#m
 function closeModal() { $("#modalLayer").hidden=true; state.modal=null; }
 function askConfirm(title,message,confirmLabel,action) { openModal(title,`<p>${esc(message)}</p>`,`<button class="action" data-modal-close>Cancel</button><button class="action ${confirmLabel.toLowerCase().includes("delete")?"danger":"primary"}" data-confirm="${esc(action)}">${esc(confirmLabel)}</button>`); }
 function openUiResetDialog(){
-  const choices=[["appearance","Colors and appearance","Theme, accent color, window material, and motion"],["layout","Panels and navigation","Sidebar and Now Playing widths, collapse state, navigation order, and browse spacing"],["libraryDisplay","Library display","Visible song columns, resized column widths, and duplicate handling"]];
+  const choices=[["appearance","Colors and appearance","Theme, artwork palette, transparency, and motion"],["layout","Panels and navigation","Sidebar and Now Playing widths, collapse state, navigation order, and browse spacing"],["libraryDisplay","Library display","Visible song columns, resized column widths, and duplicate handling"]];
   const body=`<p>Choose which interface preferences to restore. Every group is selected by default.</p>${choices.map(([key,title,description])=>`<label class="reset-choice"><input type="checkbox" data-reset-category="${key}" checked><span><b>${title}</b><small>${description}</small></span></label>`).join("")}`;
   openModal("Reset UI settings",body,`<button class="action" data-modal-close>Cancel</button><button class="action primary" data-modal-command="reset-ui-settings">Reset selected settings</button>`);
 }
@@ -208,7 +221,7 @@ async function action(name,el) {
     case "queue-down": await call("moveQueue",{index:Number(el.dataset.index),direction:1}); await refreshCurrent(); await renderView(); break;
     case "queue-remove": await call("removeQueue",{index:Number(el.dataset.index)}); await refreshCurrent(); await renderView(); break;
     case "edit-lyrics": await editLyrics(); break;
-    case "search-lyrics": { const trackId=state.lyricsTrack?.id||state.trackId||state.track?.id;const d=await call("searchLyrics",{id:trackId}); openModal("LRCLIB results",(d.results||[]).map((r,i)=>`<button class="action" data-lyric-result="${i}">${esc(r.trackName)} — ${esc(r.artistName)}${r.albumName?` · ${esc(r.albumName)}`:""}</button>`).join("<br>")||"No results found."); $("#modalLayer").dataset.lyrics=JSON.stringify(d.results||[]);$("#modalLayer").dataset.lyricsTrackId=trackId||""; break; }
+    case "search-lyrics": { const trackId=state.lyricsTrack?.id||state.trackId||state.track?.id;const d=await call("searchLyrics",{id:trackId});const results=d.results||[];const body=results.length?`<div class="lyric-search-results">${results.map((r,i)=>`<button class="action lyric-search-result" data-lyric-result="${i}"><span>${esc(r.trackName||"Untitled")}</span><small>${esc(r.artistName||"Unknown artist")}${r.albumName?` · ${esc(r.albumName)}`:""}</small></button>`).join("")}</div>`:`<p>No LRCLIB matches were found for this track.</p>`;openModal("LRCLIB results",body);$("#modalLayer").dataset.lyrics=JSON.stringify(results);$("#modalLayer").dataset.lyricsTrackId=trackId||""; break; }
     case "refresh-devices": await call("refreshAudioDevices"); await renderView(); break;
     case "save-eq": openModal("Save equalizer preset",`<label class="modal-field"><span>Preset name</span><input class="field" id="presetName" maxlength="60"></label>`,`<button class="action" data-modal-close>Cancel</button><button class="action primary" data-modal-command="save-eq">Save preset</button>`); break;
     case "check-updates": { if(el.dataset.busy==="true")break;el.dataset.busy="true";applyUpdateCheckState(true);try{await call("checkUpdates");}catch{}finally{el.dataset.busy="false";applyUpdateCheckState(false);}break;}
@@ -235,12 +248,24 @@ async function action(name,el) {
 
 async function manageRoots() { const d=await call("getFolders",{rootsOnly:true}); openModal("Library folders",(d.roots||[]).map(r=>{const available=r.available!==false&&r.status!=="Unavailable";return `<div class="setting-row ${available?"":"folder-unavailable"}"><div><b>${esc(r.name||r.path)} · ${available?"Available":"Unavailable"}</b><span>${esc(r.path)} · ${Number(r.trackCount||0)} tracks${available?"":" · Reconnect this drive, then rescan the library."}</span></div><button class="action" data-action="remove-root" data-path="${esc(r.path)}">Remove</button></div>`;}).join("")+`<div class="toolbar"><button class="action" data-action="add-folder">Add folder…</button><button class="action" data-action="scan">Rescan library</button></div>`); }
 async function manageExclusions() { const d=await call("getExclusions"); openModal("Scan exclusions",`<p>Windows and common app/cache locations are skipped automatically. Excluding a folder also excludes its subfolders.</p>${(d.paths||[]).map(p=>`<div class="setting-row"><span>${esc(p)}</span><button class="action" data-action="remove-exclusion" data-path="${esc(p)}">Remove</button></div>`).join("")}<button class="action" data-action="add-exclusion">Add ignored folder…</button>`); }
+async function toggleAudioView(){
+  if(state.view!=="Audio"){await navigate("Audio");return;}
+  let previousIndex=-1;
+  for(let index=Math.min(state.historyIndex-1,state.history.length-1);index>=0;index--)if(state.history[index]!=="Audio"){previousIndex=index;break;}
+  if(previousIndex<0){state.history=["Home"];state.historyIndex=0;await navigate("Home",false);return;}
+  state.historyIndex=previousIndex;
+  await navigate(state.history[previousIndex],false);
+}
 async function saveSettings() { const settings={}; $$('[data-setting]').forEach(el=>settings[el.dataset.setting]=el.matches(".toggle")?el.classList.contains("on"):el.value);settings.navigationOrder=state.settings.navigationOrder||[];settings.hiddenPanels=state.settings.hiddenPanels||[];await call("updateSettings",{settings});state.settings={...state.settings,...settings};setTheme(state.settings);toast("Settings saved.");await renderView(); }
 
 async function handleMenu(actionName,id) { $("#contextMenu").classList.remove("show"); const actions={play:"play-track","play-next":"play-next",queue:"queue",playlist:"playlist","create-playlist-with-track":"create-playlist-with-track",favorite:"favorite",rating:"rating",lyrics:"lyrics",tags:"tags","restore-tags":"restore-tags",details:"details",location:"location"}; await action(actions[actionName],{dataset:{id}}); }
 
 document.addEventListener("click",async e=>{
-  const nav=e.target.closest("[data-view]"); if(nav){ e.preventDefault(); await navigate(nav.dataset.view||"Home"); return; }
+  const lyricResult=e.target.closest("[data-lyric-result]");
+  if(lyricResult){e.preventDefault();const index=Number(lyricResult.dataset.lyricResult),results=JSON.parse($("#modalLayer").dataset.lyrics||"[]"),selected=results[index],trackId=$("#modalLayer").dataset.lyricsTrackId||state.lyricsTrack?.id||state.trackId||state.track?.id;if(!selected)return;const lyrics=String(selected.syncedLyrics||selected.plainLyrics||"").trim();if(!lyrics){toast("This LRCLIB result does not include readable lyrics.");return;}closeModal();try{await editLyrics(lyrics,trackId);}catch(error){openModal("Could not open lyrics",`<p>${esc(error.message||"The selected track is no longer available.")}</p>`);}
+    return;
+  }
+  const nav=e.target.closest("[data-view]"); if(nav){ e.preventDefault(); if(nav.dataset.view==="Audio"&&state.view==="Audio")await toggleAudioView();else await navigate(nav.dataset.view||"Home"); return; }
   const menu=e.target.closest("[data-menu-action]"); if(menu){ await handleMenu(menu.dataset.menuAction,$("#contextMenu").dataset.id); return; }
   const filter=e.target.closest("[data-filter]"); if(filter){ state.filter=filter.dataset.filter; await renderView(); return; }
   const open=e.target.closest("[data-open-type]"); if(open && !e.target.closest("[data-action]")){ const type=open.dataset.openType; if(type==="playlist"){state.playlist={id:open.dataset.openId,name:open.dataset.openName};await navigate("Playlist");} else {state.group={column:type,name:open.dataset.openName,id:open.dataset.openId};await navigate(type==="album"?"Album":type==="artist"?"Artist":type==="folder"?"Folder":"Genre");} return; }
@@ -258,7 +283,6 @@ document.addEventListener("click",async e=>{
   } catch {} return; }
   const confirm=e.target.closest("[data-confirm]"); if(confirm){const kind=confirm.dataset.confirm; const id=$("#modalLayer").dataset.trackId; const path=$("#modalLayer").dataset.path; const backupId=$("#backupChoice")?.value||$("#modalLayer").dataset.backupId; if(kind==="delete-playlist") await call("deletePlaylist",{playlistId:state.playlist.id}); else if(kind==="remove-root") await call("removeRoot",{path}); else if(kind==="clear-queue") await call("clearQueue"); else if(kind==="restore-tags") await call("restoreTags",{id,backupId}); closeModal(); await renderView(); return; }
   if(e.target.closest("[data-modal-close]")||e.target===$("#modalClose")){closeModal();return;}
-  if(e.target.closest("[data-lyric-result]")){const index=Number(e.target.closest("[data-lyric-result]").dataset.lyricResult);const results=JSON.parse($("#modalLayer").dataset.lyrics||"[]");const selected=results[index];if(selected){try{await editLyrics(selected.syncedLyrics||selected.plainLyrics||"",$("#modalLayer").dataset.lyricsTrackId);}catch(error){toast("Could not load selected lyrics: "+(error.message||"The track is no longer available."));}}return;}
   if(!e.target.closest("#contextMenu")) $("#contextMenu").classList.remove("show");
 });
 
@@ -274,6 +298,17 @@ document.addEventListener("keydown",async e=>{
   if(e.key==="Enter"&&e.target.matches("[data-open-type]"))e.target.click();
   if(e.key==="Escape"){closeModal();$("#contextMenu").classList.remove("show");}
 });
+document.addEventListener("keydown",async e=>{
+  if(e.code!=="Space"||e.repeat||e.ctrlKey||e.altKey||e.metaKey)return;
+  const target=e.target instanceof Element?e.target:null;
+  const queueEntry=target?.closest(".queue-row[data-action='play-queue']");
+  if(queueEntry){e.preventDefault();e.stopImmediatePropagation();try{await action("play-queue",queueEntry);}catch{}return;}
+  const location=target?.closest(".location[data-action='copy-location']");
+  if(location){e.preventDefault();e.stopImmediatePropagation();try{await action("copy-location",location);}catch{}return;}
+  if(target?.closest("input,textarea,select,[contenteditable='true'],[role='slider'],[data-lyric-result],#modalLayer [data-modal-close],#modalLayer [data-modal-command]"))return;
+  e.preventDefault();e.stopImmediatePropagation();
+  try{await call("playPause");await refreshCurrent();}catch{}
+},true);
 
 $("#globalSearch").addEventListener("input",e=>{
   const input=e.currentTarget,query=input.value,revision=++searchInputRevision;clearTimeout(searchTimer);searchTimer=setTimeout(async()=>{
@@ -289,7 +324,24 @@ $("#topMenuToggle").addEventListener("click",()=>{const menu=$("#topMenu"),show=
 $("#sidebarToggleBtn").addEventListener("click",async()=>{const collapsed=$("#appRoot").classList.contains("sidebar-collapsed");const value=!collapsed;state.settings.sidebarCollapsed=value;layoutDrag.sidebarCollapsed=value;applyLayoutPreferences();try{await call("updateSettings",{settings:{sidebarCollapsed:value}})}catch{}});
 $("#topMenu").addEventListener("click",()=>{$("#topMenu").hidden=true;$("#topMenuToggle").setAttribute("aria-expanded","false");});
 document.addEventListener("click",e=>{if(!e.target.closest(".top-menu-wrap")){$("#topMenu").hidden=true;$("#topMenuToggle").setAttribute("aria-expanded","false");}});
+async function setImmersiveMode(enabled){
+  const layer=$("#immersivePlayer");
+  if(enabled&&!state.track){toast("Choose a track before opening the full-screen player.");return;}
+  try{await call("setImmersiveMode",{enabled});layer.hidden=!enabled;document.documentElement.classList.toggle("immersive-active",enabled);if(enabled){updatePlayer();revealImmersiveExit();}}
+  catch{if(enabled){layer.hidden=true;document.documentElement.classList.remove("immersive-active");}}
+}
+let immersiveExitTimer;
+function revealImmersiveExit(){const layer=$("#immersivePlayer");layer.classList.add("controls-visible");clearTimeout(immersiveExitTimer);immersiveExitTimer=setTimeout(()=>layer.classList.remove("controls-visible"),2400);}
 $("#playBtn").addEventListener("click",async()=>{await call("playPause");await refreshCurrent();}); $("#prevBtn").addEventListener("click",async()=>{await call("previous");await refreshCurrent();}); $("#nextBtn").addEventListener("click",async()=>{await call("next");await refreshCurrent();});
+$("#immersiveToggle").addEventListener("click",()=>setImmersiveMode(true));
+$("#immersiveExit").addEventListener("click",()=>setImmersiveMode(false));
+$("#immersivePlayer").addEventListener("pointermove",revealImmersiveExit);
+$("#immersivePlayer").addEventListener("click",async event=>{const view=event.target.closest("[data-view]");if(!view)return;event.preventDefault();event.stopPropagation();await setImmersiveMode(false);if(view.dataset.view==="Audio"&&state.view==="Audio")await toggleAudioView();else await navigate(view.dataset.view||"Home");});
+document.addEventListener("keydown",event=>{if(event.key==="Escape"&&!$("#immersivePlayer").hidden){event.preventDefault();setImmersiveMode(false);}},true);
+$("#immersivePlay").addEventListener("click",async()=>{await call("playPause");await refreshCurrent();});
+$("#immersivePrev").addEventListener("click",async()=>{await call("previous");await refreshCurrent();});
+$("#immersiveNext").addEventListener("click",async()=>{await call("next");await refreshCurrent();});
+$("#immersiveHeart").addEventListener("click",()=>action("favorite",{dataset:{id:state.track?.id||""}}));
 $("#shuffleBtn").addEventListener("click",async()=>{await call("toggleShuffle");await refreshCurrent();}); $("#repeatBtn").addEventListener("click",async()=>{await call("cycleRepeat");await refreshCurrent();}); $("#abBtn").addEventListener("click",async()=>{await call("toggleAbRepeat");await refreshCurrent();}); $("#heartBtn").addEventListener("click",()=>action("favorite",{dataset:{id:state.track?.id||""}}));
 const progressRange=$("#progressRange");let lastSeekCommit={seconds:-1,time:0};
 function previewSeek(){const seconds=clamp(progressRange.value,0,Math.max(1,state.duration));state.seekPreviewSeconds=seconds;progressRange.style.setProperty("--range-progress",`${seconds/Math.max(1,state.duration)*100}%`);$("#currentTime").textContent=fmtDuration(seconds);}
@@ -301,6 +353,11 @@ progressRange.addEventListener("pointercancel",()=>{state.seeking=false;state.se
 progressRange.addEventListener("change",()=>{if(!state.seeking)state.seeking=true;commitSeek().catch(()=>{});});
 progressRange.addEventListener("keydown",e=>{if(["ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"].includes(e.key)){state.seeking=true;}});
 progressRange.addEventListener("keyup",e=>{if(state.seeking&&["ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"].includes(e.key))commitSeek().catch(()=>{});});
+const immersiveProgress=$("#immersiveProgress");
+immersiveProgress.addEventListener("pointerdown",()=>{state.seeking=true;});
+immersiveProgress.addEventListener("input",()=>{progressRange.value=immersiveProgress.value;previewSeek();});
+immersiveProgress.addEventListener("pointerup",()=>{if(state.seeking){progressRange.value=immersiveProgress.value;commitSeek().catch(()=>{});}});
+immersiveProgress.addEventListener("change",()=>{if(!state.seeking)state.seeking=true;progressRange.value=immersiveProgress.value;commitSeek().catch(()=>{});});
 $("#volumeRange").addEventListener("input",e=>setVolume(e.target.value)); $("#muteBtn").addEventListener("click",toggleMute);
 function setPanelOpen(open){state.panelOpen=!!open;const root=$("#appRoot");root.classList.toggle("panel-closed",!state.panelOpen);root.classList.toggle("panel-open",state.panelOpen);$("#panelToggleBtn").setAttribute("aria-label",state.panelOpen?"Hide Now Playing panel":"Show Now Playing panel");$("#panelToggleBtn").title=state.panelOpen?"Hide Now Playing panel":"Show Now Playing panel";}
 function startPanelResize(handle,kind){
@@ -365,7 +422,9 @@ function updateScanPresentation(scan) {
 }
 $("#panelClose").addEventListener("click",()=>setPanelOpen(false));$("#panelToggleBtn").addEventListener("click",()=>setPanelOpen(!state.panelOpen));$$('.panel-tabs [data-panel]').forEach(b=>b.addEventListener("click",async()=>{state.panel=b.dataset.panel;updatePanel();await call("setPanelMode",{mode:state.panel});state.settings.rightSidebarMode=state.panel==="info"?"Info":"Queue";}));
 $("#routeView").addEventListener("change",async e=>{if(e.target.id==="sortSelect"){state.sort=e.target.value;state.offset=0;await renderView();}if(e.target.id==="duplicateSort"){state.duplicateSort=e.target.value;state.duplicateOffset=0;await renderView();}if(e.target.id==="outputDevice")await call("setAudioDevice",{id:e.target.value});if(e.target.id==="crossfade")await call("setCrossfade",{seconds:Number(e.target.value)});if(e.target.id==="eqPreset"){await call("setEqualizerPreset",{name:e.target.value});await renderView();}if(e.target.matches("[data-setting]")){const s={};s[e.target.dataset.setting]=e.target.value;await call("updateSettings",{settings:s});state.settings={...state.settings,...s};setTheme(state.settings);}});
+$("#routeView").addEventListener("click",event=>{const toggle=event.target.closest('[data-setting="transparentWindow"]');if(toggle)requestAnimationFrame(()=>{const range=$('[data-setting="windowTransparency"]');if(range)range.disabled=!toggle.classList.contains("on");});},true);
 $("#routeView").addEventListener("input",async e=>{if(e.target.matches("[data-eq]")){e.target.nextElementSibling.textContent=`${Number(e.target.value).toFixed(1)} dB`;await call("setEqualizerBand",{index:Number(e.target.dataset.eq),value:Number(e.target.value)});}if(e.target.id==="audioVolume")await setVolume(e.target.value);});
+$("#routeView").addEventListener("input",e=>{if(e.target.dataset.setting!=="windowTransparency")return;state.settings.windowTransparency=e.target.value;const output=e.target.parentElement?.querySelector("output");if(output)output.value=e.target.value+"%";setTheme(state.settings);});
 $("#routeView").addEventListener("click",async e=>{const sort=e.target.closest("[data-sort]");if(sort){state.sort=sort.dataset.sort;state.offset=0;await renderView();}const toggle=e.target.closest("[data-setting].toggle");if(toggle){toggle.classList.toggle("on");toggle.setAttribute("aria-checked",toggle.classList.contains("on"));const s={};s[toggle.dataset.setting]=toggle.classList.contains("on");await call("updateSettings",{settings:s});state.settings={...state.settings,...s};setTheme(state.settings);return;}const move=e.target.closest("[data-nav-move]");if(move){const order=navigationViewOrder(state.settings),index=order.indexOf(move.dataset.navView),next=index+Number(move.dataset.navMove);if(index>0&&next>0&&next<order.length){[order[index],order[next]]=[order[next],order[index]];state.settings.navigationOrder=order.slice(1);applyNavigationSettings(state.settings);$(".nav-settings").innerHTML=navigationSettingsMarkup(state.settings);try{await call("updateSettings",{settings:{navigationOrder:state.settings.navigationOrder}})}catch{}}return;}const visible=e.target.closest("[data-nav-visible]");if(visible){const view=visible.dataset.navVisible;const hidden=new Set(state.settings.hiddenPanels||[]);if(hidden.has(view))hidden.delete(view);else hidden.add(view);state.settings.hiddenPanels=[...hidden];applyNavigationSettings(state.settings);$(".nav-settings").innerHTML=navigationSettingsMarkup(state.settings);try{await call("updateSettings",{settings:{hiddenPanels:state.settings.hiddenPanels}})}catch{}}});
 $("#routeView").addEventListener("click",async e=>{
   const tab=e.target.closest("[data-settings-nav]");
@@ -388,7 +447,7 @@ onEvent((name,data)=>{
   else if(name==="updateCheckState")applyUpdateCheckState(!!data.checking);
   else if(name==="libraryChanged"){if(["Home","Folders","Playlists","Playlist","Album","Artist","Genre","Folder","Albums","Artists","Genres","Favorites","Most Played","Recently Played","Recently Added","With Lyrics","Songs","Search","Duplicates","Now Playing"].includes(state.view))renderView();}
   else if(name==="settingsChanged"){state.settings={...state.settings,...data};setTheme(state.settings);}
-  else if(name==="artworkAccentChanged"){state.settings.artworkAccent=data.color||"";setTheme(state.settings);}
+  else if(name==="artworkAccentChanged"){state.settings.artworkAccent=data.color||"";state.settings.artworkPalette=data.palette||null;setTheme(state.settings);}
   else if(name==="notification")toast(data.message||"");
   else if(name==="updateAvailable")openModal(`Music Player ${esc(data.tag||"")} is available`,"Updates are opened in your browser and are never installed automatically.",`<button class="action" data-modal-close>Later</button><button class="action primary" data-action="open-release" data-url="${esc(data.url||"")}">View release</button>`);
 });
