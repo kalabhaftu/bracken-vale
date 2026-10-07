@@ -9,35 +9,47 @@ internal sealed class TrackAvailabilityService(
     LibraryQueryService queries,
     LibraryLocationService locations)
 {
-    public AvailabilityReconciliation ReconcileIndexedTracks()
+    public AvailabilityReconciliation ReconcileIndexedTracks(IEnumerable<string>? unavailableRoots = null, IEnumerable<string>? incompletePaths = null)
     {
         const int pageSize = 800;
-        var paths = new List<string>();
-        for (var offset = 0; ; offset += pageSize)
-        {
-            var page = store.GetTrackPaths(offset: offset, pageSize: pageSize);
-            paths.AddRange(page);
-            if (page.Count < pageSize) break;
-        }
-
         var removed = new List<string>();
         var unavailable = 0;
         var recovered = 0;
-        foreach (var path in paths)
+        var protectedPrefixes = (unavailableRoots ?? Array.Empty<string>())
+            .Concat(incompletePaths ?? Array.Empty<string>())
+            .Select(TryNormalizePrefix).Where(prefix => prefix is not null).Cast<string>().ToArray();
+        var offset = 0;
+        while (true)
         {
-            if (File.Exists(path))
+            var paths = store.GetTrackPaths(offset: offset, pageSize: pageSize);
+            if (paths.Count == 0) break;
+            var removedFromPage = new List<string>();
+            foreach (var path in paths)
             {
-                if (queries.SetTrackUnavailable(path, false)) recovered++;
-                continue;
+                if (File.Exists(path))
+                {
+                    if (queries.SetTrackUnavailable(path, false)) recovered++;
+                    continue;
+                }
+
+                queries.SetTrackUnavailable(path, true);
+                if (!protectedPrefixes.Any(prefix => IsAncestorDirectory(prefix, path)) && IsConfirmedMissingFile(path)) removedFromPage.Add(path);
+                else unavailable++;
             }
 
-            queries.SetTrackUnavailable(path, true);
-            if (IsConfirmedMissingFile(path)) removed.Add(path);
-            else unavailable++;
+            if (removedFromPage.Count > 0)
+            {
+                store.RemoveTracks(removedFromPage);
+                removed.AddRange(removedFromPage);
+                // Deletions collapse the ordered result set; revisit this page's offset
+                // so the shifted tracks are not skipped.
+            }
+            else
+            {
+                offset += paths.Count;
+                if (paths.Count < pageSize) break;
+            }
         }
-
-        if (removed.Count > 0)
-            store.RemoveTracks(removed);
         return new(removed, unavailable, recovered);
     }
 
@@ -120,14 +132,34 @@ internal sealed class TrackAvailabilityService(
         var parentAvailable = !string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent);
         var accessibleConfiguredRootContainsPath = !parentAvailable && locations.GetLibraryRoots()
             .Any(root => IsAncestorDirectory(root, fullPath) && Directory.Exists(root));
-        if (!parentAvailable && !accessibleConfiguredRootContainsPath) return false;
+        var storageVolumeAvailable = IsStorageVolumeAvailable(fullPath);
+        if (!parentAvailable && !accessibleConfiguredRootContainsPath && !storageVolumeAvailable) return false;
 
         try { _ = File.GetAttributes(fullPath); return false; }
         catch (FileNotFoundException) { return true; }
-        catch (DirectoryNotFoundException) { return accessibleConfiguredRootContainsPath; }
+        catch (DirectoryNotFoundException) { return parentAvailable || accessibleConfiguredRootContainsPath || storageVolumeAvailable; }
         catch (UnauthorizedAccessException) { return false; }
         catch (SecurityException) { return false; }
         catch (IOException) { return false; }
+    }
+
+    private static bool IsStorageVolumeAvailable(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(path);
+            return !string.IsNullOrWhiteSpace(root) && new DriveInfo(root).IsReady;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static string? TryNormalizePrefix(string path)
+    {
+        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
     }
 
     private static bool IsAncestorDirectory(string root, string path)

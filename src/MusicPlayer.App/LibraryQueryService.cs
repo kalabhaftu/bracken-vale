@@ -22,6 +22,7 @@ internal sealed class LibraryQueryService
     private readonly LibraryStore _store;
     private readonly string _artworkDirectory;
     private readonly Dictionary<string, string> _trackPaths = new(StringComparer.Ordinal);
+    private readonly object _trackPathGate = new();
     private readonly HashSet<string> _unavailableTrackPaths = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly object _availabilityGate = new();
     private readonly HashSet<string> _unavailableRootPaths = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -300,10 +301,15 @@ internal sealed class LibraryQueryService
         _store.GetTrackPaths(groupColumn: column, groupValue: value, hideExactDuplicates: HideExactDuplicates);
 
     public Track? ResolveTrack(string? id) =>
-        !string.IsNullOrWhiteSpace(id) && _trackPaths.TryGetValue(id, out var path) ? _store.GetTrack(path) : null;
+        ResolveTrackPath(id) is { } path ? _store.GetTrack(path) : null;
 
     public string? ResolveTrackPath(string? id) =>
-        !string.IsNullOrWhiteSpace(id) && _trackPaths.TryGetValue(id, out var path) ? path : null;
+        string.IsNullOrWhiteSpace(id) ? null : ResolveCachedTrackPath(id) ?? _store.ResolveTrackHandle(id);
+
+    private string? ResolveCachedTrackPath(string id)
+    {
+        lock (_trackPathGate) return _trackPaths.TryGetValue(id, out var path) ? path : null;
+    }
 
     public bool SetTrackUnavailable(string path, bool unavailable)
     {
@@ -340,9 +346,19 @@ internal sealed class LibraryQueryService
 
     public string TrackId(string path)
     {
-        var id = OpaqueId(path);
-        if (_trackPaths.Count >= 4096) _trackPaths.Clear();
-        _trackPaths[id] = path;
+        var id = LibraryStore.TrackHandleId(path);
+        lock (_trackPathGate)
+        {
+            if (!_trackPaths.ContainsKey(id) && _trackPaths.Count >= 4096)
+            {
+                var evicted = _trackPaths.First();
+                // Indexed handles already persist. Remember orphaned playlist/queue
+                // entries before eviction so commands never depend on the resident page.
+                _store.RememberTrackPath(evicted.Value);
+                _trackPaths.Remove(evicted.Key);
+            }
+            _trackPaths[id] = path;
+        }
         return id;
     }
 

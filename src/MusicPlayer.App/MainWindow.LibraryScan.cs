@@ -34,19 +34,33 @@ public sealed partial class MainWindow : Window
         var roots = _libraryLocations.GetLibraryRoots().ToList();
         if (_store.GetSetting("library-roots-configured") != "true")
         {
-            roots = DefaultMusicRoots().ToList();
+            if (roots.Count == 0) roots = DefaultMusicRoots().ToList();
             _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
             _store.SetSetting("library-roots-configured", "true");
         }
-        else if (roots.Count > 0 && roots.All(IsVolumeRoot))
-        {
-            // Earlier builds silently scanned every fixed drive. Narrow that implicit default
-            // to the user's Music folder while preserving any explicitly chosen subfolders.
-            roots = DefaultMusicRoots().ToList();
-            _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
-        }
         _libraryFileWatcher.SetRoots(roots);
         if (roots.Count > 0) StartScan(roots);
+        else _ = ReconcileIndexedLibraryAtStartupAsync();
+    }
+
+    private async Task ReconcileIndexedLibraryAtStartupAsync()
+    {
+        try
+        {
+            var result = await Task.Run(() => _trackAvailability.ReconcileIndexedTracks());
+            if (_windowClosed) return;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_windowClosed) return;
+                foreach (var path in result.RemovedPaths)
+                    _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(path), fileUnavailable = true });
+                PublishLibraryChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            LocalAppLog.Shared.Warning("library-availability", "Startup could not reconcile indexed file availability.", ex);
+        }
     }
 
     private static IEnumerable<string> DefaultMusicRoots()
@@ -55,18 +69,6 @@ public sealed partial class MainWindow : Window
         return !string.IsNullOrWhiteSpace(music) && Directory.Exists(music) ? [Path.GetFullPath(music)] : [];
     }
 
-    private static bool IsVolumeRoot(string path)
-    {
-        try
-        {
-            var fullPath = Path.GetFullPath(path);
-            var root = Path.GetPathRoot(fullPath);
-            return !string.IsNullOrEmpty(root) && string.Equals(
-                Path.TrimEndingDirectorySeparator(fullPath), Path.TrimEndingDirectorySeparator(root),
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
-    }
 
     private async void StartScan(IEnumerable<string> roots, bool forceRefresh = false)
     {
@@ -125,7 +127,8 @@ public sealed partial class MainWindow : Window
                     // catches files deleted before the watcher started or outside the
                     // currently selected roots, while the availability service retains
                     // references whose containing drive or folder cannot be reached.
-                    var reconciliation = await Task.Run(_trackAvailability.ReconcileIndexedTracks);
+                    var reconciliation = await Task.Run(() => _trackAvailability.ReconcileIndexedTracks(
+                        unavailableRoots, result.IncompletePaths ?? Array.Empty<string>()));
                     foreach (var path in reconciliation.RemovedPaths)
                         _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(path), fileUnavailable = true });
                     foreach (var path in _trackAvailability.ClearUnavailableTracksThatExist())

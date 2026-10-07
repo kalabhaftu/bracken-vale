@@ -2,7 +2,7 @@ using BrackenVale.Core;
 
 namespace BrackenVale.App;
 
-/// <summary>Watches configured music folders for removals so stale songs do not wait for a click.</summary>
+/// <summary>Watches configured music folders for changes so the index follows the filesystem.</summary>
 internal sealed class LibraryFileWatcher : IDisposable
 {
     private readonly object _gate = new();
@@ -38,12 +38,14 @@ internal sealed class LibraryFileWatcher : IDisposable
                     var watcher = new FileSystemWatcher(root)
                     {
                         IncludeSubdirectories = true,
-                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
                         InternalBufferSize = 32 * 1024,
                         EnableRaisingEvents = false
                     };
                     watcher.Deleted += (_, args) => QueueRemoved(args.FullPath);
-                    watcher.Renamed += (_, args) => QueueRemoved(args.OldFullPath);
+                    watcher.Created += (_, args) => { if (LibraryScanner.IsSupportedAudioFile(args.FullPath)) QueueRescan(); };
+                    watcher.Changed += (_, args) => { if (LibraryScanner.IsSupportedAudioFile(args.FullPath)) QueueRescan(); };
+                    watcher.Renamed += (_, args) => { QueueRemoved(args.OldFullPath); if (LibraryScanner.IsSupportedAudioFile(args.FullPath)) QueueRescan(); };
                     watcher.Error += (_, args) =>
                     {
                         LocalAppLog.Shared.Warning("library-watch", $"A library folder change could not be observed under '{root}'.", args.GetException());

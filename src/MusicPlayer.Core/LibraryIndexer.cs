@@ -79,11 +79,94 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
             throw;
         }
         FlushPending();
+        // Explicit rebuilds also repair already-indexed files that no longer sit under
+        // today's configured roots. Normal scans cheaply revisit only broken artwork.
+        var repaired = await RefreshIndexedFilesAsync(forceRefresh, scanRoots, control).ConfigureAwait(false);
+        indexed += repaired;
         var removed = scan.Complete();
         if (removed > 0) store.InvalidateExactFingerprintSnapshot();
         store.PruneUnreferencedArtwork(artworkCache);
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         return new(indexed, skipped, removed, unavailableRoots.Distinct(comparer).ToArray(), incompletePaths.Distinct(comparer).ToArray());
+    }
+
+    private async Task<int> RefreshIndexedFilesAsync(bool forceRefresh, IReadOnlyList<string> scanRoots, ScanControl control)
+    {
+        const int pageSize = 400;
+        var changed = 0;
+        var batch = new List<Track>(32);
+        async Task RefreshOneAsync(Track indexedTrack)
+        {
+            control.Token.ThrowIfCancellationRequested();
+            await control.WaitIfPausedAsync().ConfigureAwait(false);
+            if (!File.Exists(indexedTrack.Path)) return;
+            try
+            {
+                batch.Add(await Task.Run(() => TrackReader.Read(indexedTrack.Path, artworkCache), control.Token).ConfigureAwait(false));
+                if (batch.Count >= 32)
+                {
+                    store.UpsertTracks(batch);
+                    changed += batch.Count;
+                    batch.Clear();
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
+            {
+                _log.Warning("indexer", "Could not refresh metadata for an existing indexed track.", ex);
+            }
+        }
+
+        if (forceRefresh)
+        {
+            // Traverse by immutable path so metadata/title updates do not shift later
+            // pages. Keep each query and its metadata objects bounded for large libraries.
+            for (var offset = 0; ; offset += pageSize)
+            {
+                control.Token.ThrowIfCancellationRequested();
+                var page = store.GetTracksPage(sort: TrackSort.Path, offset: offset, pageSize: pageSize);
+                foreach (var track in page)
+                {
+                    if (scanRoots.Any(root => IsWithinRoot(root, track.Path))) continue;
+                    await RefreshOneAsync(track).ConfigureAwait(false);
+                }
+                if (page.Count < pageSize) break;
+            }
+        }
+        else
+        {
+            // Normal scans only query bounded pages and reopen files whose cached cover
+            // disappeared. Avoid one database connection per song in large libraries.
+            for (var offset = 0; ; offset += pageSize)
+            {
+                control.Token.ThrowIfCancellationRequested();
+                var page = store.GetTracksPage(sort: TrackSort.Title, offset: offset, pageSize: pageSize);
+                foreach (var track in page)
+                {
+                    if (string.IsNullOrWhiteSpace(track.ArtworkPath) || File.Exists(track.ArtworkPath)) continue;
+                    await RefreshOneAsync(track).ConfigureAwait(false);
+                }
+                if (page.Count < pageSize) break;
+            }
+        }
+        if (batch.Count > 0)
+        {
+            store.UpsertTracks(batch);
+            changed += batch.Count;
+        }
+        return changed;
+    }
+
+    private static bool IsWithinRoot(string root, string path)
+    {
+        try
+        {
+            var relative = Path.GetRelativePath(root, path);
+            return !Path.IsPathRooted(relative) && relative != ".." &&
+                !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
+                !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
     }
 
     private static bool MayStillExist(string path)

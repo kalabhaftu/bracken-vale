@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Security;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
@@ -10,7 +12,7 @@ public sealed record IndexedFileState(long Length, DateTime ModifiedUtc);
 
 public sealed partial class LibraryStore
 {
-    private const int SchemaVersion = 7;
+    private const int SchemaVersion = 8;
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly LocalAppLog _log;
@@ -174,6 +176,36 @@ public sealed partial class LibraryStore
             """;
         BindTrack(command, track);
         command.ExecuteNonQuery();
+        RememberTrackPath(connection, transaction, track.Path);
+    }
+
+    public static string TrackHandleId(string path) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path))))[..24];
+
+    public void RememberTrackPath(string path)
+    {
+        using var connection = Open();
+        RememberTrackPath(connection, null, path);
+    }
+
+    private static void RememberTrackPath(SqliteConnection connection, SqliteTransaction? transaction, string path)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "INSERT OR IGNORE INTO track_handles(id,path) VALUES($id,$path)";
+        Add(command, "$id", TrackHandleId(path));
+        Add(command, "$path", Path.GetFullPath(path));
+        command.ExecuteNonQuery();
+    }
+
+    public string? ResolveTrackHandle(string id)
+    {
+        if (id.Length != 24 || !id.All(Uri.IsHexDigit)) return null;
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT path FROM track_handles WHERE id=$id";
+        Add(command, "$id", id);
+        return command.ExecuteScalar() as string;
     }
 
     public Track? GetTrack(string path)
@@ -902,6 +934,49 @@ public sealed partial class LibraryStore
             migrate.Transaction = transaction;
             migrate.CommandText = "CREATE TABLE scan_incomplete_paths(run_id INTEGER NOT NULL,path TEXT NOT NULL,prefix TEXT NOT NULL,PRIMARY KEY(run_id,path),FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE); CREATE INDEX ix_scan_incomplete_paths_run ON scan_incomplete_paths(run_id); PRAGMA user_version=7;";
             migrate.ExecuteNonQuery();
+            transaction.Commit();
+            version = 7;
+        }
+        if (version == 7)
+        {
+            using var transaction = connection.BeginTransaction();
+            using var migrate = connection.CreateCommand();
+            migrate.Transaction = transaction;
+            migrate.CommandText = """
+                CREATE TABLE track_interaction_state(
+                  path TEXT PRIMARY KEY, added_utc TEXT NOT NULL, favorite INTEGER NOT NULL,
+                  rating INTEGER NOT NULL, play_count INTEGER NOT NULL, last_played_utc TEXT NULL);
+                INSERT INTO track_interaction_state SELECT path,added_utc,favorite,rating,play_count,last_played_utc FROM tracks;
+                CREATE TRIGGER tracks_preserve_interactions BEFORE DELETE ON tracks BEGIN
+                  INSERT INTO track_interaction_state(path,added_utc,favorite,rating,play_count,last_played_utc)
+                  VALUES(old.path,old.added_utc,old.favorite,old.rating,old.play_count,old.last_played_utc)
+                  ON CONFLICT(path) DO UPDATE SET added_utc=excluded.added_utc,favorite=excluded.favorite,
+                    rating=excluded.rating,play_count=excluded.play_count,last_played_utc=excluded.last_played_utc;
+                END;
+                CREATE TRIGGER tracks_restore_interactions AFTER INSERT ON tracks
+                WHEN EXISTS(SELECT 1 FROM track_interaction_state WHERE path=new.path) BEGIN
+                  UPDATE tracks SET (added_utc,favorite,rating,play_count,last_played_utc)=
+                    (SELECT added_utc,favorite,rating,play_count,last_played_utc FROM track_interaction_state WHERE path=new.path)
+                  WHERE path=new.path;
+                END;
+                CREATE TABLE track_handles(id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE);
+                PRAGMA user_version=8;
+                """;
+            migrate.ExecuteNonQuery();
+            for (var offset = 0; ; offset += 512)
+            {
+                var paths = new List<string>(512);
+                using (var read = connection.CreateCommand())
+                {
+                    read.Transaction = transaction;
+                    read.CommandText = "SELECT path FROM tracks ORDER BY rowid LIMIT 512 OFFSET $offset";
+                    Add(read, "$offset", offset);
+                    using var reader = read.ExecuteReader();
+                    while (reader.Read()) paths.Add(reader.GetString(0));
+                }
+                foreach (var path in paths) RememberTrackPath(connection, transaction, path);
+                if (paths.Count < 512) break;
+            }
             transaction.Commit();
         }
     }
