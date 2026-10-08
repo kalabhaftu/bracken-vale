@@ -10,7 +10,9 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "Music Player executable was not found: $executable"
 }
 
-$extensions = @('.mp3', '.flac', '.wav', '.wave', '.aif', '.aiff', '.m4a', '.m4b', '.mp4', '.aac', '.ogg', '.oga', '.opus', '.wma', '.ape', '.wv', '.tta', '.mpc', '.dsf', '.dff')
+$extensions = @('.mp3', '.flac', '.wav', '.wave', '.aif', '.aiff', '.m4a', '.m4b', '.aac', '.ogg', '.oga', '.opus', '.wma', '.ape', '.wv', '.tta', '.mpc', '.dsf', '.dff')
+$legacyExtensions = @('.mp4')
+$unregisterExtensions = @($extensions + $legacyExtensions)
 $registeredAppsKey = 'HKCU:\Software\RegisteredApplications'
 $capabilitiesRelativePath = "Software\MusicPlayer\Capabilities\$ApplicationName"
 $capabilities = "HKCU:\$capabilitiesRelativePath"
@@ -73,7 +75,7 @@ if ($Unregister) {
         Remove-ItemProperty -LiteralPath $registeredAppsKey -Name $ApplicationName -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $appKey -Recurse -Force -ErrorAction SilentlyContinue
 
-        foreach ($extension in $extensions) {
+        foreach ($extension in $unregisterExtensions) {
             $progId = "$associationName.$($extension.TrimStart('.'))"
             Remove-OpenWithProgId -Extension $extension -ProgId $progId
             Remove-Item -LiteralPath "HKCU:\Software\Classes\$progId" -Recurse -Force -ErrorAction SilentlyContinue
@@ -87,6 +89,17 @@ if ($Unregister) {
         Write-Host 'A different Music Player executable is registered; its shell entries were kept.'
     }
     exit 0
+}
+
+# Remove the old accidental video-file registration when upgrading a portable install.
+foreach ($extension in $legacyExtensions) {
+    $progId = "$associationName.$($extension.TrimStart('.'))"
+    Remove-OpenWithProgId -Extension $extension -ProgId $progId
+    Remove-Item -LiteralPath "HKCU:\Software\Classes\$progId" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "HKCU:\Software\Classes\SystemFileAssociations\$extension\shell\MusicPlayerAddToQueue" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "HKCU:\Software\Classes\SystemFileAssociations\$extension\shell\MusicPlayerCreatePlaylist" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-ItemProperty -LiteralPath "$appKey\SupportedTypes" -Name $extension -ErrorAction SilentlyContinue
+    Remove-ItemProperty -LiteralPath "$capabilities\FileAssociations" -Name $extension -ErrorAction SilentlyContinue
 }
 
 New-Item -Path $integrationRoot -Force | Out-Null

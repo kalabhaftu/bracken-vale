@@ -34,7 +34,6 @@
               <uap:FileType>.aiff</uap:FileType>
               <uap:FileType>.m4a</uap:FileType>
               <uap:FileType>.m4b</uap:FileType>
-              <uap:FileType>.mp4</uap:FileType>
               <uap:FileType>.aac</uap:FileType>
               <uap:FileType>.ogg</uap:FileType>
               <uap:FileType>.oga</uap:FileType>

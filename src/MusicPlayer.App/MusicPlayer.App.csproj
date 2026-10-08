@@ -7,6 +7,7 @@
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SatelliteResourceLanguages>en;en-US</SatelliteResourceLanguages>
     <AppxPackageVersion>0.1.0.0</AppxPackageVersion>
     <WindowsPackageType>MSIX</WindowsPackageType>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
@@ -31,7 +32,9 @@
   <ItemGroup>
     <ProjectReference Include="../MusicPlayer.Core/MusicPlayer.Core.csproj" />
     <Content Include="Assets/**" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="WebUI/**" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="WebUI/**">
+      <LogicalName>MusicPlayerWebUI/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../ThirdPartyNotices.md" Link="ThirdPartyNotices.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../third-party-licenses/**">
@@ -39,4 +42,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+  <Target Name="RemoveLegacyLooseWebUI" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(OutDir)WebUI')">
+    <RemoveDir Directories="$(OutDir)WebUI" />
+  </Target>
 </Project>

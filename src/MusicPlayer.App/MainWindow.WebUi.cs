@@ -37,8 +37,8 @@ public sealed partial class MainWindow
                 HandleWebUiSettingsCommandAsync,
                 HandleWebUiUtilityCommandAsync);
             _webBridge = new(WebUi, commandRouter);
-            await _webBridge.InitializeAsync(Path.Combine(AppContext.BaseDirectory, "WebUI"),
-                Path.Combine(_appData, "Artwork"), Path.Combine(AppContext.BaseDirectory, "Assets"),
+            await _webBridge.InitializeAsync(Path.Combine(_appData, "Artwork"),
+                Path.Combine(AppContext.BaseDirectory, "Assets"),
                 Path.Combine(_appData, "WebView2"));
             _webUiActive = true;
             PublishPlaybackState();

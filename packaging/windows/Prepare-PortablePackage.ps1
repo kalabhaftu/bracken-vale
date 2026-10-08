@@ -39,6 +39,10 @@ if (Test-Path -LiteralPath $destination) {
 $entries = Get-ChildItem -LiteralPath $source -Recurse -Force | Sort-Object { $_.FullName.Length }
 foreach ($entry in $entries) {
     $relativePath = [IO.Path]::GetRelativePath($source, $entry.FullName)
+    $pathSegments = $relativePath -split '[\\/]+'
+    if ($pathSegments -contains 'WebUI' -or ($pathSegments | Where-Object { $_ -match '\.WebView2$' })) {
+        continue
+    }
     $targetPath = Join-Path $destination $relativePath
 
     if ($entry.PSIsContainer) {
@@ -46,7 +50,7 @@ foreach ($entry in $entries) {
         continue
     }
 
-    if ($entry.Extension -in @('.pdb', '.lib')) {
+    if ($entry.Extension -in @('.pdb', '.lib', '.appxrecipe', '.msix', '.msixbundle', '.appinstaller')) {
         continue
     }
 
@@ -63,6 +67,8 @@ Launch MusicPlayer.exe from this folder.
 To add this portable copy to Open with and add Add to Music Player queue / Create Music Player playlist to supported audio-file context menus for your Windows account, run:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Register-MusicPlayer-FileActions.ps1
 To remove those entries before moving or deleting this folder, run the same command with -Unregister.
+To uninstall this portable copy and optionally remove its local index, playlists, settings, artwork cache, and logs, run:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-MusicPlayer.ps1
 On Windows 11, these classic context-menu actions are under Show more options.
 
 Your library database, settings, artwork cache, and logs are stored in:
@@ -78,6 +84,7 @@ $readme = $readme.Replace('__VERSION__', $Version).Replace('__ARCHITECTURE__', $
     [Text.UTF8Encoding]::new($false)
 )
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Register-MusicPlayer-FileActions.ps1') -Destination (Join-Path $destination 'Register-MusicPlayer-FileActions.ps1')
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Uninstall-MusicPlayer.ps1') -Destination (Join-Path $destination 'Uninstall-MusicPlayer.ps1')
 
 if (-not (Test-Path -LiteralPath (Join-Path $destination 'MusicPlayer.exe') -PathType Leaf)) {
     throw 'Staged package is missing MusicPlayer.exe.'
@@ -90,6 +97,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $destination 'ThirdPartyNotices.md')
 }
 if (-not (Test-Path -LiteralPath (Join-Path $destination 'Register-MusicPlayer-FileActions.ps1') -PathType Leaf)) {
     throw 'Staged package is missing the portable file-action registration script.'
+}
+if (-not (Test-Path -LiteralPath (Join-Path $destination 'Uninstall-MusicPlayer.ps1') -PathType Leaf)) {
+    throw 'Staged package is missing the portable uninstaller.'
 }
 if (Get-ChildItem -LiteralPath $destination -Recurse -File -Force | Where-Object { $_.Extension -in @('.pdb', '.lib') }) {
     throw 'Staged package unexpectedly contains a PDB or LIB file.'

@@ -1,7 +1,9 @@
 using System.Text.Json;
+using System.Text;
 using MusicPlayer.Core;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
+using Windows.Storage.Streams;
 
 namespace MusicPlayer.App;
 
@@ -11,13 +13,15 @@ internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRou
     private const string UiHost = "musicplayer.local";
     private const string ArtworkHost = "artwork.musicplayer.local";
     private const string AssetsHost = "assets.musicplayer.local";
+    private const string UiResourcePrefix = "MusicPlayerWebUI/";
+    private static readonly IReadOnlyDictionary<string, byte[]> EmbeddedUi = LoadEmbeddedUi();
     private CoreWebView2? _core;
 
     public bool IsReady => _core is not null;
 
-    public async Task InitializeAsync(string contentFolder, string artworkFolder, string assetsFolder, string userDataFolder)
+    public async Task InitializeAsync(string artworkFolder, string assetsFolder, string userDataFolder)
     {
-        if (!Directory.Exists(contentFolder)) throw new DirectoryNotFoundException($"The packaged UI folder is missing: {contentFolder}");
+        if (!EmbeddedUi.ContainsKey("index.html")) throw new InvalidOperationException("The embedded Music Player interface is missing.");
         var fullUserDataFolder = Path.GetFullPath(userDataFolder);
         Directory.CreateDirectory(fullUserDataFolder);
         var environment = await CoreWebView2Environment.CreateWithOptionsAsync(
@@ -34,7 +38,8 @@ internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRou
         _core.Settings.IsStatusBarEnabled = false;
         _core.Settings.IsZoomControlEnabled = false;
         _core.Settings.AreDevToolsEnabled = false;
-        _core.SetVirtualHostNameToFolderMapping(UiHost, Path.GetFullPath(contentFolder), CoreWebView2HostResourceAccessKind.DenyCors);
+        _core.AddWebResourceRequestedFilter($"https://{UiHost}/*", CoreWebView2WebResourceContext.All);
+        _core.WebResourceRequested += ServeEmbeddedUi;
         if (Directory.Exists(artworkFolder))
             _core.SetVirtualHostNameToFolderMapping(ArtworkHost, Path.GetFullPath(artworkFolder), CoreWebView2HostResourceAccessKind.DenyCors);
         if (Directory.Exists(assetsFolder))
@@ -45,6 +50,65 @@ internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRou
         _core.WebMessageReceived += MessageReceived;
         _core.Navigate($"https://{UiHost}/index.html");
     }
+
+    private static IReadOnlyDictionary<string, byte[]> LoadEmbeddedUi()
+    {
+        var assembly = typeof(WebViewBridge).Assembly;
+        var resources = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var resourceName in assembly.GetManifestResourceNames().Where(name => name.StartsWith(UiResourcePrefix, StringComparison.Ordinal)))
+        {
+            using var resource = assembly.GetManifestResourceStream(resourceName);
+            if (resource is null) continue;
+            using var content = new MemoryStream();
+            resource.CopyTo(content);
+            var path = resourceName[UiResourcePrefix.Length..].Replace('\\', '/');
+            resources[path] = content.ToArray();
+        }
+        return resources;
+    }
+
+    private void ServeEmbeddedUi(object? sender, CoreWebView2WebResourceRequestedEventArgs args)
+    {
+        if (_core is null || !Uri.TryCreate(args.Request.Uri, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Host, UiHost, StringComparison.OrdinalIgnoreCase)) return;
+
+        var path = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/')).Replace('\\', '/');
+        if (path.Split('/').Any(segment => segment is "." or "..") || !EmbeddedUi.TryGetValue(path, out var content))
+        {
+            args.Response = _core.Environment.CreateWebResourceResponse(
+                CreateRandomAccessStream(Encoding.UTF8.GetBytes("Not found")), 404, "Not Found",
+                "Content-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff");
+            return;
+        }
+
+        args.Response = _core.Environment.CreateWebResourceResponse(
+            CreateRandomAccessStream(content), 200, "OK",
+            $"Content-Type: {ContentType(path)}\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-cache");
+    }
+
+    private static IRandomAccessStream CreateRandomAccessStream(byte[] content)
+    {
+        var stream = new InMemoryRandomAccessStream();
+        using (var writer = new DataWriter(stream.GetOutputStreamAt(0)))
+        {
+            writer.WriteBytes(content);
+            writer.StoreAsync().AsTask().GetAwaiter().GetResult();
+            writer.FlushAsync().AsTask().GetAwaiter().GetResult();
+            writer.DetachStream();
+        }
+        stream.Seek(0);
+        return stream;
+    }
+
+    private static string ContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".html" => "text/html; charset=utf-8",
+        ".css" => "text/css; charset=utf-8",
+        ".js" => "text/javascript; charset=utf-8",
+        ".json" => "application/json; charset=utf-8",
+        ".svg" => "image/svg+xml",
+        _ => "application/octet-stream"
+    };
 
     public void SendEvent(string name, object? data)
     {
