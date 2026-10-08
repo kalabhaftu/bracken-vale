@@ -24,26 +24,96 @@ using Windows.Storage.Streams;
 using Windows.UI;
 using Windows.UI.ViewManagement;
 using WinRT.Interop;
+using Microsoft.Data.Sqlite;
 
 namespace MusicPlayer.App;
 
 public sealed partial class MainWindow : Window
 {
+    private const string LibraryRootScopeSetting = "library-root-scope-version";
+    private const string LibraryRootScopeVersion = "all-mounted-local-drives-v1";
+    private readonly object _mountedDriveGate = new();
+    private readonly HashSet<string> _knownMountedDriveRoots = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private Timer? _mountedDriveRefreshTimer;
+
     private void StartStartupScan()
     {
         var roots = _libraryLocations.GetLibraryRoots().ToList();
         var rootsWereConfigured = _store.GetSetting("library-roots-configured") == "true";
+        var rootsNeedExpansion = _store.GetSetting(LibraryRootScopeSetting) != LibraryRootScopeVersion;
         if (!rootsWereConfigured)
         {
-            if (roots.Count == 0) roots = DefaultMusicRoots().ToList();
+            roots = LibraryScanner.DefaultRoots().ToList();
+        }
+        else if (rootsNeedExpansion)
+        {
+            // Older installs watched only the Music folder. Expand them once to every
+            // mounted local drive, while keeping any explicitly configured external roots.
+            roots.AddRange(LibraryScanner.DefaultRoots());
+        }
+
+        roots = NormalizeRootSet(roots).ToList();
+        if (!rootsWereConfigured || rootsNeedExpansion)
+        {
             _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
             _store.SetSetting("library-roots-configured", "true");
+            _store.SetSetting(LibraryRootScopeSetting, LibraryRootScopeVersion);
         }
-        var libraryTracks = _store.GetLibraryStats().TotalTracks;
-        LocalAppLog.Shared.Info("scanner", $"Startup scan prepared: configuredRoots={roots.Count}, rootsPreviouslyConfigured={rootsWereConfigured}, indexedTracks={libraryTracks}, roots=[{string.Join(", ", roots.Select(DescribeRoot))}].");
-        _libraryFileWatcher.SetRoots(roots);
+        int? libraryTracks = null;
+        try { libraryTracks = _store.GetLibraryStats().TotalTracks; }
+        catch (SqliteException ex) when (LibraryStore.IsDatabaseCorruption(ex))
+        { LocalAppLog.Shared.Error("database", "Could not read the index count before the startup scan; the scan will rebuild the damaged index if needed.", ex); }
+        LocalAppLog.Shared.Info("scanner", $"Startup scan prepared: scope=all-mounted-local-drives, configuredRoots={roots.Count}, rootsPreviouslyConfigured={rootsWereConfigured}, indexedTracks={libraryTracks?.ToString(CultureInfo.InvariantCulture) ?? "unavailable"}, roots=[{string.Join(", ", roots.Select(DescribeRoot))}].");
+        _libraryFileWatcher.SetRoots(roots, _libraryLocations.GetScanExclusions(), _libraryLocations.GetEnabledExtensions());
+        StartMountedDriveRefresh(roots);
         if (roots.Count > 0) StartScan(roots);
         else _ = ReconcileIndexedLibraryAtStartupAsync();
+    }
+
+    private void StartMountedDriveRefresh(IEnumerable<string> initialRoots)
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        lock (_mountedDriveGate)
+        {
+            _knownMountedDriveRoots.Clear();
+            foreach (var root in LibraryScanner.DefaultRoots()) _knownMountedDriveRoots.Add(Path.GetFullPath(root));
+            foreach (var root in initialRoots)
+                if (Path.GetPathRoot(root) is { } driveRoot && comparer.Equals(root, driveRoot)) _knownMountedDriveRoots.Add(Path.GetFullPath(root));
+        }
+
+        _mountedDriveRefreshTimer?.Dispose();
+        _mountedDriveRefreshTimer = new Timer(_ => DispatcherQueue.TryEnqueue(RefreshMountedDriveRoots), null,
+            TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    }
+
+    private void RefreshMountedDriveRoots()
+    {
+        if (_windowClosed || _store.GetSetting(LibraryRootScopeSetting) != LibraryRootScopeVersion) return;
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var available = LibraryScanner.DefaultRoots().Select(Path.GetFullPath).ToArray();
+        string[] newlyMounted;
+        lock (_mountedDriveGate)
+        {
+            newlyMounted = available.Where(root => !_knownMountedDriveRoots.Contains(root)).ToArray();
+            _knownMountedDriveRoots.Clear();
+            foreach (var root in available) _knownMountedDriveRoots.Add(root);
+        }
+        if (newlyMounted.Length == 0) return;
+
+        var savedRoots = _libraryLocations.GetLibraryRoots();
+        var roots = NormalizeRootSet(savedRoots.Concat(newlyMounted));
+        if (!savedRoots.OrderBy(path => path, comparer).SequenceEqual(roots.OrderBy(path => path, comparer), comparer))
+            _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
+        _libraryFileWatcher.SetRoots(roots, _libraryLocations.GetScanExclusions(), _libraryLocations.GetEnabledExtensions());
+        LocalAppLog.Shared.Info("scanner", $"New local storage mounted: roots=[{string.Join(", ", newlyMounted.Select(DescribeRoot))}]; starting an automatic scan.");
+        if (_libraryScan.IsRunning) _libraryWatcherRescanPending = true;
+        else StartScan(newlyMounted);
+    }
+
+    private void StopMountedDriveRefresh()
+    {
+        _mountedDriveRefreshTimer?.Dispose();
+        _mountedDriveRefreshTimer = null;
     }
 
     private async Task ReconcileIndexedLibraryAtStartupAsync()
@@ -66,14 +136,39 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static IEnumerable<string> DefaultMusicRoots()
+    private static string[] NormalizeRootSet(IEnumerable<string> suppliedRoots)
     {
-        var music = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
-        return !string.IsNullOrWhiteSpace(music) && Directory.Exists(music) ? [Path.GetFullPath(music)] : [];
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var roots = new List<string>();
+        foreach (var suppliedRoot in suppliedRoots)
+        {
+            try
+            {
+                var normalized = Path.GetFullPath(suppliedRoot);
+                if (!roots.Contains(normalized, comparer)) roots.Add(normalized);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                LocalAppLog.Shared.Warning("library-roots", "Ignored an invalid saved scan root.", ex);
+            }
+        }
+
+        // Scanning a drive root already covers any saved child roots beneath it.
+        return roots.Where(candidate => !roots.Any(parent =>
+            !comparer.Equals(candidate, parent) && IsWithinRoot(candidate, parent))).ToArray();
+    }
+
+    private static bool IsWithinRoot(string path, string root)
+    {
+        var normalizedRoot = Path.GetFullPath(root);
+        var prefix = Path.EndsInDirectorySeparator(normalizedRoot)
+            ? normalizedRoot
+            : normalizedRoot + Path.DirectorySeparatorChar;
+        return path.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
 
-    private async void StartScan(IEnumerable<string> roots, bool forceRefresh = false)
+    private async void StartScan(IEnumerable<string> roots, bool forceRefresh = false, bool databaseRecoveryAttempted = false)
     {
         if (_libraryScan.IsRunning)
         {
@@ -84,8 +179,6 @@ public sealed partial class MainWindow : Window
         // An explicit rebuild with no currently configured roots still refreshes
         // the indexed paths. Ordinary scans continue to require a selected root.
         if (scanRoots.Length == 0 && !forceRefresh) return;
-        var indexedBefore = _store.GetLibraryStats().TotalTracks;
-        LocalAppLog.Shared.Info("scanner", $"Starting {(forceRefresh ? "index rebuild" : "library scan")}: roots={scanRoots.Length}, indexedTracksBefore={indexedBefore}, roots=[{string.Join(", ", scanRoots.Select(DescribeRoot))}].");
         _scanStartedUtc = DateTimeOffset.UtcNow;
         ClearScanOutcome();
         _scanCurrentPath = "Preparing scan…";
@@ -93,6 +186,8 @@ public sealed partial class MainWindow : Window
         _scanDirectoriesVisited = 0;
         try
         {
+            var indexedBefore = _store.GetLibraryStats().TotalTracks;
+            LocalAppLog.Shared.Info("scanner", $"Starting {(forceRefresh ? "index rebuild" : "library scan")}: roots={scanRoots.Length}, indexedTracksBefore={indexedBefore}, roots=[{string.Join(", ", scanRoots.Select(DescribeRoot))}].");
             var ignored = _libraryLocations.GetScanExclusions();
             var nextLibraryRefresh = 256;
             var progress = new Progress<ScanProgress>(value =>
@@ -109,7 +204,7 @@ public sealed partial class MainWindow : Window
                     nextLibraryRefresh = value.FilesFound + 256;
                 }
             });
-            var scanTask = _libraryScan.StartAsync(scanRoots, ignored, progress, forceRefresh);
+            var scanTask = _libraryScan.StartAsync(scanRoots, ignored, progress, forceRefresh, _libraryLocations.GetEnabledExtensions());
             if (!_libraryScan.IsRunning) return;
             PublishScanState();
             var result = await scanTask;
@@ -149,12 +244,12 @@ public sealed partial class MainWindow : Window
                     var removedCount = result.Removed + reconciliation.RemovedPaths.Count;
                     var message = $"{heading} · {result.Indexed:N0} tracks updated · {removedCount:N0} missing tracks removed · {result.Skipped:N0} files skipped";
                     var indexedAfter = _store.GetLibraryStats().TotalTracks;
-                    LocalAppLog.Shared.Info("scanner", $"Completed {(forceRefresh ? "index rebuild" : "library scan")}: roots={scanRoots.Length}, supportedAudioFilesFound={result.FilesFound}, tracksUpdated={result.Indexed}, tracksRemoved={removedCount}, filesSkipped={result.Skipped}, indexedTracksAfter={indexedAfter}, unavailableRoots={unavailableRoots.Count}, incompleteFolders={result.IncompletePaths?.Count ?? 0}.");
+                    LocalAppLog.Shared.Info("scanner", $"Completed {(forceRefresh ? "index rebuild" : "library scan")}: roots={scanRoots.Length}, supportedMediaFilesFound={result.FilesFound}, tracksUpdated={result.Indexed}, tracksRemoved={removedCount}, filesSkipped={result.Skipped}, indexedTracksAfter={indexedAfter}, unavailableRoots={unavailableRoots.Count}, incompleteFolders={result.IncompletePaths?.Count ?? 0}.");
                     if (result.FilesFound == 0 && scanRoots.Length > 0)
                     {
                         message += indexedAfter > 0
-                            ? $" · No supported audio files were found in the selected folders; {indexedAfter:N0} indexed tracks were preserved. Add the folder where your music is saved to discover new songs."
-                            : " · No supported audio files were found in the selected folders. Check the folder selection or add the folder where your music is saved.";
+                            ? $" · No enabled media files were found in the selected folders; {indexedAfter:N0} indexed tracks were preserved. Check the selected file extensions and folders."
+                            : " · No enabled media files were found in the selected folders. Check the selected file extensions and folders.";
                     }
                     if (reconciliation.UnavailableCount > 0)
                         message += $" · {reconciliation.UnavailableCount:N0} tracks retained because their locations are unavailable";
@@ -174,6 +269,47 @@ public sealed partial class MainWindow : Window
             LocalAppLog.Shared.Info("scanner", "Library scan cancelled; completed tracks were retained.");
             SetScanOutcome("cancelled", "Scan cancelled · tracks already indexed were kept");
             if (!_windowClosed) { _scanCurrentPath = "Scan cancelled"; PublishScanState(); }
+        }
+        catch (SqliteException ex) when (LibraryStore.IsDatabaseCorruption(ex))
+        {
+            LocalAppLog.Shared.Error("scanner", "The library database became unreadable during scanning.", ex);
+            if (databaseRecoveryAttempted)
+            {
+                SetScanOutcome("error", "The library database failed again during its automatic rebuild. Diagnostic details were saved to the app log.");
+                if (!_windowClosed)
+                {
+                    _scanCurrentPath = "Database recovery stopped";
+                    PublishScanState();
+                    _ = ShowNoticeAsync("The library database failed again while rebuilding. Your previous database copy is saved in the Music Player Recovery folder; see the app log for details.", InfoBarSeverity.Error);
+                }
+            }
+            else
+            {
+                try
+                {
+                    if (!await Task.Run(() => _store.RepairCorruptDatabase(force: true)))
+                        throw new InvalidDataException("The damaged library database could not be replaced with a clean index.");
+                    LocalAppLog.Shared.Warning("database", "Recreated the damaged index from a clean schema; saved settings and playlists were salvaged when readable.");
+                    if (!_windowClosed)
+                    {
+                        SetScanOutcome("repairing", "Library database repaired · rebuilding the index from your music folders");
+                        var recoveryRoots = NormalizeRootSet(_libraryLocations.GetLibraryRoots().Concat(LibraryScanner.DefaultRoots()));
+                        StartScan(recoveryRoots, forceRefresh: true, databaseRecoveryAttempted: true);
+                        return;
+                    }
+                }
+                catch (Exception recoveryError)
+                {
+                    LocalAppLog.Shared.Error("database", "Automatic library database recovery failed.", recoveryError);
+                    SetScanOutcome("error", "The library database could not be rebuilt. Diagnostic details were saved to the app log.");
+                    if (!_windowClosed)
+                    {
+                        _scanCurrentPath = "Database recovery failed";
+                        PublishScanState();
+                        _ = ShowNoticeAsync("Music Player could not rebuild the damaged library database. The original database was preserved in the Music Player Recovery folder; see the app log for details.", InfoBarSeverity.Error);
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {

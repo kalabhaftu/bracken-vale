@@ -7,7 +7,7 @@ using Microsoft.Data.Sqlite;
 
 namespace MusicPlayer.Core;
 
-public enum TrackSort { Title, Artist, Album, Genre, Year, Added, Duration, PlayCount, LastPlayed, Path, Rating, TrackNumber }
+public enum TrackSort { Title, Artist, Album, Genre, Year, Added, Duration, PlayCount, LastPlayed, Path, Rating, TrackNumber, Type }
 public sealed record IndexedFileState(long Length, DateTime ModifiedUtc);
 
 public sealed partial class LibraryStore
@@ -16,20 +16,192 @@ public sealed partial class LibraryStore
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly LocalAppLog _log;
-    private sealed record TrackQuery(string Where, string OrderBy, string[] SearchTerms, string? FtsPhrase, object GroupValue, object FolderPrefix);
+    private volatile string[] _videoExtensions = Array.Empty<string>();
+    private sealed record TrackQuery(string Where, string OrderBy, string[] SearchTerms, string? FtsPhrase, object GroupValue, object FolderPrefix, string[] VideoPatterns);
+    private sealed record RecoverableLibraryState(
+        List<(string Key, string Value)> Settings,
+        List<(string Id, string Name, string CreatedUtc)> Playlists,
+        List<(string PlaylistId, int Position, string TrackPath)> PlaylistTracks,
+        List<(int Id, string Payload)> PlaybackSession,
+        List<(int Id, string OriginalPath, string BackupPath, string CreatedUtc)> TagBackups,
+        List<(string Path, string AddedUtc, int Favorite, int Rating, int PlayCount, string? LastPlayedUtc)> Interactions);
 
     public LibraryStore(string databasePath, LocalAppLog? log = null)
     {
         _databasePath = Path.GetFullPath(databasePath);
         _log = log ?? LocalAppLog.Shared;
         Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
-        _connectionString = new SqliteConnectionStringBuilder { DataSource = _databasePath, Mode = SqliteOpenMode.ReadWriteCreate, Cache = SqliteCacheMode.Shared, DefaultTimeout = 10, ForeignKeys = true }.ToString();
-        Migrate();
+        _connectionString = new SqliteConnectionStringBuilder { DataSource = _databasePath, Mode = SqliteOpenMode.ReadWriteCreate, DefaultTimeout = 30, ForeignKeys = true }.ToString();
+        if (File.Exists(_databasePath) && GetDatabaseIntegrityError(_databasePath) is { } integrityError)
+        {
+            _log.Warning("database", $"The Music Player library failed its startup integrity check ({integrityError}); rebuilding the index from the filesystem.");
+            if (!RebuildCorruptDatabaseCore())
+                throw new InvalidDataException("The Music Player library is damaged and could not be rebuilt. The damaged database has been preserved.");
+        }
+        try { Migrate(); }
+        catch (SqliteException ex) when (IsDatabaseCorruption(ex))
+        {
+            _log.Error("database", "The library database was corrupt while opening; rebuilding the index from the filesystem.", ex);
+            if (!RebuildCorruptDatabaseCore()) throw;
+            Migrate();
+        }
     }
 
     public static LibraryStore InAppData()
     {
         return new(Path.Combine(AppDataPaths.Root, "library.db"));
+    }
+
+    public void SetVideoExtensions(IEnumerable<string> extensions)
+    {
+        _videoExtensions = extensions
+            .Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
+            .Where(extension => extension.Length > 1)
+            .Select(extension => extension.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public static bool IsDatabaseCorruption(SqliteException exception) => exception.SqliteErrorCode is 11 or 26;
+
+    /// <summary>Archives a corrupt index and recreates a clean database, retaining recoverable user-owned state.</summary>
+    public bool RepairCorruptDatabase(bool force = false)
+    {
+        lock (_fingerprintGate)
+        {
+            if (!File.Exists(_databasePath) || (!force && GetDatabaseIntegrityError(_databasePath) is null)) return false;
+            return RebuildCorruptDatabaseCore();
+        }
+    }
+
+    private bool RebuildCorruptDatabaseCore()
+    {
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
+        var recoveryDirectory = Path.Combine(Path.GetDirectoryName(_databasePath)!, "Recovery");
+        var corruptCopy = Path.Combine(recoveryDirectory, $"library-corrupt-{timestamp}.db");
+        var rebuiltPath = _databasePath + $".rebuild-{timestamp}";
+        Directory.CreateDirectory(recoveryDirectory);
+
+        var state = CaptureRecoverableState();
+        if (File.Exists(_databasePath))
+        {
+            try { File.Copy(_databasePath, corruptCopy, overwrite: false); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _log.Error("database", "Could not preserve the damaged library database; refusing to replace it.", ex);
+                return false;
+            }
+            foreach (var suffix in new[] { "-wal", "-shm", "-journal" })
+            {
+                try
+                {
+                    if (File.Exists(_databasePath + suffix)) File.Copy(_databasePath + suffix, corruptCopy + suffix, overwrite: false);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { _log.Warning("database", "Could not preserve a damaged database sidecar.", ex); }
+            }
+        }
+
+        try
+        {
+            if (File.Exists(rebuiltPath)) File.Delete(rebuiltPath);
+            var rebuilt = new LibraryStore(rebuiltPath, _log);
+            rebuilt.ImportRecoverableState(state);
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(_databasePath)) File.Replace(rebuiltPath, _databasePath, null, ignoreMetadataErrors: true);
+            else File.Move(rebuiltPath, _databasePath);
+            foreach (var suffix in new[] { "-wal", "-shm", "-journal" })
+                try { File.Delete(_databasePath + suffix); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            _fingerprintSnapshotCurrent = false;
+            _log.Warning("database", $"Rebuilt the corrupt library index from a clean schema. Preserved recoverable settings={state.Settings.Count}, playlists={state.Playlists.Count}; the previous index is archived in the Recovery folder.");
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SqliteException or InvalidDataException)
+        {
+            _log.Error("database", "Could not rebuild the damaged library database. The damaged copy remains in the Recovery folder.", ex);
+            try { if (File.Exists(rebuiltPath)) File.Delete(rebuiltPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            return false;
+        }
+    }
+
+    private RecoverableLibraryState CaptureRecoverableState()
+    {
+        List<T> ReadRows<T>(string table, string query, Func<SqliteDataReader, T> read)
+        {
+            var rows = new List<T>();
+            if (!File.Exists(_databasePath)) return rows;
+            try
+            {
+                using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = _databasePath,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                    DefaultTimeout = 10
+                }.ToString());
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = query;
+                using var reader = command.ExecuteReader();
+                while (reader.Read()) rows.Add(read(reader));
+            }
+            catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
+            {
+                _log.Warning("database", $"Only {rows.Count} recoverable rows could be read from '{table}'.", ex);
+            }
+            return rows;
+        }
+
+        return new(
+            ReadRows("settings", "SELECT key,value FROM settings", r => (r.GetString(0), r.GetString(1))),
+            ReadRows("playlists", "SELECT id,name,created_utc FROM playlists", r => (r.GetString(0), r.GetString(1), r.GetString(2))),
+            ReadRows("playlist_tracks", "SELECT playlist_id,position,track_path FROM playlist_tracks ORDER BY playlist_id,position", r => (r.GetString(0), r.GetInt32(1), r.GetString(2))),
+            ReadRows("playback_session", "SELECT id,payload FROM playback_session", r => (r.GetInt32(0), r.GetString(1))),
+            ReadRows("tag_backups", "SELECT id,original_path,backup_path,created_utc FROM tag_backups", r => (r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3))),
+            ReadRows("track_interaction_state", "SELECT path,added_utc,favorite,rating,play_count,last_played_utc FROM track_interaction_state", r => (r.GetString(0), r.GetString(1), r.GetInt32(2), r.GetInt32(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetString(5)))
+                .Concat(ReadRows("tracks interactions", "SELECT path,added_utc,favorite,rating,play_count,last_played_utc FROM tracks", r => (r.GetString(0), r.GetString(1), r.GetInt32(2), r.GetInt32(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetString(5))))
+                .GroupBy(row => row.Item1, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+                .Select(group => group.Last()).ToList());
+    }
+
+    private void ImportRecoverableState(RecoverableLibraryState state)
+    {
+        using var connection = Open();
+        using var transaction = connection.BeginTransaction();
+        void Import(string sql, Action<SqliteCommand> bind)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            bind(command);
+            command.ExecuteNonQuery();
+        }
+        foreach (var row in state.Settings)
+            Import("INSERT OR REPLACE INTO settings(key,value) VALUES($key,$value)", c => { Add(c, "$key", row.Key); Add(c, "$value", row.Value); });
+        foreach (var row in state.Playlists)
+            Import("INSERT OR IGNORE INTO playlists(id,name,created_utc) VALUES($id,$name,$created)", c => { Add(c, "$id", row.Id); Add(c, "$name", row.Name); Add(c, "$created", row.CreatedUtc); });
+        foreach (var row in state.PlaylistTracks)
+            Import("INSERT OR IGNORE INTO playlist_tracks(playlist_id,position,track_path) SELECT $playlist,$position,$path WHERE EXISTS(SELECT 1 FROM playlists WHERE id=$playlist)", c => { Add(c, "$playlist", row.PlaylistId); Add(c, "$position", row.Position); Add(c, "$path", row.TrackPath); });
+        foreach (var row in state.PlaybackSession)
+            Import("INSERT OR REPLACE INTO playback_session(id,payload) VALUES($id,$payload)", c => { Add(c, "$id", row.Id); Add(c, "$payload", row.Payload); });
+        foreach (var row in state.TagBackups)
+            Import("INSERT OR IGNORE INTO tag_backups(id,original_path,backup_path,created_utc) VALUES($id,$original,$backup,$created)", c => { Add(c, "$id", row.Id); Add(c, "$original", row.OriginalPath); Add(c, "$backup", row.BackupPath); Add(c, "$created", row.CreatedUtc); });
+        foreach (var row in state.Interactions)
+            Import("INSERT OR REPLACE INTO track_interaction_state(path,added_utc,favorite,rating,play_count,last_played_utc) VALUES($path,$added,$favorite,$rating,$plays,$played)", c => { Add(c, "$path", row.Path); Add(c, "$added", row.AddedUtc); Add(c, "$favorite", row.Favorite); Add(c, "$rating", row.Rating); Add(c, "$plays", row.PlayCount); Add(c, "$played", row.LastPlayedUtc); });
+        transaction.Commit();
+    }
+
+    private static string? GetDatabaseIntegrityError(string path)
+    {
+        try
+        {
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWriteCreate, DefaultTimeout = 10 }.ToString());
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA quick_check(1)";
+            var result = command.ExecuteScalar()?.ToString();
+            return string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase) ? null : result ?? "no integrity result";
+        }
+        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException) { return ex.Message; }
     }
 
     public void UpsertTrack(Track track)
@@ -321,19 +493,27 @@ public sealed partial class LibraryStore
         return (result, 0);
     }
 
-    private static TrackQuery BuildTrackQuery(string? search, TrackSort sort, bool descending, string? filter,
+    private TrackQuery BuildTrackQuery(string? search, TrackSort sort, bool descending, string? filter,
         string? groupColumn, string? groupValue)
     {
+        var videoPatterns = sort == TrackSort.Type || filter == "videos"
+            ? _videoExtensions.Select(extension => $"%{EscapeLike(extension)}").ToArray()
+            : Array.Empty<string>();
+        var videoPredicate = videoPatterns.Length == 0 ? "0=1" :
+            $"({string.Join(" OR ", videoPatterns.Select((_, index) => $"lower(tracks.path) LIKE $videoPattern{index} ESCAPE '\\'"))})";
+        var videoSortPredicate = videoPatterns.Length == 0 ? "0=1" :
+            $"({string.Join(" OR ", videoPatterns.Select((_, index) => $"lower(path) LIKE $videoPattern{index} ESCAPE '\\'"))})";
         var orderBy = sort switch
         {
             TrackSort.Artist => "artist", TrackSort.Album => "album", TrackSort.Genre => "genre", TrackSort.Year => "year",
             TrackSort.Added => "added_utc", TrackSort.Duration => "duration_ms", TrackSort.PlayCount => "play_count",
             TrackSort.LastPlayed => "last_played_utc", TrackSort.Path => "path", TrackSort.Rating => "rating",
-            TrackSort.TrackNumber => "track_number", _ => "title"
+            TrackSort.TrackNumber => "track_number", TrackSort.Type => $"CASE WHEN {videoSortPredicate} THEN 1 ELSE 0 END", _ => "title"
         };
         var predicate = filter switch
         {
             "favorites" => "favorite=1", "most-played" => "play_count>0", "recent" => "last_played_utc IS NOT NULL", "with-lyrics" => "has_lyrics=1",
+            "videos" => videoPredicate,
             _ => "1=1"
         };
         var groupPredicate = groupColumn switch
@@ -361,7 +541,7 @@ public sealed partial class LibraryStore
             folderPrefix = EscapeLike(prefix) + "%";
         }
         return new(where, fullOrderBy, searchTerms, ftsPhrase, groupParameter,
-            folderPrefix is null ? DBNull.Value : folderPrefix);
+            folderPrefix is null ? DBNull.Value : folderPrefix, videoPatterns);
     }
 
     private static void BindTrackQuery(SqliteCommand command, TrackQuery query)
@@ -371,6 +551,8 @@ public sealed partial class LibraryStore
         if (query.FtsPhrase is not null) Add(command, "$ftsPhrase", query.FtsPhrase);
         Add(command, "$group", query.GroupValue);
         Add(command, "$folderPrefix", query.FolderPrefix);
+        for (var index = 0; index < query.VideoPatterns.Length; index++)
+            Add(command, $"$videoPattern{index}", query.VideoPatterns[index]);
     }
 
     public IReadOnlyList<string> GetGroups(string column)
@@ -803,6 +985,14 @@ public sealed partial class LibraryStore
     {
         var hadDatabaseFile = System.IO.File.Exists(_databasePath);
         using var connection = Open();
+        // Keep the library resilient to process interruption while a scan is updating
+        // batches. WAL lets readers continue against a consistent snapshot as the
+        // scanner commits, and FULL sync asks Windows to flush committed journal data.
+        using (var durability = connection.CreateCommand())
+        {
+            durability.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;";
+            durability.ExecuteNonQuery();
+        }
         using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version";
         var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);

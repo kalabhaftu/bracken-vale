@@ -13,7 +13,8 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         IEnumerable<string> ignoredDirectories,
         ScanControl control,
         IProgress<ScanProgress>? progress = null,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        IEnumerable<string>? supportedExtensions = null)
     {
         var pending = new List<Track>(64);
         var scanRoots = roots.Select(Path.GetFullPath).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
@@ -63,21 +64,41 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException or ArgumentException)
                 {
-                    // Keep an unreadable but still-present audio file in the index; if it
-                    // disappeared during this scan, leave it unseen so Complete() prunes it.
-                    if (MayStillExist(fullPath)) scan.MarkSeen(fullPath);
-                    skipped++;
-                    _log.Warning("indexer", $"Skipped audio file '{fullPath}'.", ex);
+                    // Keep an unreadable but still-present enabled media file in the index;
+                    // if it disappeared during this scan, leave it unseen so Complete() prunes it.
+                    var fallbackIndexed = false;
+                    if (MayStillExist(fullPath))
+                    {
+                        scan.MarkSeen(fullPath);
+                        try
+                        {
+                            var info = new FileInfo(fullPath);
+                            pending.Add(new Track(fullPath, Path.GetFileNameWithoutExtension(fullPath), string.Empty, string.Empty,
+                                string.Empty, string.Empty, 0, 0, TimeSpan.Zero, info.Length, info.LastWriteTimeUtc, DateTime.UtcNow));
+                            if (pending.Count >= 64) FlushPending();
+                            fallbackIndexed = true;
+                        }
+                        catch (Exception fallbackError) when (fallbackError is IOException or UnauthorizedAccessException or SecurityException or ArgumentException or NotSupportedException)
+                        {
+                            _log.Warning("indexer", "Could not keep basic file information for an enabled media file.", fallbackError);
+                        }
+                    }
+                    if (!fallbackIndexed) skipped++;
+                    _log.Warning("indexer", $"Could not read media tags for '{fullPath}'.", ex);
                 }
                 return ValueTask.CompletedTask;
             }, progress, rootCompleted: scan.MarkRootCompleted,
                 rootUnavailable: root => unavailableRoots.Add(root),
                 pathExcludedWithReason: scan.MarkExcludedPath,
-                pathIncomplete: path => { scan.MarkPathIncomplete(path); incompletePaths.Add(path); }).ConfigureAwait(false);
+                pathIncomplete: path => { scan.MarkPathIncomplete(path); incompletePaths.Add(path); },
+                supportedExtensions: supportedExtensions).ConfigureAwait(false);
         }
         catch
         {
-            FlushPending();
+            // Keep the last committed batches. Do not try to flush an uncommitted tail
+            // while unwinding: the original failure may have come from SQLite itself,
+            // and a second write here would mask it and risk another partial mutation.
+            pending.Clear();
             throw;
         }
         FlushPending();

@@ -29,7 +29,8 @@ internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
         IEnumerable<string> roots,
         IEnumerable<string> ignoredDirectories,
         IProgress<ScanProgress>? progress = null,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        IEnumerable<string>? supportedExtensions = null)
     {
         var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var scanRoots = roots.Select(Path.GetFullPath).Distinct(pathComparer).ToArray();
@@ -45,7 +46,7 @@ internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
             _cancellationRequested = false;
         }
 
-        return RunAsync(scanRoots, ignoredDirectories, control, progress, forceRefresh);
+        return RunAsync(scanRoots, ignoredDirectories, control, progress, forceRefresh, supportedExtensions?.ToArray());
     }
 
     public bool TogglePause()
@@ -76,11 +77,12 @@ internal sealed class LibraryScanCoordinator(LibraryIndexer indexer)
         IEnumerable<string> ignoredDirectories,
         ScanControl control,
         IProgress<ScanProgress>? progress,
-        bool forceRefresh)
+        bool forceRefresh,
+        IEnumerable<string>? supportedExtensions)
     {
         try
         {
-            return await Task.Run(() => indexer.ScanAsync(roots, ignoredDirectories, control, progress, forceRefresh)).ConfigureAwait(false);
+            return await Task.Run(() => indexer.ScanAsync(roots, ignoredDirectories, control, progress, forceRefresh, supportedExtensions)).ConfigureAwait(false);
         }
         finally
         {

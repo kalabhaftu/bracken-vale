@@ -10,6 +10,7 @@ internal sealed class LibraryFileWatcher : IDisposable
     private readonly List<FileSystemWatcher> _watchers = [];
     private readonly Timer _flushTimer;
     private readonly Timer _rescanTimer;
+    private string[] _ignoredDirectories = [];
     private bool _disposed;
 
     public event Action<IReadOnlyList<string>>? PathsRemoved;
@@ -21,15 +22,22 @@ internal sealed class LibraryFileWatcher : IDisposable
         _rescanTimer = new Timer(_ => RescanRequested?.Invoke(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
-    public void SetRoots(IEnumerable<string> roots)
+    public void SetRoots(IEnumerable<string> roots, IEnumerable<string>? ignoredDirectories = null, IEnumerable<string>? supportedExtensions = null)
     {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var mediaExtensions = (supportedExtensions ?? LibraryScanner.AudioExtensions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool IsSupportedFile(string path) => mediaExtensions.Contains(Path.GetExtension(path));
+        var ignored = (ignoredDirectories ?? Array.Empty<string>())
+            .Select(path => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)))
+            .Distinct(comparer)
+            .ToArray();
         lock (_gate)
         {
             if (_disposed) return;
+            _ignoredDirectories = ignored;
             foreach (var watcher in _watchers) watcher.Dispose();
             _watchers.Clear();
 
-            var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
             foreach (var root in roots.Select(Path.GetFullPath).Distinct(comparer))
             {
                 if (!Directory.Exists(root)) continue;
@@ -42,18 +50,26 @@ internal sealed class LibraryFileWatcher : IDisposable
                         InternalBufferSize = 32 * 1024,
                         EnableRaisingEvents = false
                     };
-                    watcher.Deleted += (_, args) => QueueRemoved(args.FullPath);
+                    watcher.Deleted += (_, args) =>
+                    {
+                        if (!IsExcludedPath(args.FullPath, root)) QueueRemoved(args.FullPath);
+                    };
                     watcher.Created += (_, args) =>
                     {
                         // Moving or copying a populated directory does not emit a
                         // Created event for every file in its subtree.
-                        if (LibraryScanner.IsSupportedAudioFile(args.FullPath) || Directory.Exists(args.FullPath)) QueueRescan();
+                        if (!IsExcludedPath(args.FullPath, root) &&
+                            (IsSupportedFile(args.FullPath) || Directory.Exists(args.FullPath))) QueueRescan();
                     };
-                    watcher.Changed += (_, args) => { if (LibraryScanner.IsSupportedAudioFile(args.FullPath)) QueueRescan(); };
+                    watcher.Changed += (_, args) =>
+                    {
+                        if (!IsExcludedPath(args.FullPath, root) && IsSupportedFile(args.FullPath)) QueueRescan();
+                    };
                     watcher.Renamed += (_, args) =>
                     {
-                        QueueRemoved(args.OldFullPath);
-                        if (LibraryScanner.IsSupportedAudioFile(args.FullPath) || Directory.Exists(args.FullPath)) QueueRescan();
+                        if (!IsExcludedPath(args.OldFullPath, root)) QueueRemoved(args.OldFullPath);
+                        if (!IsExcludedPath(args.FullPath, root) &&
+                            (IsSupportedFile(args.FullPath) || Directory.Exists(args.FullPath))) QueueRescan();
                     };
                     watcher.Error += (_, args) =>
                     {
@@ -69,6 +85,35 @@ internal sealed class LibraryFileWatcher : IDisposable
                 }
             }
         }
+    }
+
+    private bool IsExcludedPath(string path, string watchRoot)
+    {
+        string fullPath;
+        try { fullPath = Path.GetFullPath(path); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return true; }
+
+        var current = Directory.Exists(fullPath) ? fullPath : Path.GetDirectoryName(fullPath);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(watchRoot));
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        while (!string.IsNullOrWhiteSpace(current))
+        {
+            var normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(current));
+            if (_ignoredDirectories.Contains(normalized, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)) return true;
+            if (!string.Equals(normalized, root, comparison) && IsWithinRoot(normalized, root) &&
+                LibraryScanner.IsDefaultExcludedDirectory(normalized)) return true;
+            if (string.Equals(normalized, root, comparison)) break;
+            var parent = Path.GetDirectoryName(normalized);
+            if (string.IsNullOrEmpty(parent) || string.Equals(parent, normalized, comparison)) break;
+            current = parent;
+        }
+        return false;
+    }
+
+    private static bool IsWithinRoot(string path, string root)
+    {
+        var prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+        return path.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     private void QueueRemoved(string path)

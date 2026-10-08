@@ -16,11 +16,12 @@ internal sealed class LibraryQueryService
     {
         "Home", "Search", "Songs", "Albums", "Artists", "Genres", "Folders", "Favorites", "Most Played",
         "Recently Played", "Recently Added", "Playlists", "Playlist", "Album", "Artist", "Genre", "Folder",
-        "With Lyrics", "Queue", "Audio", "Settings", "Duplicates", "Lyrics", "Now Playing"
+        "With Lyrics", "Videos", "Queue", "Audio", "Settings", "Duplicates", "Lyrics", "Now Playing"
     };
 
     private readonly LibraryStore _store;
     private readonly string _artworkDirectory;
+    private volatile HashSet<string> _videoExtensions = new(LibraryScanner.VideoExtensions, StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _trackPaths = new(StringComparer.Ordinal);
     private readonly object _trackPathGate = new();
     private readonly HashSet<string> _unavailableTrackPaths = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -52,6 +53,20 @@ internal sealed class LibraryQueryService
 
     public string CurrentView => _context.View;
     public string CurrentSearch => _context.Search;
+
+    public void SetVideoExtensions(IEnumerable<string> extensions)
+    {
+        var normalized = extensions.Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _videoExtensions = normalized;
+        _store.SetVideoExtensions(normalized);
+        if (normalized.Count == 0 && _sort == TrackSort.Type) _sort = TrackSort.Title;
+        if (normalized.Count == 0 && _context.View == "Videos")
+        {
+            _context = new("Playlists", "", null, null, null);
+            PersistContext();
+        }
+    }
     public object? CurrentGroup
     {
         get
@@ -179,6 +194,7 @@ internal sealed class LibraryQueryService
             "Most Played" => "most-played",
             "Recently Played" => "recent",
             "With Lyrics" => "with-lyrics",
+            "Videos" => "videos",
             _ => null
         };
         var requestedSort = String(payload, "sort");
@@ -191,25 +207,51 @@ internal sealed class LibraryQueryService
             "Recently Added" => TrackSort.Added,
             _ => TrackSort.Title
         };
+        if (sort == TrackSort.Type && _videoExtensions.Count == 0) sort = TrackSort.Title;
         _sort = sort;
         var descendingSpecified = payload.TryGetProperty("descending", out var descendingValue) &&
                                   descendingValue.ValueKind is JsonValueKind.True or JsonValueKind.False;
         _descending = descendingSpecified
             ? Boolean(payload, "descending")
             : _context.View is "Most Played" or "Recently Played" or "Recently Added";
-        return new(_context.View, _context.Search, _context.GroupColumn, _context.GroupValue, sort, _descending,
+        // Search is a separate destination. A saved/transient search must never make
+        // the ordinary Songs library appear empty after navigation or restart.
+        var search = _context.View == "Search" ? _context.Search : string.Empty;
+        return new(_context.View, search, _context.GroupColumn, _context.GroupValue, sort, _descending,
             filter, Math.Max(0, Int(payload, "offset")), Math.Clamp(Int(payload, "pageSize", 100), 1, 200));
     }
 
     internal object TrackPage(PreparedTrackPage request)
     {
-        var result = _store.GetTracksPageWithCount(request.Search, request.Sort, request.Descending, request.Filter,
-            request.GroupColumn, request.GroupValue, request.Offset, request.PageSize, HideExactDuplicates);
-        if (result.TotalCount == 0 && string.IsNullOrWhiteSpace(request.Search) && request.Filter is null && request.GroupColumn is null)
+        TrackPageResult result;
+        try
+        {
+            result = _store.GetTracksPageWithCount(request.Search, request.Sort, request.Descending, request.Filter,
+                request.GroupColumn, request.GroupValue, request.Offset, request.PageSize, HideExactDuplicates);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) when (request.View == "Songs")
+        {
+            LocalAppLog.Shared.Warning("library-query", $"Songs page query failed ({ex.GetType().Name}); retrying directly without duplicate suppression.");
+            result = _store.GetTracksPageWithCount(null, request.Sort, request.Descending, offset: request.Offset,
+                pageSize: request.PageSize, hideExactDuplicates: false);
+        }
+
+        var isPlainSongsPage = request.View == "Songs" && string.IsNullOrWhiteSpace(request.Search) &&
+                               request.Filter is null && request.GroupColumn is null;
+        if (isPlainSongsPage && result.TotalCount == 0)
         {
             var indexedCount = _store.GetLibraryStats().TotalTracks;
             if (indexedCount > 0)
-                LocalAppLog.Shared.Warning("library-query", $"An unfiltered track page returned 0 results while the database contains {indexedCount:N0} indexed tracks (view={request.View}, pageOffset={request.Offset}, duplicateFilter={HideExactDuplicates}).");
+            {
+                LocalAppLog.Shared.Warning("library-query", $"Songs page returned 0 rows while the database has {indexedCount:N0} tracks; retrying without duplicate suppression.");
+                result = _store.GetTracksPageWithCount(null, request.Sort, request.Descending, offset: request.Offset,
+                    pageSize: request.PageSize, hideExactDuplicates: false);
+                if (result.TotalCount > 0)
+                    LocalAppLog.Shared.Info("library-query", $"Songs page fallback restored {result.TotalCount:N0} indexed tracks.");
+                else
+                    LocalAppLog.Shared.Warning("library-query", $"Direct Songs page query also returned 0 rows while the database reports {indexedCount:N0} tracks.");
+            }
         }
         return new { tracks = result.Tracks.Select(track => TrackDto(track)).ToArray(), totalCount = result.TotalCount };
     }
@@ -268,7 +310,11 @@ internal sealed class LibraryQueryService
         return new { groups = _store.GetArtistAlbumsPage(artist, offset, pageSize).Select(group => GroupDto(group, "album")).ToArray() };
     }
 
-    public object Playlists() => new { playlists = _store.GetPlaylistSummaries().Select(PlaylistDto).ToArray() };
+    public object Playlists() => new
+    {
+        playlists = _store.GetPlaylistSummaries().Select(PlaylistDto).ToArray(),
+        videosEnabled = _videoExtensions.Count > 0
+    };
 
     public void SetContext(JsonElement payload)
     {
@@ -362,6 +408,7 @@ internal sealed class LibraryQueryService
             "Most Played" => "most-played",
             "Recently Played" => "recent",
             "With Lyrics" => "with-lyrics",
+            "Videos" => "videos",
             _ => null
         };
         return _store.GetTrackPaths(_context.Search, _sort, _descending, filter,
@@ -458,6 +505,7 @@ internal sealed class LibraryQueryService
         favorite = track.Favorite, rating = track.Rating, playCount = track.PlayCount,
         hasLyrics = track.HasLyrics,
         artworkUrl = ArtworkUrl(track.ArtworkPath), format = Path.GetExtension(track.Path).TrimStart('.').ToUpperInvariant(),
+        isVideo = _videoExtensions.Contains(Path.GetExtension(track.Path)),
         unavailable = false, fileUnavailable = IsTrackUnavailable(track.Path),
         path = includePath ? track.Path : null
     };

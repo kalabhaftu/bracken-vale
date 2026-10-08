@@ -34,8 +34,15 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
     private readonly LocalAppLog _log = log ?? LocalAppLog.Shared;
     public static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".mp3", ".flac", ".wav", ".wave", ".aif", ".aiff", ".m4a", ".m4b", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wma", ".ape", ".wv", ".tta", ".mpc", ".dsf", ".dff"
+        ".mp3", ".flac", ".wav", ".wave", ".aif", ".aiff", ".m4a", ".m4b", ".aac", ".ogg", ".oga", ".opus", ".wma", ".ape", ".wv", ".tta", ".mpc", ".dsf", ".dff"
     };
+
+    public static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4", ".m4v", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg", ".mts", ".m2ts", ".3gp", ".ogv"
+    };
+
+    public static bool IsVideoFile(string path) => VideoExtensions.Contains(Path.GetExtension(path));
 
     public static bool IsSupportedAudioFile(string path) => AudioExtensions.Contains(Path.GetExtension(path));
 
@@ -49,7 +56,8 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
         ".git", ".hg", ".svn", ".vs", ".idea", ".vscode",
         "node_modules", "bin", "obj", "build", "dist", "target", "packages", "TestResults",
         "__pycache__", ".pytest_cache", ".mypy_cache", ".tox", ".venv",
-        ".cache", ".npm", ".nuget", ".gradle",
+        ".cache", ".npm", ".nuget", ".gradle", "Temp", "tmp", "Caches", "CrashDumps",
+        "INetCache", "Temporary Internet Files", "MicrosoftEdgeBackups", "Package Cache",
         "Games", "GameLibrary", "GamesLibrary", "SteamLibrary", "steamapps", "XboxGames", "Epic Games"
     };
 
@@ -58,7 +66,7 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
         foreach (var drive in DriveInfo.GetDrives())
         {
             var include = false;
-            try { include = drive.DriveType == DriveType.Fixed && drive.IsReady; }
+            try { include = drive.DriveType is DriveType.Fixed or DriveType.Removable && drive.IsReady; }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
             catch (SecurityException) { }
@@ -77,8 +85,12 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
         Action<string>? pathExcluded = null,
         Action<string, ScanExcludedPathKind>? pathExcludedWithReason = null,
         Action<string>? rootUnavailable = null,
-        Action<string>? pathIncomplete = null)
+        Action<string>? pathIncomplete = null,
+        IEnumerable<string>? supportedExtensions = null)
     {
+        var extensions = (supportedExtensions ?? AudioExtensions)
+            .Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         void ReportExcluded(string path, ScanExcludedPathKind kind)
         {
             pathExcluded?.Invoke(path);
@@ -193,7 +205,7 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
                             else if (IsDefaultIgnoredDirectory(normalized)) ReportExcluded(normalized, ScanExcludedPathKind.DefaultExcluded);
                             else pending.Push(normalized);
                         }
-                        else if (AudioExtensions.Contains(Path.GetExtension(entry)))
+                        else if (extensions.Contains(Path.GetExtension(entry)))
                         {
                             await onAudioFile(entry, control.Token).ConfigureAwait(false);
                             filesFound++;
@@ -230,6 +242,8 @@ public sealed class LibraryScanner(LocalAppLog? log = null)
         return parent is not null && root is not null && string.Equals(
             Path.TrimEndingDirectorySeparator(parent), Path.TrimEndingDirectorySeparator(root), comparison);
     }
+
+    public static bool IsDefaultExcludedDirectory(string path) => IsDefaultIgnoredDirectory(path);
 
     private static bool PathsEqual(string left, string right) => string.Equals(
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
