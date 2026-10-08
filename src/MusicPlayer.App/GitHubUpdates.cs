@@ -18,6 +18,8 @@ internal sealed record GitHubUpdateCheck(GitHubRelease? Release, string? ETag);
 internal static class GitHubUpdates
 {
     private const string Repository = "kalabhaftu/music-player";
+    public static string RepositoryUrl => $"https://github.com/{Repository}";
+    public static string ReleasesUrl => $"{RepositoryUrl}/releases";
     private static readonly Uri ReleasesApi = new($"https://api.github.com/repos/{Repository}/releases?per_page=10");
     private static readonly Uri LatestStablePage = new($"https://github.com/{Repository}/releases/latest");
     private static readonly HttpClient Client = CreateClient();
@@ -71,11 +73,32 @@ internal static class GitHubUpdates
         return new(latest, response.Headers.ETag?.ToString());
     }
 
+    public static async Task<IReadOnlyList<GitHubRelease>> GetReleaseHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await Client.GetAsync(ReleasesApi, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        var releases = await response.Content.ReadFromJsonAsync<GitHubRelease[]>(cancellationToken: cancellationToken).ConfigureAwait(false);
+        return (releases ?? [])
+            .Where(release => !release.Draft && ReleaseVersion.TryParse(release.Tag, out _) && IsReleasePage(release.Url))
+            .OrderByDescending(release => ReleaseVersion.TryParse(release.Tag, out var version) ? version : default)
+            .Take(10)
+            .ToArray();
+    }
+
     public static bool IsReleasePage(string? value)
     {
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
             !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrEmpty(uri.UserInfo)) return false;
         return uri.AbsolutePath.StartsWith($"/{Repository}/releases/tag/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsRepositoryInfoPage(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+            !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrEmpty(uri.UserInfo)) return false;
+        var path = uri.AbsolutePath.TrimEnd('/');
+        return path.Equals($"/{Repository}", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals($"/{Repository}/releases", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsEligible(GitHubRelease? release, bool includePrerelease) =>

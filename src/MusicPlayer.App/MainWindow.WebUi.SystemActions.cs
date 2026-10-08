@@ -33,7 +33,7 @@ public sealed partial class MainWindow
 
     private static void OpenRelease(string url)
     {
-        if (GitHubUpdates.IsReleasePage(url))
+        if (GitHubUpdates.IsReleasePage(url) || GitHubUpdates.IsRepositoryInfoPage(url))
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 

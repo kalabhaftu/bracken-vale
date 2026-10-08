@@ -73,6 +73,7 @@ public sealed partial class MainWindow : Window
                 ApplyNativeWindowIcon(hwnd, iconPath);
             }
 
+            _videoWindow?.ApplyTheme(ShellRoot.RequestedTheme, ShellRoot.ActualTheme, iconPath);
             var titleBar = appWindow.TitleBar;
             titleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
             if (!AppWindowTitleBar.IsCustomizationSupported()) return;
@@ -262,6 +263,7 @@ public sealed partial class MainWindow : Window
             _store.SetSetting("update-release-channel", channel);
             _webAvailableRelease = null;
             var release = result.Release;
+            _webBridge?.SendEvent("latestReleaseChanged", new { release = release is null ? null : new { tag = release.Tag, url = release.Url } });
             if (release is null || !ReleaseVersion.TryParse(release.Tag, out var latest) || latest.CompareTo(current) <= 0)
             {
                 if (force) await ShowNoticeAsync("You are using the latest available release.");

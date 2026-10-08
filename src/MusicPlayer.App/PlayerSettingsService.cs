@@ -11,14 +11,16 @@ internal sealed class PlayerSettingsService(LibraryStore store)
     private static readonly Dictionary<string, string> WebSettingKeys = new(StringComparer.Ordinal)
     {
         ["theme"] = "theme", ["accentMode"] = "accent-mode", ["accentManual"] = "accent-manual", ["accentColor"] = "accent-color",
+        ["selectionColorMode"] = "selection-color-mode", ["selectionColor"] = "selection-color",
         ["transparentWindow"] = "transparent-window", ["windowTransparency"] = "window-transparency",
         ["motionStyle"] = "motion-style", ["hideDuplicates"] = "hide-exact-duplicates",
-        ["autoOpenPanel"] = "auto-open-side-panel", ["showArtwork"] = "show-list-artwork", ["showArtist"] = "show-list-artist",
+        ["autoOpenPanel"] = "auto-open-side-panel", ["autoLoadLyrics"] = "auto-load-lyrics", ["seekFromLyrics"] = "seek-from-lyrics",
+        ["showArtwork"] = "show-list-artwork", ["showArtist"] = "show-list-artist",
         ["showAlbum"] = "show-list-album", ["showAdded"] = "show-list-added", ["showYear"] = "show-list-year", ["showDuration"] = "show-list-duration",
         ["showFavorite"] = "show-list-favorite", ["checkUpdates"] = "check-updates", ["minimizeToTray"] = "minimize-to-tray",
         ["navigationWidth"] = "navigation-pane-width", ["browseWidth"] = "browse-pane-width", ["navigationOrder"] = "navigation-order",
         ["hiddenPanels"] = "hidden-panels", ["rightSidebarMode"] = "right-sidebar-mode",
-        ["rightPanelWidth"] = "right-panel-width", ["sidebarCollapsed"] = "sidebar-collapsed",
+        ["rightPanelWidth"] = "right-panel-width", ["rightPanelOpen"] = "right-panel-open", ["sidebarCollapsed"] = "sidebar-collapsed",
         ["songColumnWidths"] = "song-column-widths"
     };
 
@@ -27,14 +29,17 @@ internal sealed class PlayerSettingsService(LibraryStore store)
         var stored = store.GetSettings("");
         string Value(string key, string fallback) => stored.TryGetValue(key, out var value) ? value : fallback;
         bool On(string key, bool fallback = false) => stored.TryGetValue(key, out var value) ? value == "true" : fallback;
+        bool? PanelOpen() => stored.TryGetValue("right-panel-open", out var value) ? value switch { "true" => true, "false" => false, _ => null } : null;
         bool? Collapsed() => stored.TryGetValue("sidebar-collapsed", out var value) ? value switch { "true" => true, "false" => false, _ => null } : null;
         return new
         {
             theme = Value("theme", "System"), accentMode = Value("accent-mode", "Native"), accentManual = On("accent-manual"),
             resolvedTheme, accentColor = Value("accent-color", "#b7ff2d"), artworkAccent, artworkPalette,
+            selectionColorMode = Value("selection-color-mode", "Theme"), selectionColor = Value("selection-color", "#b7ff2d"),
             transparentWindow = On("transparent-window"), windowTransparency = Value("window-transparency", "0"),
             motionStyle = Value("motion-style", "Subtle"),
             hideDuplicates = Value("hide-exact-duplicates", "true") != "false", autoOpenPanel = Value("auto-open-side-panel", "true") != "false",
+            autoLoadLyrics = On("auto-load-lyrics"), seekFromLyrics = On("seek-from-lyrics", true),
             showArtwork = Value("show-list-artwork", "true") != "false", showArtist = Value("show-list-artist", "true") != "false",
             showAlbum = Value("show-list-album", "true") != "false", showAdded = Value("show-list-added", "true") != "false",
             showYear = On("show-list-year"), showDuration = Value("show-list-duration", "true") != "false",
@@ -45,6 +50,7 @@ internal sealed class PlayerSettingsService(LibraryStore store)
                 .ToArray(),
             hiddenPanels = ReadStringArray("hidden-panels"),
             rightSidebarMode = Value("right-sidebar-mode", "Queue"),
+            rightPanelOpen = PanelOpen(),
             rightPanelWidth = Value("right-panel-width", "294"), sidebarCollapsed = Collapsed(),
             songColumnWidths = ReadSongColumnWidths(),
             indexedLibraryBytes = store.GetLibraryStats().TotalBytes
@@ -95,6 +101,8 @@ internal sealed class PlayerSettingsService(LibraryStore store)
             store.SetSetting("accent-mode", "Native");
             store.SetSetting("accent-manual", "false");
             store.SetSetting("accent-color", "#b7ff2d");
+            store.SetSetting("selection-color-mode", "Theme");
+            store.SetSetting("selection-color", "#b7ff2d");
             store.SetSetting("transparent-window", "false");
             store.SetSetting("window-transparency", "0");
             store.SetSetting("motion-style", "Subtle");
@@ -107,6 +115,7 @@ internal sealed class PlayerSettingsService(LibraryStore store)
             store.SetSetting("browse-pane-width", "280");
             store.SetSetting("auto-open-side-panel", "true");
             store.SetSetting("right-sidebar-mode", "Queue");
+            store.SetSetting("right-panel-open", "auto");
             store.SetSetting("navigation-order", "[\"Home\",\"Search\",\"Favorites\",\"Songs\",\"Albums\",\"Artists\",\"Genres\",\"Recently Added\",\"Playlists\",\"Folders\"]");
             store.SetSetting("hidden-panels", "[]");
         }
@@ -158,10 +167,12 @@ internal sealed class PlayerSettingsService(LibraryStore store)
         {
             "theme" => value is "System" or "Light" or "Dark",
             "accentMode" => value is "Native" or "Artwork",
-            "accentManual" or "transparentWindow" or "hideDuplicates" or "autoOpenPanel" or "showArtwork" or "showArtist" or "showAlbum" or "showAdded" or "showYear" or "showDuration" or "showFavorite" or "checkUpdates" or "minimizeToTray" => value is "true" or "false",
+            "selectionColorMode" => value is "Theme" or "Custom",
+            "accentManual" or "transparentWindow" or "hideDuplicates" or "autoOpenPanel" or "autoLoadLyrics" or "seekFromLyrics" or "showArtwork" or "showArtist" or "showAlbum" or "showAdded" or "showYear" or "showDuration" or "showFavorite" or "checkUpdates" or "minimizeToTray" or "rightPanelOpen" => value is "true" or "false",
             "windowTransparency" => int.TryParse(value, out var transparency) && transparency is >= 0 and <= 60,
             "motionStyle" => value is "Off" or "Subtle" or "Expressive",
             "accentColor" => System.Text.RegularExpressions.Regex.IsMatch(value, "^#[0-9a-fA-F]{6}$"),
+            "selectionColor" => System.Text.RegularExpressions.Regex.IsMatch(value, "^#[0-9a-fA-F]{6}$"),
             "navigationWidth" => int.TryParse(value, out var nav) && nav is >= 180 and <= 360,
             "rightPanelWidth" => int.TryParse(value, out var right) && right is >= 240 and <= 460,
             "browseWidth" => int.TryParse(value, out var browse) && browse is >= 180 and <= 480,

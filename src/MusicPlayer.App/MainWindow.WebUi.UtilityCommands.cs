@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using MusicPlayer.Core;
 using Windows.ApplicationModel.DataTransfer;
 
@@ -31,6 +32,20 @@ public sealed partial class MainWindow
             case "openLogs": OpenLogsFolder_Click(this, new Microsoft.UI.Xaml.RoutedEventArgs()); return null;
             case "exportLogs": await ExportLogsAsync(); return null;
             case "openRelease": OpenRelease(String(payload, "url")); return null;
+            case "openLegalFile":
+            {
+                var relativePath = String(payload, "name") switch
+                {
+                    "LICENSE" => "LICENSE",
+                    "ThirdPartyNotices.md" => "ThirdPartyNotices.md",
+                    "LGPL-2.1.txt" => Path.Combine("ThirdPartyLicenses", "LGPL-2.1.txt"),
+                    _ => throw new ArgumentException("That license document is not available.")
+                };
+                var path = Path.Combine(AppContext.BaseDirectory, relativePath);
+                if (!File.Exists(path)) throw new FileNotFoundException("The bundled license document is missing.");
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                return null;
+            }
             case "setPanelMode":
                 _store.SetSetting("right-sidebar-mode", String(payload, "mode") == "info" ? "Info" : "Queue"); return null;
             case "setImmersiveMode":
