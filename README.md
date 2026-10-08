@@ -29,6 +29,14 @@ The SQLite database, settings, artwork cache, tag backups, and logs are stored u
 
 Windows format support depends on the bundled LibVLC modules and the specific file/device combination. See [the format matrix](docs/format-matrix.md). Release signing requirements and current signing status are documented in [the release process](docs/release.md). Remaining migration and release checks are listed in [project status](docs/project-status.md).
 
+## Third-party components
+
+The app uses WinUI 3 from the Windows App SDK, WebView2 for its interface, LibVLCSharp and LibVLC for media playback, TagLib# for audio metadata, and Microsoft.Data.Sqlite with SQLite for its local library. The WebView2 Evergreen Runtime is supplied separately by Microsoft. See [ThirdPartyNotices.md](ThirdPartyNotices.md) for versions, licenses, and bundled notices.
+
 ## License
 
-The source is MIT licensed. Third-party components and notices are listed in [ThirdPartyNotices.md](ThirdPartyNotices.md).
+The source is MIT licensed. Third-party components retain their own license terms; see [ThirdPartyNotices.md](ThirdPartyNotices.md).
+
+## Contributing and support
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use the GitHub issue forms to [report a bug](https://github.com/kalabhaftu/music-player/issues/new?template=bug_report.yml) or [request a feature](https://github.com/kalabhaftu/music-player/issues/new?template=feature_request.yml). For troubleshooting and safe log sharing, see [SUPPORT.md](SUPPORT.md). Security issues should be reported privately as described in [SECURITY.md](SECURITY.md).
