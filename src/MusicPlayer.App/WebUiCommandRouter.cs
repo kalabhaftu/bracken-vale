@@ -21,7 +21,7 @@ internal sealed class WebUiCommandRouter
         Func<string, JsonElement, Task<object?>> utilities)
     {
         Register(data,
-            "getBootstrap", "getHome", "beginSearch", "search", "getTracks", "getGroups", "getFolders", "getArtistAlbums",
+            "getBootstrap", "getAbout", "getHome", "beginSearch", "search", "getTracks", "getGroups", "getFolders", "getArtistAlbums",
             "getPlaylists", "getPlaylistTracks", "getQueue", "getCurrentTrack", "getLyrics", "getAudioSettings",
             "getSettings", "getDuplicates", "getDuplicateFiles", "getTrackDetails", "getTags", "getExclusions", "setView");
         Register(playback,
@@ -35,9 +35,9 @@ internal sealed class WebUiCommandRouter
             "addFolder", "removeRoot", "scanLibrary", "rebuildLibraryIndex", "toggleScanPause", "cancelScan", "showInFolder", "showFilePath");
         Register(metadata, "saveLyrics", "searchLyrics", "saveTags", "restoreTags", "pickArtwork");
         Register(settings,
-            "setAudioDevice", "setCrossfade", "refreshAudioDevices", "setEqualizerPreset", "setEqualizerBand",
+            "setAudioDevice", "setCrossfade", "refreshAudioDevices", "setEqualizerPreset", "setEqualizerBand", "setExtensionEnabled",
             "saveEqualizerPreset", "updateSettings", "resetUiSettings", "addExclusion", "removeExclusion", "checkUpdates");
-    Register(utilities, "openLogs", "exportLogs", "openRelease", "setPanelMode", "setImmersiveMode", "openDefaultApps", "copyTrackPath", "reportFrontendError");
+    Register(utilities, "openLogs", "exportLogs", "openRelease", "openLegalFile", "setPanelMode", "setImmersiveMode", "openDefaultApps", "copyTrackPath", "reportFrontendError");
     }
 
     public bool CanRoute(string name) => _routes.ContainsKey(name);

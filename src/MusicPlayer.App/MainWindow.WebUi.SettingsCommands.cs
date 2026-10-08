@@ -33,6 +33,22 @@ public sealed partial class MainWindow
             }
             case "addExclusion": await AddExclusionAsync(); return null;
             case "removeExclusion": RemoveExclusion(String(payload, "path")); return null;
+            case "setExtensionEnabled":
+            {
+                _libraryLocations.SetExtensionEnabled(String(payload, "extension"),
+                    payload.TryGetProperty("enabled", out var enabled) && enabled.ValueKind == JsonValueKind.True,
+                    String(payload, "kind", "Audio"));
+                var videoExtensions = _libraryLocations.GetEnabledVideoExtensions();
+                _playback.SetVideoExtensions(videoExtensions);
+                _libraryQueries.SetVideoExtensions(videoExtensions);
+                if (_playback.IsVideoMode && _playback.CurrentTrack is { } currentVideo &&
+                    !_libraryLocations.IsVideoExtensionEnabled(currentVideo.Path))
+                    CloseVideoPlaybackWindow(pauseVideo: true);
+                var roots = _libraryLocations.GetLibraryRoots();
+                _libraryFileWatcher.SetRoots(roots, _libraryLocations.GetScanExclusions(), _libraryLocations.GetEnabledExtensions());
+                if (roots.Length > 0) StartScan(roots, forceRefresh: true);
+                return null;
+            }
             case "checkUpdates": await CheckForUpdatesAsync(true); return null;
             default: throw new InvalidOperationException("This Music Player command is not available in the settings handler.");
         }

@@ -16,7 +16,7 @@ public sealed partial class MainWindow
         InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
         var folder = await picker.PickSingleFolderAsync(); if (folder is null) return;
         var path = _libraryLocations.AddLibraryRoot(folder.Path);
-        _libraryFileWatcher.SetRoots(_libraryLocations.GetLibraryRoots());
+        _libraryFileWatcher.SetRoots(_libraryLocations.GetLibraryRoots(), _libraryLocations.GetScanExclusions(), _libraryLocations.GetEnabledExtensions());
         StartScan([path]); PublishLibraryChanged();
     }
 
@@ -27,7 +27,7 @@ public sealed partial class MainWindow
         await Task.Run(() => _store.RemoveTracksUnderUnselectedRoots(removal.RemovedRoots, removal.RemainingRoots));
         await Task.Run(() => _store.PruneUnreferencedArtwork(Path.Combine(_appData, "Artwork")));
         _libraryLocations.PersistLibraryRootRemoval(removal);
-        _libraryFileWatcher.SetRoots(removal.RemainingRoots);
+        _libraryFileWatcher.SetRoots(removal.RemainingRoots, _libraryLocations.GetScanExclusions(), _libraryLocations.GetEnabledExtensions());
         PublishLibraryChanged();
     }
 

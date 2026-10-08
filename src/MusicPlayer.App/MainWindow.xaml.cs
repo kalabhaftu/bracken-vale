@@ -64,6 +64,10 @@ public sealed partial class MainWindow : Window
         _playlistLibrary = new(_store);
         _playerSettings = new(_store);
         _libraryLocations = new(_store);
+        var videoExtensions = _libraryLocations.GetEnabledVideoExtensions();
+        _playback.SetVideoExtensions(videoExtensions);
+        _libraryQueries.SetVideoExtensions(videoExtensions);
+        _playback.VideoSurfaceRequested = RequestVideoPlaybackSurface;
         _trackAvailability = new(_store, _libraryQueries, _libraryLocations);
         _libraryFileWatcher = new();
         _libraryFileWatcher.PathsRemoved += paths => _ = HandleLibraryPathsRemovedAsync(paths);

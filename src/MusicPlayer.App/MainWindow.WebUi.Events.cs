@@ -22,6 +22,7 @@ public sealed partial class MainWindow
             playing = _playback.IsPlaying, positionSeconds = Math.Max(0, _playback.Position) / 1000d,
             durationSeconds = Math.Max(0, _playback.Duration) / 1000d, volume = _playback.Volume,
             shuffle = _shuffle, repeat = _repeatMode, repeatA = _repeatA?.TotalSeconds, repeatB = _repeatB?.TotalSeconds,
+            isVideo = _playback.IsVideoMode,
             queueIndex = _queueIndex, trackId = current is null ? null : _libraryQueries.TrackId(current.Path)
         });
     }

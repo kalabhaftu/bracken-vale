@@ -1,13 +1,17 @@
 using MusicPlayer.Core;
 using LibVLCSharp.Shared;
+using LibVLCSharp.Shared.Structures;
 
 namespace MusicPlayer.App;
+
+public sealed record VideoSubtitleOption(int Id, string Name);
 
 /// <summary>Serializes LibVLC state changes and creates the crossfade player only when it is first needed.</summary>
 public sealed class PlaybackService : IDisposable
 {
     private readonly object _gate = new();
     private readonly LibVLC _libVlc;
+    private HashSet<string> _videoExtensions = new(StringComparer.OrdinalIgnoreCase);
     private readonly MediaPlayer _first;
     private MediaPlayer _active;
     private MediaPlayer? _spare;
@@ -21,14 +25,18 @@ public sealed class PlaybackService : IDisposable
     private string? _equalizerPreset;
     private IReadOnlyList<float>? _equalizerBands;
     private float _volume = 75;
+    private float _videoPlaybackRate = 1f;
     private long _restorePosition;
     private long _mediaGeneration;
+    private bool _videoTrack;
     private bool _disposed;
 
     public PlaybackService()
     {
         LibVLCSharp.Shared.Core.Initialize();
-        _libVlc = new LibVLC("--aout=mmdevice");
+        // Video is rendered into the app's own child HWND when an enabled video
+        // extension is played. Never let LibVLC create its standalone video window.
+        _libVlc = new LibVLC("--aout=mmdevice", "--no-video-title-show");
         _libVlc.Log += (_, args) =>
         {
             if (args.Level is LogLevel.Warning or LogLevel.Error)
@@ -43,9 +51,11 @@ public sealed class PlaybackService : IDisposable
     public event Action<Track>? CrossfadeCompleted;
     public event Action<Track>? CrossfadeFailed;
     public event Action<Track>? PlaybackFailed;
+    public Func<Track, nint>? VideoSurfaceRequested { get; set; }
 
     public Track? CurrentTrack { get { lock (_gate) return _currentTrack; } }
     public bool IsPlaying { get { lock (_gate) return !_disposed && _active.IsPlaying; } }
+    public bool IsVideoMode { get { lock (_gate) return !_disposed && _videoTrack; } }
     public long Position { get { lock (_gate) return _disposed ? 0 : _restorePosition > _active.Time ? _restorePosition : _active.Time; } }
     public long Duration
     {
@@ -75,6 +85,79 @@ public sealed class PlaybackService : IDisposable
         }
     }
 
+    public float VideoPlaybackRate { get { lock (_gate) return _videoPlaybackRate; } }
+    public int VideoSubtitleId { get { lock (_gate) return _disposed || !_videoTrack ? -1 : _active.Spu; } }
+
+    public bool SetVideoPlaybackRate(float rate)
+    {
+        rate = Math.Clamp(rate, .5f, 2f);
+        lock (_gate)
+        {
+            if (_disposed || !_videoTrack) return false;
+            if (_active.SetRate(rate) != 0) return false;
+            _videoPlaybackRate = rate;
+            return true;
+        }
+    }
+
+    public IReadOnlyList<VideoSubtitleOption> GetVideoSubtitleOptions()
+    {
+        lock (_gate)
+        {
+            if (_disposed || !_videoTrack) return [];
+            try
+            {
+                return _active.SpuDescription?
+                    .Select(track => new VideoSubtitleOption(track.Id, string.IsNullOrWhiteSpace(track.Name) ? $"Subtitle {track.Id}" : track.Name))
+                    .ToArray() ?? [];
+            }
+            catch (InvalidOperationException) { return []; }
+        }
+    }
+
+    public bool SetVideoSubtitle(int trackId)
+    {
+        lock (_gate) return !_disposed && _videoTrack && _active.SetSpu(trackId);
+    }
+
+    public bool TakeVideoSnapshot(string path)
+    {
+        lock (_gate)
+        {
+            if (_disposed || !_videoTrack) return false;
+            return _active.TakeSnapshot(0, path, 0, 0);
+        }
+    }
+
+    public void SetVideoExtensions(IEnumerable<string> extensions)
+    {
+        lock (_gate)
+            _videoExtensions = extensions.Select(extension => extension.StartsWith('.') ? extension : $".{extension}")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public void SetVideoSurfaceHandle(nint handle)
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+            if (_videoTrack) _active.Hwnd = handle;
+        }
+    }
+
+    private bool IsVideoPathCore(string path) => _videoExtensions.Contains(Path.GetExtension(path));
+
+    private nint RequestVideoSurface(Track track)
+    {
+        Func<Track, nint>? request;
+        lock (_gate)
+        {
+            if (_disposed || !IsVideoPathCore(track.Path)) return 0;
+            request = VideoSurfaceRequested;
+        }
+        return request?.Invoke(track) ?? 0;
+    }
+
     public void SelectAudioOutputDevice(string? deviceId)
     {
         lock (_gate)
@@ -88,12 +171,24 @@ public sealed class PlaybackService : IDisposable
 
     public void LoadPaused(Track track, long positionMilliseconds)
     {
+        var requestedSurface = RequestVideoSurface(track);
         lock (_gate)
         {
             if (_disposed) return;
             CancelCrossfadeCore();
             _mediaGeneration++;
             _active.Stop();
+            _videoTrack = IsVideoPathCore(track.Path);
+            if (_videoTrack && requestedSurface == 0)
+            {
+                _currentTrack = track;
+                ReportPlaybackFailureCore(track);
+                return;
+            }
+            if (_videoTrack)
+            {
+                _active.Hwnd = requestedSurface;
+            }
             SetMedia(_active, ref _activeMedia, track.Path);
             ApplyAudioOutputDevice(_active);
             _active.Time = Math.Max(0, positionMilliseconds);
@@ -112,12 +207,24 @@ public sealed class PlaybackService : IDisposable
 
     public void Play(Track track)
     {
+        var requestedSurface = RequestVideoSurface(track);
         lock (_gate)
         {
             if (_disposed) return;
             CancelCrossfadeCore();
             _mediaGeneration++;
             _active.Stop();
+            _videoTrack = IsVideoPathCore(track.Path);
+            if (_videoTrack && requestedSurface == 0)
+            {
+                _currentTrack = track;
+                ReportPlaybackFailureCore(track);
+                return;
+            }
+            if (_videoTrack)
+            {
+                _active.Hwnd = requestedSurface;
+            }
             SetMedia(_active, ref _activeMedia, track.Path);
             ApplyAudioOutputDevice(_active);
             _restorePosition = 0;
@@ -130,12 +237,25 @@ public sealed class PlaybackService : IDisposable
 
     public void PlayLoaded()
     {
+        Track? resumeVideoTrack;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            resumeVideoTrack = _videoTrack ? _currentTrack : null;
+        }
+        var requestedSurface = resumeVideoTrack is null ? 0 : RequestVideoSurface(resumeVideoTrack);
         MediaPlayer player;
         long generation;
         long restorePosition;
         lock (_gate)
         {
-            if (_disposed || _activeMedia is null) return;
+            if (_disposed) return;
+            if (_activeMedia is null) return;
+            if (_videoTrack)
+            {
+                if (requestedSurface == 0) { ReportPlaybackFailureCore(_currentTrack); return; }
+                _active.Hwnd = requestedSurface;
+            }
             ApplyAudioOutputDevice(_active);
             _reportedFailurePath = null;
             if (!_active.Play()) { ReportPlaybackFailureCore(_currentTrack); return; }
@@ -223,6 +343,9 @@ public sealed class PlaybackService : IDisposable
 
     public async Task CrossfadeToAsync(Track nextTrack, int milliseconds, CancellationToken cancellationToken = default)
     {
+        bool involvesVideo;
+        lock (_gate) involvesVideo = _videoTrack || IsVideoPathCore(nextTrack.Path);
+        if (involvesVideo) { Play(nextTrack); return; }
         if (milliseconds <= 0) { Play(nextTrack); return; }
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -375,7 +498,54 @@ public sealed class PlaybackService : IDisposable
     {
         media?.Dispose();
         media = new Media(_libVlc, new Uri(path));
+        if (ReferenceEquals(player, _active) && _videoTrack)
+        {
+            foreach (var subtitlePath in FindNearbySubtitleFiles(path))
+            {
+                try
+                {
+                    if (!media.AddSlave(MediaSlaveType.Subtitle, 4, new Uri(subtitlePath)))
+                        LocalAppLog.Shared.Warning("video-subtitle", $"LibVLC could not add the nearby subtitle '{Path.GetFileName(subtitlePath)}'.");
+                }
+                catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+                {
+                    LocalAppLog.Shared.Warning("video-subtitle", $"Could not add the nearby subtitle '{Path.GetFileName(subtitlePath)}'.", ex);
+                }
+            }
+        }
+        var requestedRate = ReferenceEquals(player, _active) && _videoTrack ? _videoPlaybackRate : 1f;
         player.Media = media;
+        if (player.SetRate(requestedRate) != 0 && requestedRate != 1f)
+            LocalAppLog.Shared.Warning("video-playback", "The media engine rejected the requested video playback speed.");
+    }
+
+    private static string[] FindNearbySubtitleFiles(string videoPath)
+    {
+        var directory = Path.GetDirectoryName(videoPath);
+        var mediaName = Path.GetFileNameWithoutExtension(videoPath);
+        if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(mediaName) || !Directory.Exists(directory)) return [];
+        var subtitleExtensions = new HashSet<string>([".srt", ".ass", ".ssa", ".vtt"], StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            return Directory.EnumerateFiles(directory)
+                .Where(candidate =>
+                {
+                    var extension = Path.GetExtension(candidate);
+                    if (!subtitleExtensions.Contains(extension)) return false;
+                    var subtitleName = Path.GetFileNameWithoutExtension(candidate);
+                    return subtitleName.Equals(mediaName, StringComparison.OrdinalIgnoreCase) ||
+                        subtitleName.StartsWith(mediaName + ".", StringComparison.OrdinalIgnoreCase);
+                })
+                .OrderBy(candidate => Path.GetFileNameWithoutExtension(candidate).Equals(mediaName, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ThenBy(candidate => candidate, StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            LocalAppLog.Shared.Warning("video-subtitle", "Could not look for subtitle files next to the video.", ex);
+            return [];
+        }
     }
 
     private void ApplyAudioOutputDevice(MediaPlayer player)

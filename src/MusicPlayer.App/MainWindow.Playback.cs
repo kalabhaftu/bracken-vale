@@ -79,6 +79,7 @@ public sealed partial class MainWindow : Window
             {
                 var track = result.Track;
                 if (track is null) return;
+                if (!_playback.IsVideoMode) CloseVideoPlaybackWindow(pauseVideo: false);
                 var availabilityChanged = _trackAvailability.MarkAvailable(track.Path);
                 _playbackListening.ResetForTrack();
                 _crossfadeInProgress = false;
@@ -403,7 +404,18 @@ public sealed partial class MainWindow : Window
         PublishPlaybackState();
     }
 
-    private void Playback_TrackEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() => AdvanceQueue(true));
+    private void Playback_TrackEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (_playback.IsVideoMode && _videoWindow?.RepeatCurrent == true && _playback.CurrentTrack is { } videoTrack)
+        {
+            _playback.Seek(0);
+            _playback.PlayLoaded();
+            UpdateSystemMediaControls(videoTrack, true);
+            PublishPlaybackState();
+            return;
+        }
+        AdvanceQueue(true);
+    });
     private void Playback_CrossfadeCompleted(Track track) => DispatcherQueue.TryEnqueue(() =>
     {
         _crossfadeInProgress = false; _crossfadeFailureSource = null; _crossfadeSourceQueueIndex = null; _playbackListening.ResetForTrack();
@@ -485,7 +497,8 @@ public sealed partial class MainWindow : Window
         if (_store.GetSetting("accent-mode") == "Artwork") _ = ApplyArtworkAccentAsync(track.ArtworkPath);
         _webBridge?.SendEvent("trackChanged", new { track = _libraryQueries.TrackDto(track, true), playing = _playback.IsPlaying,
             positionSeconds = Math.Max(0, _playback.Position) / 1000d, durationSeconds = Math.Max(0, _playback.Duration) / 1000d,
-            volume = _playback.Volume, shuffle = _shuffle, repeat = _repeatMode, repeatA = _repeatA?.TotalSeconds, repeatB = _repeatB?.TotalSeconds });
+            volume = _playback.Volume, shuffle = _shuffle, repeat = _repeatMode, repeatA = _repeatA?.TotalSeconds, repeatB = _repeatB?.TotalSeconds,
+            isVideo = _playback.IsVideoMode });
     }
 
     private void ApplyStoredEqualizer()
@@ -546,7 +559,9 @@ public sealed partial class MainWindow : Window
         _windowClosed = true;
         LocalAppLog.Shared.Info("app", "Window closed.");
         _volumeSaveDebounce?.Stop();
+        StopMountedDriveRefresh();
         PersistPendingVolumeSetting();
+        CloseVideoPlaybackWindow(pauseVideo: true);
         SaveSession(); _clock.Stop(); _playback.Dispose(); _libraryScan.Cancel();
         _libraryFileWatcher.Dispose();
         _tray?.Dispose();
