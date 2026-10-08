@@ -4,6 +4,9 @@ Changes to Music Player are documented here. The app name, executable, package i
 
 ## [Unreleased]
 
+- Checkpoint recovered SQLite data before replacing a damaged library database, so its WAL is not left behind under the temporary filename.
+- Preserve completed track reads when a library scan is cancelled before its normal batch size.
+- Log when the Songs page is empty because the active index contains no tracks, without recording search text or media paths.
 - Repair missing cached album artwork when a library scan encounters an existing track, and keep album navigation from restoring a detail route without an album.
 - Reconcile indexed file availability at startup and after scans. Remove confirmed-missing tracks even when their old parent folder was deleted, while retaining entries on offline volumes and under roots or paths the scan could not inspect.
 - Ignore out-of-order library/search responses, and reject lyric edits or searches that target a track that is no longer indexed.

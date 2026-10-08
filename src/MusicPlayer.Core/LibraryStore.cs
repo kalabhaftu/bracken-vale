@@ -107,7 +107,10 @@ public sealed partial class LibraryStore
             if (File.Exists(rebuiltPath)) File.Delete(rebuiltPath);
             var rebuilt = new LibraryStore(rebuiltPath, _log);
             rebuilt.ImportRecoverableState(state);
+            rebuilt.PrepareForFileReplacement();
             SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "-wal", "-shm", "-journal" })
+                if (File.Exists(rebuiltPath + suffix)) File.Delete(rebuiltPath + suffix);
             if (File.Exists(_databasePath)) File.Replace(rebuiltPath, _databasePath, null, ignoreMetadataErrors: true);
             else File.Move(rebuiltPath, _databasePath);
             foreach (var suffix in new[] { "-wal", "-shm", "-journal" })
@@ -122,6 +125,28 @@ public sealed partial class LibraryStore
             try { if (File.Exists(rebuiltPath)) File.Delete(rebuiltPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             return false;
         }
+    }
+
+    /// <summary>
+    /// Checkpoints every committed page into the main database and detaches its WAL
+    /// before the rebuilt file is moved. WAL files are named after the database path,
+    /// so replacing only the main file would otherwise strand the recovered state.
+    /// </summary>
+    private void PrepareForFileReplacement()
+    {
+        using var connection = Open();
+        using (var checkpoint = connection.CreateCommand())
+        {
+            checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+            using var result = checkpoint.ExecuteReader();
+            if (!result.Read() || result.GetInt32(0) != 0 || result.GetInt32(2) < result.GetInt32(1))
+                throw new InvalidDataException("The rebuilt library database WAL could not be fully checkpointed.");
+        }
+
+        using var journalMode = connection.CreateCommand();
+        journalMode.CommandText = "PRAGMA journal_mode=DELETE";
+        if (!string.Equals(journalMode.ExecuteScalar()?.ToString(), "delete", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The rebuilt library database could not detach its WAL before replacement.");
     }
 
     private RecoverableLibraryState CaptureRecoverableState()

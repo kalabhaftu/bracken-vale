@@ -93,6 +93,19 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
                 pathIncomplete: path => { scan.MarkPathIncomplete(path); incompletePaths.Add(path); },
                 supportedExtensions: supportedExtensions).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (control.Token.IsCancellationRequested)
+        {
+            // Preserve the completed metadata reads even when the user cancels before
+            // the normal 64-track batch threshold. Cancellation is not a database
+            // failure; leaving the tail uncommitted made a fresh scan look empty.
+            try { FlushPending(); }
+            catch (Exception ex)
+            {
+                pending.Clear();
+                _log.Warning("indexer", "Could not save the completed tracks accumulated before scan cancellation.", ex);
+            }
+            throw;
+        }
         catch
         {
             // Keep the last committed batches. Do not try to flush an uncommitted tail

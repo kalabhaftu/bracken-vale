@@ -252,6 +252,10 @@ internal sealed class LibraryQueryService
                 else
                     LocalAppLog.Shared.Warning("library-query", $"Direct Songs page query also returned 0 rows while the database reports {indexedCount:N0} tracks.");
             }
+            else
+            {
+                LocalAppLog.Shared.Info("library-query", "Songs page returned 0 rows and the active library database also contains 0 tracks.");
+            }
         }
         return new { tracks = result.Tracks.Select(track => TrackDto(track)).ToArray(), totalCount = result.TotalCount };
     }
