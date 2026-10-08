@@ -105,17 +105,18 @@ async function ensureLyricsLoaded(trackId, allowRemote=!!state.settings.autoLoad
   const raw=String(local?.raw||"");
   const parsed=raw?parseLyricsText(raw):{lines:[],plainText:""};
   const localHasLyrics=(local?.lines?.length||parsed.lines.length||String(local?.plainText||parsed.plainText).trim().length)>0;
-  if(localHasLyrics||local?.source&&local.source!=="none")return {...local,raw,lines:local.lines?.length?local.lines:parsed.lines,plainText:local.plainText||parsed.plainText};
-  if(!allowRemote)return {...local,raw,lines:local.lines||[],plainText:local.plainText||""};
+  if(localHasLyrics)return {...local,raw,lines:local.lines?.length?local.lines:parsed.lines,plainText:local.plainText||parsed.plainText};
+  if(!allowRemote)return {...local,raw,source:"none",lines:[],plainText:""};
   if(automaticLyricsCache.has(trackId))return automaticLyricsCache.get(trackId);
   if(automaticLyricsRequests.has(trackId))return automaticLyricsRequests.get(trackId);
   const request=(async()=>{
     try {
       const results=await searchLyricsResults(trackId,false);
       const track=local?.track||state.track;
-      const best=results.map(result=>({result,score:lyricMatchScore(track,result)})).filter(item=>item.score>=0).sort((a,b)=>b.score-a.score)[0]?.result;
+      const matches=results.map(result=>({result,score:lyricMatchScore(track,result)})).filter(item=>item.score>=0).sort((a,b)=>b.score-a.score);
+      const best=matches.find(({result})=>{const candidate=String(result?.syncedLyrics||"").trim()||String(result?.plainLyrics||"").trim();if(!candidate)return false;const parsed=parseLyricsText(candidate);return parsed.lines.length>0||!!parsed.plainText.trim();})?.result;
       const selected=String(best?.syncedLyrics||"").trim()||String(best?.plainLyrics||"").trim();
-      if(!selected)return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:best?"LRCLIB did not return usable lyrics for this track.":results.length?"LRCLIB returned results, but none matched this track confidently.":"No LRCLIB lyrics were found for this track."};
+      if(!selected)return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:matches.length?"LRCLIB matched this track, but did not provide usable lyrics.":results.length?"LRCLIB returned results, but none matched this track confidently.":"No LRCLIB lyrics were found for this track."};
       const lyrics=parseLyricsText(selected);
       return {...local,raw:selected,lines:lyrics.lines,plainText:lyrics.plainText,source:"lrclib",offsetMilliseconds:0};
     } catch { return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:"LRCLIB could not be reached. Check your connection or search manually."}; }
@@ -170,7 +171,7 @@ function settingsMatch(query,text){
 }
 function highlightSettingText(element,query){
   const original=element.dataset.searchOriginalText??element.textContent??"";element.dataset.searchOriginalText=original;
-  const terms=normalizeSettingWords(query).map(word=>word.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+  const terms=[...new Set(normalizeSettingWords(query).flatMap(word=>[word,...Object.entries(settingsAliases).filter(([,aliases])=>aliases.some(alias=>normalizeSettingWords(alias).includes(word))).map(([key])=>key),...(settingsAliases[word]||[]).flatMap(normalizeSettingWords)))].sort((a,b)=>b.length-a.length).map(word=>word.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
   if(!terms.length){element.textContent=original;return;}
   const pattern=new RegExp(`(${terms.join("|")})`,"ig"),parts=original.split(pattern);element.replaceChildren(...parts.map(part=>{if(terms.some(term=>part.toLowerCase()===term.toLowerCase())){const mark=document.createElement("mark");mark.className="settings-search-highlight";mark.textContent=part;return mark;}return document.createTextNode(part);}));
 }
