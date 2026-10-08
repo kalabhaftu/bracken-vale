@@ -175,7 +175,7 @@ function highlightSettingText(element,query){
   if(!terms.length){element.textContent=original;return;}
   const pattern=new RegExp(`(${terms.join("|")})`,"ig"),parts=original.split(pattern);element.replaceChildren(...parts.map(part=>{if(terms.some(term=>part.toLowerCase()===term.toLowerCase())){const mark=document.createElement("mark");mark.className="settings-search-highlight";mark.textContent=part;return mark;}return document.createTextNode(part);}));
 }
-function applySettingsSearch(query=$("#settingsSearch")?.value||""){
+function applySettingsSearch(query=$("#globalSearch")?.value||""){
   const grid=$(".settings-grid"),panel=$(".settings-panel");if(!grid||!panel)return;
   const active=!!normalizeSettingWords(query).length;grid.classList.toggle("settings-searching",active);
   let matches=0;
@@ -190,17 +190,28 @@ function applySettingsSearch(query=$("#settingsSearch")?.value||""){
     }
     section.hidden=active&&!sectionMatches;
   }
-  const empty=$("#settingsSearchEmpty",panel);if(empty)empty.hidden=!active||matches>0;
+  let empty=$("#settingsSearchEmpty",panel);
+  if(active&&matches===0&&!empty){empty=document.createElement("p");empty.id="settingsSearchEmpty";empty.className="settings-search-empty";empty.textContent="No matching settings. Try a broader phrase.";panel.append(empty);}
+  if(empty)empty.hidden=!active||matches>0;
 }
-function installSettingsSearch(){
-  const grid=$(".settings-grid"),panel=$(".settings-panel");if(!grid||!panel||$("#settingsSearch",panel))return;
-  const wrap=document.createElement("div");wrap.className="settings-search-wrap";wrap.innerHTML='<label class="settings-search-label" for="settingsSearch">Find a setting</label><input class="field settings-search-input" id="settingsSearch" type="search" placeholder="Try lyrics, sidebar, or theme" autocomplete="off"><p class="settings-autosave-note">Settings save automatically when changed.</p><p class="settings-search-empty" id="settingsSearchEmpty" hidden>No matching settings. Try a broader phrase.</p>';
-  panel.prepend(wrap);
+function prepareSettingsSearch(){
+  const panel=$(".settings-panel");if(!panel)return;
   const save=$( '[data-action="save-settings"]',panel);save?.closest(".toolbar")?.remove();
   const navSettings=$(".nav-settings",panel),navHint=navSettings?.previousElementSibling;if(navHint?.tagName==="P")navHint.textContent="Drag the grip or use the arrows to reorder. Use the switch to hide a destination.";
-  applySettingsSearch("");
+  applySettingsSearch($("#globalSearch")?.value||"");
 }
-new MutationObserver(()=>{if(state.view==="Settings")installSettingsSearch();}).observe($("#routeView"),{childList:true});
+const globalSearch=$("#globalSearch"),librarySearchPlaceholder=globalSearch.placeholder;
+function updateGlobalSearchMode(){
+  const settingsMode=state.view==="Settings",mode=settingsMode?"settings":"library";
+  globalSearch.placeholder=settingsMode?"Search settings…":librarySearchPlaceholder;
+  globalSearch.setAttribute("aria-label",settingsMode?"Search settings":"Search songs, artists, albums, and playlists");
+  if(globalSearch.dataset.searchMode!==mode){
+    globalSearch.dataset.searchMode=mode;globalSearch.value="";state.search="";
+    ++searchInputRevision;clearTimeout(searchTimer);
+  }
+  if(settingsMode)prepareSettingsSearch();
+}
+new MutationObserver(updateGlobalSearchMode).observe($("#routeView"),{childList:true});
 const settingPreviousValues=new WeakMap();
 async function persistSettingControl(control,value){
   const key=control?.dataset.setting;if(!key)return false;
@@ -234,6 +245,7 @@ const playerUi = createPlayerUi({state,$,$$,call,command,cover,esc,fmtDuration,s
 let toastTimer;
 let searchTimer;
 let searchInputRevision=0;
+updateGlobalSearchMode();
 
 async function call(name,payload={},notifyError=true) { try { return await command(name,payload); } catch (error) { if(notifyError)toast(error.message || "Something went wrong."); throw error; } }
 function toast(message) { const box=$("#toast"); box.textContent=message; box.classList.add("show"); clearTimeout(toastTimer); toastTimer=setTimeout(()=>box.classList.remove("show"),2800); }
@@ -489,7 +501,7 @@ document.addEventListener("click",async e=>{
 
 document.addEventListener("contextmenu",e=>{const row=e.target.closest("[data-context=track]");if(row){e.preventDefault();contextMenu(e.clientX,e.clientY,row.dataset.contextId||row.dataset.track);}});
 document.addEventListener("keydown",async e=>{
-  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();if(state.view!=="Search")void navigate("Search").catch(error=>toast(error.message||"Search could not be opened."));$("#globalSearch").focus();return;}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();if(state.view!=="Search"&&state.view!=="Settings")void navigate("Search").catch(error=>toast(error.message||"Search could not be opened."));$("#globalSearch").focus();return;}
   if((e.key==="Enter"||e.key===" ")&&e.target.matches(".queue-row[data-action='play-queue']")){e.preventDefault();await action("play-queue",e.target);return;}
   if((e.key==="Enter"||e.key===" ")&&e.target.matches(".location[data-action='copy-location']")){e.preventDefault();await action("copy-location",e.target);return;}
   if(e.code==="Space"&&!e.repeat&&!/INPUT|TEXTAREA|SELECT|BUTTON|A/.test(document.activeElement.tagName)&&!document.activeElement.isContentEditable){e.preventDefault();await call("playPause");await refreshCurrent();return;}
@@ -514,7 +526,9 @@ document.addEventListener("keydown",async e=>{
 },true);
 
 $("#globalSearch").addEventListener("input",e=>{
-  const input=e.currentTarget,query=input.value,revision=++searchInputRevision;clearTimeout(searchTimer);searchTimer=setTimeout(async()=>{
+  const input=e.currentTarget,query=input.value;
+  if(state.view==="Settings"){++searchInputRevision;clearTimeout(searchTimer);applySettingsSearch(query);return;}
+  const revision=++searchInputRevision;clearTimeout(searchTimer);searchTimer=setTimeout(async()=>{
     if(revision!==searchInputRevision||query!==input.value)return;
     try { await navigate("Search",state.view!=="Search",query); }
     catch(error) { if(revision===searchInputRevision)toast(error.message||"Search could not be completed."); }
@@ -642,7 +656,6 @@ $("#routeView").addEventListener("change",async e=>{if(e.target.id==="sortSelect
 $("#routeView").addEventListener("click",event=>{const toggle=event.target.closest('[data-setting="transparentWindow"]');if(toggle)requestAnimationFrame(()=>{const range=$('[data-setting="windowTransparency"]');if(range)range.disabled=!toggle.classList.contains("on");});},true);
 $("#routeView").addEventListener("input",async e=>{if(e.target.matches("[data-eq]")){e.target.nextElementSibling.textContent=`${Number(e.target.value).toFixed(1)} dB`;await call("setEqualizerBand",{index:Number(e.target.dataset.eq),value:Number(e.target.value)});}if(e.target.id==="audioVolume")await setVolume(e.target.value);});
 $("#routeView").addEventListener("input",e=>{if(e.target.dataset.setting!=="windowTransparency")return;state.settings.windowTransparency=e.target.value;const output=e.target.parentElement?.querySelector("output");if(output)output.value=e.target.value+"%";setTheme(state.settings);});
-$("#routeView").addEventListener("input",event=>{if(event.target.id==="settingsSearch")applySettingsSearch(event.target.value);});
 let draggedNavigationView="";
 $("#routeView").addEventListener("dragstart",event=>{const handle=event.target.closest("[data-nav-drag-handle]");if(!handle)return;draggedNavigationView=handle.dataset.navDragHandle||"";if(!draggedNavigationView)return;event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",draggedNavigationView);handle.closest(".nav-setting-row")?.classList.add("dragging");});
 $("#routeView").addEventListener("dragover",event=>{if(!draggedNavigationView)return;const row=event.target.closest(".nav-setting-row[data-nav-row]");if(!row)return;event.preventDefault();event.dataTransfer.dropEffect="move";for(const item of $$(".nav-setting-row"))item.classList.remove("drop-before","drop-after");if(row.dataset.navRow==="Home")row.classList.add("drop-after");else row.classList.add(event.clientY<row.getBoundingClientRect().top+row.offsetHeight/2?"drop-before":"drop-after");});

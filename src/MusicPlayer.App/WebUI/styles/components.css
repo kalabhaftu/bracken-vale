@@ -97,10 +97,7 @@ input[type="range"] { accent-color:var(--accent); }
 .nav-settings .toolbar { margin:0; }
 .nav-settings .action { min-width:32px; padding:0 7px; }
 .nav-settings .action:disabled { opacity:.35; cursor:default; }
-.settings-search-wrap { position:sticky; top:0; z-index:2; display:grid; gap:7px; margin:-20px -20px 18px; padding:14px 20px 12px; border-bottom:1px solid var(--line); border-radius:8px 8px 0 0; background:var(--panel); }
-.settings-search-label { color:var(--text); font-size:12px; font-weight:750; }
-.settings-search-input { width:100%; }
-.settings-autosave-note,.settings-search-empty { margin:0; color:var(--muted); font-size:10px; }
+.settings-search-empty { margin:12px 0 0; color:var(--muted); font-size:12px; }
 .settings-search-highlight { padding:0 1px; border-radius:2px; background:rgba(var(--accent-rgb),.32); color:var(--text-strong); }
 .settings-grid.settings-searching { grid-template-columns:minmax(0,1fr); }
 .settings-grid.settings-searching .settings-menu { display:none; }
