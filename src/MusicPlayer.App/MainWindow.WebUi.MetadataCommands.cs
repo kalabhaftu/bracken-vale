@@ -10,7 +10,7 @@ public sealed partial class MainWindow
     {
         switch (name)
         {
-            case "saveLyrics": await SaveLyricsAsync(payload); return null;
+            case "saveLyrics": return await SaveLyricsAsync(payload);
             case "searchLyrics": return await SearchLyricsAsync(ResolveRequestedLyricsTrack(payload));
             case "saveTags": await SaveTagsAsync(payload); return null;
             case "restoreTags": await RestoreTagsAsync(payload); return null;
@@ -19,13 +19,14 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task SaveLyricsAsync(JsonElement payload)
+    private async Task<object> SaveLyricsAsync(JsonElement payload)
     {
         var track = ResolveRequestedLyricsTrack(payload) ?? throw new InvalidOperationException("Choose a track before editing lyrics.");
         EnsureMetadataTargetAvailable(track);
         var text = String(payload, "text"); var mode = String(payload, "mode"); var offset = Int(payload, "offsetMilliseconds");
-        await _trackMetadata.SaveLyricsAsync(track.Path, text, mode == "embed", offset);
+        var storage = await _trackMetadata.SaveLyricsAsync(track.Path, text, mode == "embed", offset);
         await RefreshEditedTrackAsync(track.Path); PublishLibraryChanged();
+        return new { storage };
     }
 
     private async Task<object> SearchLyricsAsync(Track? track)

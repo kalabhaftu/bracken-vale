@@ -1,4 +1,5 @@
 using MusicPlayer.Core;
+using System.Security;
 
 namespace MusicPlayer.App;
 
@@ -15,7 +16,7 @@ internal sealed class TrackMetadataService
         _tagEditor = new TagEditor(Path.Combine(appDataDirectory, "TagBackups"));
     }
 
-    public async Task SaveLyricsAsync(string trackPath, string text, bool embed, int offsetMilliseconds,
+    public async Task<string> SaveLyricsAsync(string trackPath, string text, bool embed, int offsetMilliseconds,
         CancellationToken cancellationToken = default)
     {
         var parsed = Lyrics.Parse(text);
@@ -24,9 +25,23 @@ internal sealed class TrackMetadataService
             : Lyrics.Format(parsed with { Offset = TimeSpan.FromMilliseconds(offsetMilliseconds) });
 
         if (embed)
-            await _tagEditor.SaveAsync(trackPath, new TagEdit(Lyrics: text), cancellationToken: cancellationToken).ConfigureAwait(false);
-        else
-            LyricsFiles.SaveSidecar(trackPath, text);
+        {
+            try
+            {
+                await _tagEditor.SaveAsync(trackPath, new TagEdit(Lyrics: text), cancellationToken: cancellationToken).ConfigureAwait(false);
+                return "embedded";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException
+                or TagLib.CorruptFileException or TagLib.UnsupportedFormatException or NotSupportedException)
+            {
+                LocalAppLog.Shared.Warning("lyrics-save", "Could not embed lyrics in the audio file; saving them beside it instead.", ex);
+                LyricsFiles.SaveSidecar(trackPath, text);
+                return "sidecar-fallback";
+            }
+        }
+
+        LyricsFiles.SaveSidecar(trackPath, text);
+        return "sidecar";
     }
 
     public Task<IReadOnlyList<LyricsSearchResult>> SearchLyricsAsync(string title, string artist,

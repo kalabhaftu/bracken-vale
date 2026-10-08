@@ -1,12 +1,15 @@
-export function createPlayerUi({state,$,$$,call,command,cover,esc,fmtDuration,svg}) {
+export function createPlayerUi({state,$,$$,call,command,cover,esc,fmtDuration,svg,lyricLinesMarkup,loadLyricsForTrack}) {
   const trackDetailsCache = new Map();
   let trackDetailsRequest = 0;
   let trackDetailsTrackId = null;
   let panelCurrentTrackId = null;
+  let displayedTrackId = null;
+  let immersiveLyricsRenderKey = "";
 function currentPosition(){return state.playing?Math.min(state.duration||Infinity,state.position+Math.max(0,performance.now()-(state.positionUpdatedAt||performance.now()))/1000):state.position;}
 function renderProgress(){const position=currentPosition(),seek=$("#progressRange");$("#currentTime").textContent=fmtDuration(state.seekPreviewSeconds??position);$("#totalTime").textContent=fmtDuration(state.duration);if(!state.seeking&&!seek.matches(":active")){seek.max=String(Math.max(1,state.duration));seek.value=String(Math.min(state.duration,position));}seek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(seek.value)/Math.max(1,Number(seek.max)||1)*100))}%`);const fullSeek=$("#immersiveProgress");if(fullSeek){fullSeek.max=seek.max;if(!state.seeking&&!fullSeek.matches(":active"))fullSeek.value=seek.value;fullSeek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(fullSeek.value)/Math.max(1,Number(fullSeek.max)||1)*100))}%`);$("#immersiveCurrentTime").textContent=fmtDuration(state.seekPreviewSeconds??position);$("#immersiveTotalTime").textContent=fmtDuration(state.duration);}updateActiveLyric();}
 function updatePlayer() {
   const t=state.track;
+  const nextTrackId=t?.id||"__empty__";
   const coverEl=$("#nowCover");
   if(t) {
     $("#nowTitle").textContent=t.title;
@@ -39,6 +42,8 @@ function updatePlayer() {
   const fullPlay=$("#immersivePlay");fullPlay.innerHTML=svg(state.playing?"pause":"play");fullPlay.title=state.playing?"Pause":"Play";fullPlay.setAttribute("aria-label",fullPlay.title);
   const fullHeart=$("#immersiveHeart");fullHeart.classList.toggle("on",!!t?.favorite);fullHeart.title=favoriteLabel;fullHeart.setAttribute("aria-label",favoriteLabel);fullHeart.setAttribute("aria-pressed",String(!!t?.favorite));fullHeart.innerHTML=svg("heart");
   const fullToggle=$("#immersiveToggle");fullToggle.disabled=!t;fullToggle.setAttribute("aria-disabled",String(!t));
+  renderImmersiveLyrics();
+  if(nextTrackId!==displayedTrackId){displayedTrackId=nextTrackId;animateTrackChange();}
   renderProgress();
   if(state.volume>0){state.lastVolume=state.volume;state.muted=false;}else state.muted=true;
   $("#volumeRange").value=String(state.volume); $("#volumeRange").style.setProperty("--range-progress",`${Math.max(0,Math.min(100,state.volume))}%`); const muteBtn=$("#muteBtn"); muteBtn.title=state.muted?"Unmute":"Mute"; muteBtn.setAttribute("aria-label",muteBtn.title); muteBtn.setAttribute("aria-pressed",String(state.muted)); muteBtn.innerHTML=svg(state.muted?"mute":"volume");
@@ -46,7 +51,51 @@ function updatePlayer() {
   updateActiveLyric();
 }
 
-function updateActiveLyric(){ if(state.view!=="Lyrics"||!state.lyricLines.length||!state.lyricsTrack||state.lyricsTrack.id!==state.track?.id)return;let active=-1;for(let i=0;i<state.lyricLines.length;i++)if(Number(state.lyricLines[i].seconds)<=currentPosition())active=i;$("[data-lyric-index].active")?.classList.remove("active");if(active>=0) $(`[data-lyric-index="${active}"]`)?.classList.add("active"); }
+function animateTrackChange(){
+  if(state.settings.motionStyle==="Off"||matchMedia("(prefers-reduced-motion: reduce)").matches)return;
+  for(const element of [$("#nowCover"),$("#nowTitle"),$("#immersiveArtwork"),$("#immersiveTitle")]){
+    if(!element)continue;
+    element.classList.remove("track-enter");void element.offsetWidth;element.classList.add("track-enter");
+    setTimeout(()=>element.classList.remove("track-enter"),500);
+  }
+}
+
+function renderImmersiveLyrics(){
+  const current=state.track&&state.lyricsTrack?.id===state.track.id;
+  const revisionKey=[state.track?.id||"",state.lyricsTrack?.id||"",state.lyricsRevision||0,state.lyricsLoadingTrackId||"",state.lyricsAutoError||""].join("|");
+  if(revisionKey===immersiveLyricsRenderKey)return;
+  immersiveLyricsRenderKey=revisionKey;
+  const lines=$("#immersiveLyricsLines");if(!lines)return;
+  const source=state.lyricsSource==="lrclib"?"LRCLIB (online)":state.lyricsSource==="embedded"?"Embedded audio tags":state.lyricsSource==="sidecar"?"Sidecar file":"";
+  $("#immersiveLyricsSource").textContent=current?source:"";
+  if(!current)lines.innerHTML=`<div class="empty-state"><b>Loading lyrics…</b>Saved lyrics appear here when they are ready.</div>`;
+  else if(state.lyricLines?.length)lines.innerHTML=lyricLinesMarkup(state.lyricLines,esc,state.settings.seekFromLyrics!==false);
+  else if(state.lyricText)lines.innerHTML=`<div class="lyrics-plain">${esc(state.lyricText)}</div>`;
+  else if(state.lyricsLoadingTrackId===state.track.id)lines.innerHTML=`<div class="empty-state"><b>Finding lyrics…</b>${state.settings.autoLoadLyrics?"Checking for a matching LRCLIB result.":"Loading lyrics saved with this track."}</div>`;
+  else lines.innerHTML=`<div class="empty-state"><b>No lyrics found</b>${esc(state.lyricsAutoError||"Search LRCLIB or edit lyrics to add them.")}</div>`;
+}
+
+function updateActiveLyric(){
+  const trackId=state.lyricsTrack?.id;
+  const canFollow=state.lyricLines.length>0&&!!trackId&&trackId===state.track?.id;
+  let active=-1;
+  if(canFollow)for(let i=0;i<state.lyricLines.length;i++)if(Number(state.lyricLines[i].seconds)<=currentPosition())active=i;
+  const canFollowMain=canFollow&&state.view==="Lyrics";
+  const canFollowImmersive=canFollow&&state.immersiveLyricsOpen&&!$("#immersivePlayer").hidden;
+  const roots=[{element:$("#lyricsLines"),enabled:canFollowMain,scroller:$("#content")},{element:$("#immersiveLyricsLines"),enabled:canFollowImmersive,scroller:$("#immersiveLyricsScroll")}];
+  for(const {element,enabled,scroller} of roots){
+    if(!element)continue;
+    const key=`${trackId||""}:${active}:${state.lyricsRevision||0}`;
+    const nodes=$$("[data-lyric-index]",element);
+    for(const node of nodes){const index=Number(node.dataset.lyricIndex);node.classList.toggle("active",enabled&&index===active);node.classList.toggle("past",enabled&&index<active);node.classList.toggle("upcoming",enabled&&(active<0||index>active));}
+    if(!enabled||active<0||element.dataset.activeLyricKey===key||!scroller)continue;
+    element.dataset.activeLyricKey=key;
+    const activeElement=element.querySelector(`[data-lyric-index="${active}"]`);if(!activeElement)continue;
+    const lineBounds=activeElement.getBoundingClientRect(),scrollBounds=scroller.getBoundingClientRect();
+    const targetTop=scroller.scrollTop+lineBounds.top-scrollBounds.top-(scroller.clientHeight-activeElement.offsetHeight)/2;
+    scroller.scrollTo({top:Math.max(0,targetTop),behavior:state.settings.motionStyle==="Off"||matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
+  }
+}
 
 function updatePanel() {
   const current=state.track; const currentBox=$("#panelCurrent"); const content=$("#panelContent");
@@ -90,7 +139,19 @@ async function loadTrackDetails(track) {
   } catch { /* Audio properties are optional; full track details remain available on demand. */ }
 }
 
-async function refreshCurrent() { const data=await call("getCurrentTrack"); state.track=data.track||null; state.playing=!!data.playing; state.position=data.positionSeconds||0; state.positionUpdatedAt=performance.now(); state.duration=data.durationSeconds||0; state.volume=data.volume??state.volume; state.shuffle=!!data.shuffle; state.repeat=data.repeat||"Off"; state.repeatA=data.repeatA??null; state.repeatB=data.repeatB??null; state.queueIndex=data.queueIndex??-1;const offset=Math.max(0,state.queueIndex-1);const q=await call("getQueue",{offset,pageSize:100}); state.queue=q.entries||[];state.queueOffset=offset;state.queueTotal=q.totalCount||0;state.queueIndex=q.queueIndex??state.queueIndex; updatePlayer(); updatePanel(); }
+async function refreshCurrent() {
+  const previousTrackId=state.track?.id,data=await call("getCurrentTrack");
+  state.track=data.track||null;
+  const currentTrackId=state.track?.id||"";
+  if(currentTrackId!==previousTrackId){
+    state.trackId=currentTrackId;state.lyricsLoadRevision++;state.lyricsLoadingTrackId="";state.lyricsTrack=null;state.lyricLines=[];state.lyricText="";state.lyricsRaw="";state.lyricsSource="none";state.lyricsAutoError="";state.lyricsRevision++;
+  }
+  state.playing=!!data.playing;state.position=data.positionSeconds||0;state.positionUpdatedAt=performance.now();state.duration=data.durationSeconds||0;state.volume=data.volume??state.volume;state.shuffle=!!data.shuffle;state.repeat=data.repeat||"Off";state.repeatA=data.repeatA??null;state.repeatB=data.repeatB??null;state.queueIndex=data.queueIndex??-1;
+  const offset=Math.max(0,state.queueIndex-1),q=await call("getQueue",{offset,pageSize:100});
+  state.queue=q.entries||[];state.queueOffset=offset;state.queueTotal=q.totalCount||0;state.queueIndex=q.queueIndex??state.queueIndex;
+  updatePlayer();updatePanel();
+  if(state.track&&((state.track.id!==previousTrackId)||(state.lyricsTrack?.id!==state.track.id&&state.lyricsLoadingTrackId!==state.track.id)))void loadLyricsForTrack(state.track.id,!!state.settings.autoLoadLyrics);
+}
 
 async function setVolume(value){state.volume=Math.max(0,Math.min(100,Number(value)||0));if(state.volume>0){state.lastVolume=state.volume;state.muted=false;}else state.muted=true;updatePlayer();await call("setVolume",{volume:state.volume});}
 async function toggleMute(){if(state.muted){await setVolume(state.lastVolume||75);}else{state.lastVolume=state.volume||state.lastVolume||75;await setVolume(0);}}

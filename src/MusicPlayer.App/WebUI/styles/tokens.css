@@ -12,6 +12,8 @@
   --accent: #b7ff2d;
   --accent-rgb: 183,255,45;
   --accent-ink: #101210;
+  --selection-color: var(--accent);
+  --selection-ink: var(--accent-ink);
   --sidebar-surface: #090a09;
   --main-surface: #101210;
   --right-surface: #090a09;

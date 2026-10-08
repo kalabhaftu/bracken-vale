@@ -49,11 +49,28 @@ public static partial class Lyrics
             var timestamps = TimeStamp().Matches(raw);
             if (timestamps.Count == 0) continue;
 
-            var lyric = raw[(timestamps[^1].Index + timestamps[^1].Length)..].Trim();
-            foreach (Match timestamp in timestamps)
+            for (var start = 0; start < timestamps.Count;)
             {
-                if (!TryReadTimestamp(timestamp, out var time)) continue;
-                lines.Add(new(time, lyric));
+                var end = start;
+                while (end + 1 < timestamps.Count)
+                {
+                    var between = raw[(timestamps[end].Index + timestamps[end].Length)..timestamps[end + 1].Index];
+                    if (!string.IsNullOrWhiteSpace(between)) break;
+                    end++;
+                }
+
+                var textStart = timestamps[end].Index + timestamps[end].Length;
+                var textEnd = end + 1 < timestamps.Count ? timestamps[end + 1].Index : raw.Length;
+                var lyric = raw[textStart..textEnd].Trim();
+                if (lyric.Length > 0)
+                {
+                    for (var index = start; index <= end; index++)
+                    {
+                        if (TryReadTimestamp(timestamps[index], out var time))
+                            lines.Add(new(time, lyric));
+                    }
+                }
+                start = end + 1;
             }
         }
 

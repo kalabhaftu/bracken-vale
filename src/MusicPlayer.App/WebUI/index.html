@@ -81,12 +81,20 @@
   <section class="immersive-player" id="immersivePlayer" aria-label="Full-screen player" hidden>
     <div class="immersive-art-backdrop"><img id="immersiveBackdrop" alt=""></div>
     <div class="immersive-topbar"><span>NOW PLAYING</span><button class="immersive-exit" id="immersiveExit" aria-label="Exit full screen" title="Exit full screen"><span data-icon="minimize"></span><span>Exit full screen</span></button></div>
-    <div class="immersive-content">
-      <div class="immersive-art" id="immersiveArtwork"></div>
-      <div class="immersive-meta"><div><h1 id="immersiveTitle">Nothing playing</h1><p id="immersiveArtist">Choose a song from your library</p></div><button class="ctrl heart" id="immersiveHeart" aria-label="Add to favorites" title="Add to favorites" aria-pressed="false" data-icon="heart"></button></div>
+    <div class="immersive-content" id="immersiveContent">
+      <div class="immersive-stage" id="immersiveStage">
+        <div class="immersive-art-column">
+          <div class="immersive-art" id="immersiveArtwork"></div>
+          <div class="immersive-meta"><div><h1 id="immersiveTitle">Nothing playing</h1><p id="immersiveArtist">Choose a song from your library</p></div><button class="ctrl heart" id="immersiveHeart" aria-label="Add to favorites" title="Add to favorites" aria-pressed="false" data-icon="heart"></button></div>
+        </div>
+        <section class="immersive-lyrics" id="immersiveLyricsPanel" aria-label="Lyrics" aria-hidden="true" inert>
+          <header><div><span class="eyebrow">LYRICS</span><span class="immersive-lyric-source" id="immersiveLyricsSource"></span></div><button class="ctrl immersive-lyrics-close" id="immersiveLyricsClose" aria-label="Hide lyrics" title="Hide lyrics" data-icon="close"></button></header>
+          <div class="immersive-lyrics-scroll" id="immersiveLyricsScroll"><div class="lyrics-lines" id="immersiveLyricsLines"></div></div>
+        </section>
+      </div>
       <div class="immersive-timeline"><div class="immersive-time-labels"><span id="immersiveCurrentTime">0:00</span><span id="immersiveTotalTime">0:00</span></div><input id="immersiveProgress" type="range" min="0" max="1" value="0" aria-label="Track position"></div>
       <div class="immersive-controls"><button class="ctrl" id="immersivePrev" aria-label="Previous track" title="Previous track" data-icon="skip-back"></button><button class="ctrl immersive-play" id="immersivePlay" aria-label="Play" title="Play" data-icon="play"></button><button class="ctrl" id="immersiveNext" aria-label="Next track" title="Next track" data-icon="skip-forward"></button></div>
-      <div class="immersive-shortcuts"><button class="ctrl" data-view="Audio" title="Equalizer" aria-label="Equalizer" data-icon="equalizer"></button><button class="ctrl" data-view="Lyrics" title="Lyrics" aria-label="Lyrics" data-icon="lyrics"></button><button class="ctrl" data-view="Queue" title="Queue" aria-label="Queue" data-icon="queue"></button></div>
+      <div class="immersive-shortcuts"><button class="ctrl" data-view="Audio" title="Equalizer" aria-label="Equalizer" data-icon="equalizer"></button><button class="ctrl immersive-lyrics-toggle" id="immersiveLyricsToggle" title="Show lyrics" aria-label="Show lyrics" aria-expanded="false" aria-controls="immersiveLyricsPanel" data-icon="lyrics"></button><button class="ctrl" data-view="Queue" title="Queue" aria-label="Queue" data-icon="queue"></button></div>
     </div>
   </section>
   <div class="context-menu" id="contextMenu" role="menu"></div>
