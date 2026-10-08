@@ -21,7 +21,7 @@ dotnet run --project src/MusicPlayer.App/MusicPlayer.App.csproj
 
 ## UI and application services
 
-The WinUI window is the native shell for the local WebView2 UI. Frontend sources live under `src/MusicPlayer.App/WebUI`: `index.html`, three shared stylesheets, and vanilla JavaScript modules for the typed bridge, library rendering, playback presentation, and app interactions. The C# bridge remains explicit; query, playlist, settings, metadata, folder, scan, queue, and playback rules are kept in focused C# services/coordinators rather than duplicated in JavaScript.
+The WinUI window is the native shell for the local WebView2 UI. Frontend sources live under `src/MusicPlayer.App/WebUI`: `index.html`, shared stylesheets, and vanilla JavaScript modules for the typed bridge, library rendering, playback presentation, and app interactions. MSBuild embeds those files in the app assembly, and the C# WebView2 bridge serves them from memory, so releases do not expose a loose `WebUI` directory. The C# bridge remains explicit; query, playlist, settings, metadata, folder, scan, queue, and playback rules are kept in focused C# services/coordinators rather than duplicated in JavaScript.
 
 For ARM64, replace `x64`/`win-x64` with `ARM64`/`win-arm64`. The automated Windows workflow builds both architectures and uploads per-architecture artifacts.
 
