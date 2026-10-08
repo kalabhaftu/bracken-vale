@@ -17,7 +17,7 @@ public partial class App : Application
             args.SetObserved();
         };
         InitializeComponent();
-        LocalAppLog.Shared.Info("app", $"Starting Music Player {GetType().Assembly.GetName().Version} on {System.Runtime.InteropServices.RuntimeInformation.OSDescription} ({System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, .NET {Environment.Version}).");
+        LocalAppLog.Shared.Info("app", $"Starting Music Player {GetType().Assembly.GetName().Version} from '{Environment.ProcessPath}' on {System.Runtime.InteropServices.RuntimeInformation.OSDescription} ({System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, .NET {Environment.Version}); data profile is LocalAppData\\MusicPlayer.");
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
