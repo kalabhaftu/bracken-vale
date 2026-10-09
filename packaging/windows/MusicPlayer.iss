@@ -31,6 +31,10 @@ OutputDir={#OutputDir}
 OutputBaseFilename=MusicPlayer-Setup-{#Architecture}
 SetupIconFile={#SourceDir}\Assets\MusicPlayer.ico
 Uninstallable=yes
+#ifdef SignedBuild
+SignedUninstaller=yes
+SignTool=musicplayer
+#endif
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "MicrosoftEdgeWebView2Setup.exe,Portable-README.txt,Uninstall-MusicPlayer.ps1"; Flags: ignoreversion recursesubdirs createallsubdirs

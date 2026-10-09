@@ -37,16 +37,13 @@ $hasCodeSigningEku = $signerCertificate.Extensions | Where-Object {
 } | Select-Object -First 1
 if (-not $hasCodeSigningEku) { throw 'Manifest signer lacks the Code Signing purpose.' }
 
-$chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
-try {
-    $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::Online
-    $chain.ChainPolicy.RevocationFlag = [System.Security.Cryptography.X509Certificates.X509RevocationFlag]::ExcludeRoot
-    $chain.ChainPolicy.UrlRetrievalTimeout = [TimeSpan]::FromSeconds(15)
-    [void]$chain.ChainPolicy.ApplicationPolicy.Add([System.Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.3'))
-    if (-not $chain.Build($signerCertificate)) { throw 'Manifest signer certificate chain is not trusted or could not be validated.' }
-} finally {
-    $chain.Dispose()
-}
+# Authenticate the persistent project key independently of Windows public trust.
+# Obtain this verifier/fingerprint from the project's GitHub repository over HTTPS.
+$expectedFingerprint = '91BB3E5022E52803329F928B8CCAD73E3211AE710B764B373480A2FB1C5EDEE4'
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+try { $actualFingerprint = ([BitConverter]::ToString($sha256.ComputeHash($signerCertificate.RawData))).Replace('-', '') }
+finally { $sha256.Dispose() }
+if ($actualFingerprint -ne $expectedFingerprint) { throw 'Manifest signer does not match the pinned Music Player self-signed certificate.' }
 
 $entries = [System.Collections.Generic.List[object]]::new()
 $seenNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -66,6 +63,8 @@ $requiredNames = @(
     'MusicPlayer-Setup-arm64.exe',
     "MusicPlayer-$version-x64-arm64.msixbundle",
     'ThirdPartyNotices.md',
+    'MusicPlayer-Signing.cer',
+    'SIGNING.md',
     'Verify-MusicPlayer-ReleaseManifest.ps1'
 )
 foreach ($requiredName in $requiredNames) {
@@ -80,4 +79,4 @@ foreach ($entry in $entries) {
     if ($actualHash -ne $entry.Hash) { throw "SHA-256 mismatch: $($entry.Name)" }
 }
 
-Write-Host "Signature, trusted publisher, and SHA-256 hashes verified for $($entries.Count) release files."
+Write-Host "Project self-signed signature and SHA-256 hashes verified for $($entries.Count) release files. This does not establish publicly trusted Windows publisher identity."

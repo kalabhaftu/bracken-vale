@@ -4,6 +4,15 @@ Changes to Music Player are documented here. The app name, executable, package i
 
 ## [Unreleased]
 
+## [1.0.0]
+
+- Reduce self-contained Windows packages by selecting the required WinUI components; retain LibVLC's audio/video modules and dependency notices.
+- Restore the saved library before scanning and checking updates; batch filesystem changes into bounded directory scans.
+- Store ordered queue entries separately from playback state, preserving duplicates and missing paths through migration and recovery. Position checkpoints no longer rewrite the queue.
+- Fix natural track advancement, seeking after the queue ends, crossfade event handling, immersive lyrics, and search-context queue selection.
+- Reduce paused and minimized UI work using WebView2 suspension and state resynchronization.
+- Distribute self-signed packages and a public certificate with explicit Windows trust instructions. This signing is not publicly trusted and Windows may display publisher or SmartScreen warnings.
+
 - Checkpoint recovered SQLite data before replacing a damaged library database, so its WAL is not left behind under the temporary filename.
 - Preserve completed track reads when a library scan is cancelled before its normal batch size.
 - Log when the Songs page is empty because the active index contains no tracks, without recording search text or media paths.

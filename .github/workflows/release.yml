@@ -4,6 +4,12 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Private preflight or full candidate packages (no publication)
+        type: choice
+        options: [preflight, candidate]
+        default: preflight
 
 permissions:
   contents: read
@@ -32,18 +38,21 @@ jobs:
         env:
           SIGNING_PFX: ${{ secrets.MUSICPLAYER_SIGNING_PFX_BASE64 }}
           SIGNING_PASSWORD: ${{ secrets.MUSICPLAYER_SIGNING_PFX_PASSWORD }}
+          SIGNING_MODE: self-signed
         run: |
           $ErrorActionPreference = 'Stop'
-          $preflightOnly = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch'
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $preflightOnly = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and '${{ inputs.mode }}' -ne 'candidate'
+          $version = if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { '1.0.0' } else { $env:GITHUB_REF_NAME.TrimStart('v') }
           $preview = $false
           $notes = ''
           if ($preflightOnly -and $env:GITHUB_REF_NAME -ne 'main') { throw 'Private signing preflight must run from main.' }
           if (-not $preflightOnly) {
-            git fetch origin main --no-tags
-            if ($LASTEXITCODE -ne 0) { throw 'Could not verify the main branch before release.' }
-            git merge-base --is-ancestor HEAD origin/main
-            if ($LASTEXITCODE -ne 0) { throw 'Release tags must point to a commit reachable from main.' }
+            if ($env:GITHUB_EVENT_NAME -eq 'push') {
+              git fetch origin main --no-tags
+              if ($LASTEXITCODE -ne 0) { throw 'Could not verify the main branch before release.' }
+              git merge-base --is-ancestor HEAD origin/main
+              if ($LASTEXITCODE -ne 0) { throw 'Release tags must point to a commit reachable from main.' }
+            }
             if ($version -notmatch '^\d+\.\d+\.\d+(-preview\.\d+)?$') { throw "Tag must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-preview.N: $env:GITHUB_REF_NAME" }
             $preview = $version -match '-preview\.\d+$'
             $changelog = Get-Content CHANGELOG.md -Raw
@@ -83,10 +92,21 @@ jobs:
                 ($_.EnhancedKeyUsages | Where-Object { $_.Value -eq '1.3.6.1.5.5.7.3.3' })
               } | Select-Object -First 1
               if (-not $codeSigningEku) { throw 'Signing certificate lacks the Code Signing EKU.' }
+              if ($env:SIGNING_MODE -ne 'self-signed') { throw 'This pipeline explicitly requires the documented self-signed identity.' }
+              $publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $PWD 'packaging/windows/MusicPlayer-Signing.cer'))
+              if ($certificate.Thumbprint -ne $publicCertificate.Thumbprint -or $certificate.Issuer -ne $certificate.Subject) { throw 'Certificate does not match the persistent project self-signed identity.' }
+              if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Trust setup is restricted to the isolated GitHub runner.' }
+              # These stores exist only on this disposable hosted runner. No end-user
+              # helper installs trust, and the public certificate ships separately.
+              Import-Certificate -FilePath packaging/windows/MusicPlayer-Signing.cer -CertStoreLocation Cert:/CurrentUser/Root | Out-Null
+              Import-Certificate -FilePath packaging/windows/MusicPlayer-Signing.cer -CertStoreLocation Cert:/CurrentUser/TrustedPeople | Out-Null
+              $secretPassword = ConvertTo-SecureString $env:SIGNING_PASSWORD -AsPlainText -Force
+              Import-PfxCertificate -FilePath $pfxPath -Password $secretPassword -CertStoreLocation Cert:/CurrentUser/My | Out-Null
+              $secretPassword = $null
 
               $preflightStage = 'validate the signing certificate trust chain'
               $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
-              $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::Online
+              $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
               $chain.ChainPolicy.RevocationFlag = [System.Security.Cryptography.X509Certificates.X509RevocationFlag]::ExcludeRoot
               $chain.ChainPolicy.UrlRetrievalTimeout = [TimeSpan]::FromSeconds(15)
               $chain.ChainPolicy.ApplicationPolicy.Add([System.Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.3'))
@@ -102,11 +122,13 @@ jobs:
               if (-not (Test-Path -LiteralPath $probeSource -PathType Leaf)) { throw 'PowerShell executable was not found for the signing probe.' }
               Copy-Item -LiteralPath $probeSource -Destination $probePath
               $preflightStage = 'sign the disposable executable probe'
-              & $signtool sign /as /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfxPath /p $env:SIGNING_PASSWORD $probePath
+              & $signtool sign /as /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /sha1 $certificate.Thumbprint /s My $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signing probe failed.' }
               $preflightStage = 'verify the disposable executable signature'
               & $signtool verify /pa /all $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signature verification failed.' }
+              $probeSignature = Get-AuthenticodeSignature -LiteralPath $probePath
+              if (-not $probeSignature.TimeStamperCertificate) { throw 'Signing probe lacks a trusted timestamp.' }
 
               $preflightStage = 'verify detached SHA-256 manifest signing support'
               Add-Type -AssemblyName System.Security.Cryptography.Pkcs
@@ -178,6 +200,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $signed = $env:RELEASE_SIGNED -eq 'true'
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { $version = '1.0.0' }
+          $publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $PWD 'packaging/windows/MusicPlayer-Signing.cer'))
           if ($signed) {
             $pfx = Join-Path $env:RUNNER_TEMP 'music-player-signing.pfx'
             $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
@@ -194,11 +218,7 @@ jobs:
               & packaging/windows/Prepare-PortablePackage.ps1 -PublishDirectory $publish -DestinationDirectory $out -Version $version -Architecture $arch.name
               if ($LASTEXITCODE -ne 0) { throw "Portable package preparation failed for $($arch.name)." }
               if ($signed) {
-                $app = Join-Path $out 'MusicPlayer.exe'
-                & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $app
-                if ($LASTEXITCODE -ne 0) { throw "Signing app binary failed for $($arch.name)." }
-                & $signtool verify /pa /all $app
-                if ($LASTEXITCODE -ne 0) { throw "App signature verification failed for $($arch.name)." }
+                & packaging/windows/Sign-FirstPartyFiles.ps1 -Directory $out
                 $iscc = (Get-Command ISCC.exe -ErrorAction Stop).Source
                 $webViewBootstrapper = Join-Path $out 'MicrosoftEdgeWebView2Setup.exe'
                 try {
@@ -207,14 +227,13 @@ jobs:
                   if ($bootstrapperSignature.Status -ne 'Valid' -or $bootstrapperSignature.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation') {
                     throw 'The WebView2 Evergreen bootstrapper did not have a valid Microsoft signature.'
                   }
-                  & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" packaging/windows/MusicPlayer.iss
+                  $signCommand = '"' + $signtool + '" sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /sha1 ' + $publicCertificate.Thumbprint + ' /s My $f'
+                  & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" '/DSignedBuild' "/Smusicplayer=$signCommand" packaging/windows/MusicPlayer.iss
                   if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $($arch.name)." }
                 } finally {
                   Remove-Item -LiteralPath $webViewBootstrapper -Force -ErrorAction SilentlyContinue
                 }
                 $setup = Join-Path $PWD "artifacts/MusicPlayer-Setup-$($arch.name).exe"
-                & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNING_PASSWORD $setup
-                if ($LASTEXITCODE -ne 0) { throw "Signing installer failed for $($arch.name)." }
                 & $signtool verify /pa /all $setup
                 if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed for $($arch.name)." }
               }
@@ -232,7 +251,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $manifestVersion = "$($version.Split('-')[0]).0"
-          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release -p:Platform=x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:PackageCertificateKeyFile="$env:RUNNER_TEMP\music-player-signing.pfx" -p:PackageCertificatePassword="$env:SIGNING_PASSWORD" -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { $version = '1.0.0'; $manifestVersion = '1.0.0.0' }
+          $publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $PWD 'packaging/windows/MusicPlayer-Signing.cer'))
+          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release -p:Platform=x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:SignFirstParty=true -p:PackageCertificateThumbprint=$($publicCertificate.Thumbprint) -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
           if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle packaging/signing failed.' }
           $bundle = Get-ChildItem src/MusicPlayer.App -Recurse -Filter *.msixbundle | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $bundle) { throw 'Windows packaging completed without producing an MSIX bundle.' }
@@ -252,7 +273,7 @@ jobs:
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           & packaging/windows/Sign-ReleaseManifest.ps1 `
             -ArtifactDirectory artifacts `
-            -Version $version `
+            -Version $(if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { '1.0.0' } else { $version }) `
             -PfxPath "$env:RUNNER_TEMP\music-player-signing.pfx" `
             -Password $env:SIGNING_PASSWORD
       # actions/upload-artifact v7, pinned to the verified tag commit.
@@ -262,7 +283,7 @@ jobs:
           name: music-player-release-assets
           path: release-assets/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
       - name: Remove signing material
         if: always()
         shell: pwsh
@@ -270,7 +291,7 @@ jobs:
 
   publish:
     needs: build
-    if: needs.build.outputs.preflight_only != 'true' && needs.build.outputs.signed == 'true'
+    if: github.event_name == 'push' && needs.build.outputs.preflight_only != 'true' && needs.build.outputs.signed == 'true'
     runs-on: windows-2022
     permissions:
       contents: write

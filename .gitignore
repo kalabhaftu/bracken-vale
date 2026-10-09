@@ -8,6 +8,7 @@
 *.pfx
 *.p12
 *.cer
+!packaging/windows/MusicPlayer-Signing.cer
 *.msix
 *.msixbundle
 *.appxupload

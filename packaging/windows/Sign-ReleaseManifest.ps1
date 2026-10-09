@@ -30,6 +30,13 @@ if (-not (Test-Path -LiteralPath $verifierSource -PathType Leaf)) {
     throw "Manifest verifier was not found: $verifierSource"
 }
 Copy-Item -LiteralPath $verifierSource -Destination $verifierDestination -Force
+# Sign the shipped verifier before computing its manifest hash.
+$publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $PSScriptRoot 'MusicPlayer-Signing.cer'))
+$signingCertificate = Get-Item "Cert:/CurrentUser/My/$($publicCertificate.Thumbprint)"
+$signature = Set-AuthenticodeSignature -FilePath $verifierDestination -Certificate $signingCertificate -HashAlgorithm SHA256 -TimestampServer 'https://timestamp.digicert.com'
+if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw 'Release verifier signing or timestamp verification failed.' }
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'MusicPlayer-Signing.cer') -Destination $artifactRoot
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'SIGNING.md') -Destination $artifactRoot
 
 $assetNames = @(
     "MusicPlayer-$Version-x64-portable.zip",
@@ -38,6 +45,8 @@ $assetNames = @(
     'MusicPlayer-Setup-arm64.exe',
     "MusicPlayer-$Version-x64-arm64.msixbundle",
     'ThirdPartyNotices.md',
+    'MusicPlayer-Signing.cer',
+    'SIGNING.md',
     $verifierName
 )
 
@@ -90,7 +99,7 @@ try {
         throw 'Release manifest was not signed by the configured release certificate.'
     }
     $verifiedCms.CheckSignature($true)
-    & $verifierSource -ManifestPath $manifestPath -SignaturePath $signaturePath
+    & $verifierDestination -ManifestPath $manifestPath -SignaturePath $signaturePath
 
     $releaseDirectory = Join-Path (Split-Path -Parent $artifactRoot) 'release-assets'
     if (Test-Path -LiteralPath $releaseDirectory) { throw "Release staging directory already exists: $releaseDirectory" }
