@@ -333,7 +333,7 @@ public sealed partial class MainWindow : Window
 
     private void EnsureQueueInitialized()
     {
-        _playbackQueue.EnsureQueue(GetCurrentQueuePaths(), _playback.CurrentTrack?.Path);
+        if (_queue.Count == 0) _playbackQueue.EnsureQueue(GetCurrentQueuePaths(), _playback.CurrentTrack?.Path);
     }
 
     private void CycleRepeatMode() => _playbackQueue.CycleRepeatMode();
@@ -390,6 +390,7 @@ public sealed partial class MainWindow : Window
 
     private void Clock_Tick(object? sender, object e)
     {
+        UpdateWebViewBackgroundState();
         var position = Math.Max(0, _playback.Position); var duration = Math.Max(0, _playback.Duration);
         if (_playback.IsPlaying && _repeatA is not null && _repeatB is not null && position >= _repeatB.Value.TotalMilliseconds)
         {
@@ -409,6 +410,23 @@ public sealed partial class MainWindow : Window
             StartCrossfade(automaticNext, _crossfadeSeconds * 1000);
         if (DateTime.UtcNow - _lastSessionSave > TimeSpan.FromSeconds(5)) SaveSession();
         PublishPlaybackState();
+        if (!_playback.IsPlaying && !_libraryScan.IsRunning && DateTime.UtcNow - _lastWalMaintenance > TimeSpan.FromMinutes(1))
+        {
+            _lastWalMaintenance = DateTime.UtcNow;
+            _ = _store.CheckpointWalAsync();
+        }
+    }
+
+    private DateTime _lastWalMaintenance = DateTime.UtcNow;
+    private bool _webViewInBackground;
+    private void UpdateWebViewBackgroundState()
+    {
+        if (_webBridge?.IsReady != true) return;
+        var appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(WindowNative.GetWindowHandle(this)));
+        var background = !appWindow.IsVisible || appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized };
+        if (background == _webViewInBackground) return;
+        _webViewInBackground = background;
+        _ = _webBridge.SetBackgroundAsync(background);
     }
 
     private void Playback_TrackEnded(object? sender, EventArgs e)
@@ -558,12 +576,20 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private long _savedQueueRevision = -1;
+
     private void SaveSession()
     {
         try
         {
             var savedQueueIndex = _crossfadeInProgress ? _crossfadeSourceQueueIndex ?? _queueIndex : _queueIndex;
-            _store.SaveSession(_playbackQueue.CreateSession(_playback.CurrentTrack?.Path, Math.Max(0, _playback.Position), savedQueueIndex));
+            var revision = _playbackQueue.ContentRevision;
+            var state = _playbackQueue.CreateSession(_playback.CurrentTrack?.Path, Math.Max(0, _playback.Position), savedQueueIndex, includeQueue: false);
+            if (_savedQueueRevision != revision || !_store.SaveSessionState(state))
+            {
+                _store.SaveSession(state with { Queue = _queue.ToArray() });
+                _savedQueueRevision = revision;
+            }
             PublishQueueStateIfChanged();
             _lastSessionSave = DateTime.UtcNow;
         }

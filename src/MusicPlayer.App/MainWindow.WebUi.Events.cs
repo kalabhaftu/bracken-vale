@@ -14,28 +14,32 @@ namespace MusicPlayer.App;
 
 public sealed partial class MainWindow
 {
+    private object? _lastWebPlaybackState;
     private void PublishPlaybackState()
     {
+        if (_webViewInBackground) return;
         var current = _playback.CurrentTrack;
-        _webBridge?.SendEvent("playbackStateChanged", new
+        var data = new
         {
             playing = _playback.IsPlaying, positionSeconds = Math.Max(0, _playback.Position) / 1000d,
             durationSeconds = Math.Max(0, _playback.Duration) / 1000d, volume = _playback.Volume,
             shuffle = _shuffle, repeat = _repeatMode, repeatA = _repeatA?.TotalSeconds, repeatB = _repeatB?.TotalSeconds,
             isVideo = _playback.IsVideoMode,
             queueIndex = _queueIndex, trackId = current is null ? null : _libraryQueries.TrackId(current.Path)
-        });
+        };
+        if (data.Equals(_lastWebPlaybackState)) return;
+        _lastWebPlaybackState = data;
+        _webBridge?.SendEvent("playbackStateChanged", data);
     }
 
     private void PublishQueueState(bool force = false)
     {
         _taskbarPeekControls?.Update(_playback.CurrentTrack is not null || _queue.Count > 0, _playback.IsPlaying);
-        var contentSignature = string.Join(';', _queue.Select(_libraryQueries.OpaqueId));
-        var signature = $"{_queueIndex}:{contentSignature}";
-        if (!force && signature == _lastWebQueueSignature) return;
-        var itemsChanged = contentSignature != _lastWebQueueContentSignature;
-        _lastWebQueueSignature = signature;
-        _lastWebQueueContentSignature = contentSignature;
+        var revision = _playbackQueue.ContentRevision;
+        if (!force && revision == _lastWebQueueRevision && _queueIndex == _lastWebQueueIndex) return;
+        var itemsChanged = force || revision != _lastWebQueueRevision;
+        _lastWebQueueRevision = revision;
+        _lastWebQueueIndex = _queueIndex;
         _webBridge?.SendEvent("queueChanged", new { entries = QueueDtos(Math.Max(0, _queueIndex), 30), queueOffset = Math.Max(0, _queueIndex), queueIndex = _queueIndex, totalCount = _queue.Count, itemsChanged });
     }
 

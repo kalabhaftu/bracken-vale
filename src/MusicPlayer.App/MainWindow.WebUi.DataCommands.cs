@@ -12,6 +12,14 @@ public sealed partial class MainWindow
     {
         switch (name)
         {
+            case "uiReady":
+                if (!_startupBackgroundWorkStarted && !_windowClosed)
+                {
+                    _startupBackgroundWorkStarted = true;
+                    StartStartupScan();
+                    _ = CheckForUpdatesAsync(false);
+                }
+                return null;
             case "getBootstrap":
             {
                 _webUiBootstrapped = true;
@@ -94,6 +102,8 @@ public sealed partial class MainWindow
             default: throw new InvalidOperationException("This Music Player command is not available in the data handler.");
         }
     }
+
+    private bool _startupBackgroundWorkStarted;
 
     private static long Long(JsonElement payload, string key) =>
         payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(key, out var value) && value.TryGetInt64(out var result)

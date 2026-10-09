@@ -40,18 +40,30 @@ public sealed partial class MainWindow
         finally { _fileWatcherReconcileGate.Release(); }
     }
 
-    private void RequestLibraryWatcherRescan()
+    private readonly HashSet<string> _pendingWatchDirectories = new(StringComparer.OrdinalIgnoreCase);
+    private bool _pendingWatchFullScan;
+
+    private void RequestLibraryWatcherRescan() => RequestLibraryWatcherRescan([], true);
+
+    private void RequestLibraryWatcherRescan(IReadOnlyList<string> directories, bool fullScan)
     {
         DispatcherQueue.TryEnqueue(() =>
         {
             if (_windowClosed) return;
+            _pendingWatchFullScan |= fullScan;
+            foreach (var directory in directories) _pendingWatchDirectories.Add(directory);
+            if (_pendingWatchDirectories.Count > 512) _pendingWatchFullScan = true;
             if (_libraryScan.IsRunning)
             {
                 _libraryWatcherRescanPending = true;
                 return;
             }
-            var roots = _libraryLocations.GetLibraryRoots();
-            if (roots.Length > 0) StartScan(roots);
+            var roots = _pendingWatchFullScan ? _libraryLocations.GetLibraryRoots()
+                : _pendingWatchDirectories.Where(Directory.Exists).ToArray();
+            var reconcileWholeLibrary = _pendingWatchFullScan;
+            _pendingWatchDirectories.Clear();
+            _pendingWatchFullScan = false;
+            if (roots.Length > 0) StartScan(roots, reconcileWholeLibrary: reconcileWholeLibrary);
         });
     }
 
@@ -59,6 +71,6 @@ public sealed partial class MainWindow
     {
         if (!_libraryWatcherRescanPending || _windowClosed) return;
         _libraryWatcherRescanPending = false;
-        RequestLibraryWatcherRescan();
+        RequestLibraryWatcherRescan([], false);
     }
 }

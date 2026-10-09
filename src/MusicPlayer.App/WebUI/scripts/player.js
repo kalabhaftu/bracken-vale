@@ -5,10 +5,15 @@ export function createPlayerUi({state,$,$$,call,command,cover,esc,fmtDuration,sv
   let panelCurrentTrackId = null;
   let displayedTrackId = null;
   let immersiveLyricsRenderKey = "";
+  let playerRenderKey = "";
 function currentPosition(){return state.playing?Math.min(state.duration||Infinity,state.position+Math.max(0,performance.now()-(state.positionUpdatedAt||performance.now()))/1000):state.position;}
 function renderProgress(){const position=currentPosition(),seek=$("#progressRange");$("#currentTime").textContent=fmtDuration(state.seekPreviewSeconds??position);$("#totalTime").textContent=fmtDuration(state.duration);if(!state.seeking&&!seek.matches(":active")){seek.max=String(Math.max(1,state.duration));seek.value=String(Math.min(state.duration,position));}seek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(seek.value)/Math.max(1,Number(seek.max)||1)*100))}%`);const fullSeek=$("#immersiveProgress");if(fullSeek){fullSeek.max=seek.max;if(!state.seeking&&!fullSeek.matches(":active"))fullSeek.value=seek.value;fullSeek.style.setProperty("--range-progress",`${Math.max(0,Math.min(100,Number(fullSeek.value)/Math.max(1,Number(fullSeek.max)||1)*100))}%`);$("#immersiveCurrentTime").textContent=fmtDuration(state.seekPreviewSeconds??position);$("#immersiveTotalTime").textContent=fmtDuration(state.duration);}updateActiveLyric();}
 function updatePlayer() {
+  syncProgressTimer();
   const t=state.track;
+  const key=[t?.id,t?.title,t?.artist,t?.album,t?.artworkUrl,t?.favorite,t?.fileUnavailable,state.playing,state.shuffle,state.repeat,state.repeatA,state.repeatB,state.volume,state.lyricsRevision,state.lyricsTrack?.id,state.lyricsLoadingTrackId,state.lyricsAutoError,state.immersiveLyricsOpen].join("\u001f");
+  if(key===playerRenderKey){if(!document.hidden)renderProgress();return;}
+  playerRenderKey=key;
   const nextTrackId=t?.id||"__empty__";
   const coverEl=$("#nowCover");
   if(t) {
@@ -62,7 +67,7 @@ function animateTrackChange(){
 
 function renderImmersiveLyrics(){
   const current=state.track&&state.lyricsTrack?.id===state.track.id;
-  const revisionKey=[state.track?.id||"",state.lyricsTrack?.id||"",state.lyricsRevision||0,state.lyricsLoadingTrackId||"",state.lyricsAutoError||""].join("|");
+  const revisionKey=[state.immersiveLyricsOpen,state.track?.id||"",state.lyricsTrack?.id||"",state.lyricsRevision||0,state.lyricsLoadingTrackId||"",state.lyricsAutoError||""].join("|");
   if(revisionKey===immersiveLyricsRenderKey)return;
   immersiveLyricsRenderKey=revisionKey;
   const lines=$("#immersiveLyricsLines");if(!lines)return;
@@ -85,11 +90,12 @@ function updateActiveLyric(){
   const roots=[{element:$("#lyricsLines"),enabled:canFollowMain,scroller:$("#content")},{element:$("#immersiveLyricsLines"),enabled:canFollowImmersive,scroller:$("#immersiveLyricsScroll")}];
   for(const {element,enabled,scroller} of roots){
     if(!element)continue;
-    const key=`${trackId||""}:${active}:${state.lyricsRevision||0}`;
+    const key=`${trackId||""}:${active}:${state.lyricsRevision||0}:${enabled}`;
+    if(element.dataset.activeLyricKey===key)continue;
+    element.dataset.activeLyricKey=key;
     const nodes=$$("[data-lyric-index]",element);
     for(const node of nodes){const index=Number(node.dataset.lyricIndex);node.classList.toggle("active",enabled&&index===active);node.classList.toggle("past",enabled&&index<active);node.classList.toggle("upcoming",enabled&&(active<0||index>active));}
-    if(!enabled||active<0||element.dataset.activeLyricKey===key||!scroller)continue;
-    element.dataset.activeLyricKey=key;
+    if(!enabled||active<0||!scroller)continue;
     const activeElement=element.querySelector(`[data-lyric-index="${active}"]`);if(!activeElement)continue;
     const lineBounds=activeElement.getBoundingClientRect(),scrollBounds=scroller.getBoundingClientRect();
     const targetTop=scroller.scrollTop+lineBounds.top-scrollBounds.top-(scroller.clientHeight-activeElement.offsetHeight)/2;
@@ -156,6 +162,12 @@ async function refreshCurrent() {
 async function setVolume(value){state.volume=Math.max(0,Math.min(100,Number(value)||0));if(state.volume>0){state.lastVolume=state.volume;state.muted=false;}else state.muted=true;updatePlayer();await call("setVolume",{volume:state.volume});}
 async function toggleMute(){if(state.muted){await setVolume(state.lastVolume||75);}else{state.lastVolume=state.volume||state.lastVolume||75;await setVolume(0);}}
 
-  setInterval(renderProgress,100);
+  let progressTimer=null;
+  function syncProgressTimer(){
+    const active=state.playing&&!document.hidden;
+    if(active&&progressTimer===null)progressTimer=setInterval(renderProgress,100);
+    else if(!active&&progressTimer!==null){clearInterval(progressTimer);progressTimer=null;}
+  }
+  document.addEventListener("visibilitychange",()=>{syncProgressTimer();if(!document.hidden)void refreshCurrent();});
   return {updatePlayer,updateActiveLyric,updatePanel,loadTrackDetails,refreshCurrent,setVolume,toggleMute};
 }

@@ -13,5 +13,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/MusicPlayer.Core/MusicPlayer.Core.csproj" />
+    <Compile Include="../../src/MusicPlayer.App/LibraryQueryService.cs" Link="LibraryQueryService.cs" />
   </ItemGroup>
 </Project>

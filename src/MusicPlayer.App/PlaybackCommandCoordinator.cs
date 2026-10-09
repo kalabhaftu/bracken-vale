@@ -106,7 +106,7 @@ internal sealed class PlaybackCommandCoordinator(
         int? existingCrossfadeSourceIndex = null)
     {
         var wasEmpty = queue.Entries.Count == 0;
-        queue.EnsureQueue(getCurrentViewPaths(), playback.CurrentTrack?.Path);
+        if (wasEmpty) queue.EnsureQueue(getCurrentViewPaths(), playback.CurrentTrack?.Path);
         if (wasEmpty && queue.Shuffle)
             queue.ShuffleUpcoming(Math.Clamp(queue.CurrentIndex + 1, 0, queue.Entries.Count));
         if (queue.Entries.Count == 0) return PlaybackCommandResult.NoChange;

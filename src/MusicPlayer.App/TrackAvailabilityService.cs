@@ -9,7 +9,8 @@ internal sealed class TrackAvailabilityService(
     LibraryQueryService queries,
     LibraryLocationService locations)
 {
-    public AvailabilityReconciliation ReconcileIndexedTracks(IEnumerable<string>? unavailableRoots = null, IEnumerable<string>? incompletePaths = null)
+    public AvailabilityReconciliation ReconcileIndexedTracks(IEnumerable<string>? unavailableRoots = null, IEnumerable<string>? incompletePaths = null,
+        IEnumerable<string>? scanRoots = null)
     {
         const int pageSize = 800;
         var removed = new List<string>();
@@ -18,10 +19,13 @@ internal sealed class TrackAvailabilityService(
         var protectedPrefixes = (unavailableRoots ?? Array.Empty<string>())
             .Concat(incompletePaths ?? Array.Empty<string>())
             .Select(TryNormalizePrefix).Where(prefix => prefix is not null).Cast<string>().ToArray();
-        var offset = 0;
-        while (true)
+        var scopes = scanRoots?.Cast<string?>().ToArray() ?? [null];
+        foreach (var scope in scopes)
         {
-            var paths = store.GetTrackPaths(offset: offset, pageSize: pageSize);
+          var offset = 0;
+          while (true)
+          {
+            var paths = store.GetTrackPaths(groupColumn: scope is null ? null : "folder", groupValue: scope, offset: offset, pageSize: pageSize);
             if (paths.Count == 0) break;
             var removedFromPage = new List<string>();
             foreach (var path in paths)
@@ -49,6 +53,7 @@ internal sealed class TrackAvailabilityService(
                 offset += paths.Count;
                 if (paths.Count < pageSize) break;
             }
+          }
         }
         return new(removed, unavailable, recovered);
     }

@@ -16,6 +16,39 @@ internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRou
     private const string UiResourcePrefix = "MusicPlayerWebUI/";
     private static readonly IReadOnlyDictionary<string, byte[]> EmbeddedUi = LoadEmbeddedUi();
     private CoreWebView2? _core;
+    private readonly SemaphoreSlim _visibilityGate = new(1, 1);
+    private bool _backgroundRequested;
+
+    public async Task SetBackgroundAsync(bool background)
+    {
+        _backgroundRequested = background;
+        await _visibilityGate.WaitAsync();
+        try
+        {
+            if (_core is null) return;
+            if (_backgroundRequested)
+            {
+                view.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                // Suspend sets the low memory target itself. Use the memory target
+                // only as a fallback when suspension is refused by the runtime.
+                if (!await _core.TrySuspendAsync())
+                    _core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low;
+            }
+            else
+            {
+                _core.Resume();
+                _core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Normal;
+                view.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                SendEvent("windowRestored", new { });
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or System.Runtime.InteropServices.COMException)
+        {
+            LocalAppLog.Shared.Warning("web-ui", "Could not change WebView background state.", ex);
+            if (!_backgroundRequested) view.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+        }
+        finally { _visibilityGate.Release(); }
+    }
 
     public bool IsReady => _core is not null;
 
@@ -112,7 +145,7 @@ internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRou
 
     public void SendEvent(string name, object? data)
     {
-        if (_core is null) return;
+        if (_core is null || _backgroundRequested) return;
         try { _core.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "event", name, data })); }
         catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
     }

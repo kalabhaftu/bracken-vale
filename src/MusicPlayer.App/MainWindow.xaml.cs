@@ -7,7 +7,7 @@ namespace MusicPlayer.App;
 
 public sealed partial class MainWindow : Window
 {
-    private readonly LibraryStore _store = LibraryStore.InAppData();
+    private readonly LibraryStore _store;
     private readonly string _appData = AppDataPaths.Root;
     private readonly LibraryQueryService _libraryQueries;
     private readonly PlaylistLibraryService _playlistLibrary;
@@ -54,8 +54,9 @@ public sealed partial class MainWindow : Window
     private readonly List<nint> _windowIconHandles = [];
     private string? _nativeWindowIconPath;
 
-    public MainWindow()
+    public MainWindow(LibraryStore store)
     {
+        _store = store;
         InitializeComponent();
         ShellRoot.ActualThemeChanged += (_, _) => ApplyNativeWindowChrome();
         _libraryQueries = new(_store, _appData);
@@ -105,8 +106,6 @@ public sealed partial class MainWindow : Window
             ApplyNativeWindowChrome();
         };
         RestoreSession();
-        StartStartupScan();
-        _ = CheckForUpdatesAsync(false);
         WebUi.Loaded += WebUi_Loaded;
     }
 

@@ -12,6 +12,7 @@ internal sealed class PlaybackQueueCoordinator
     private readonly List<string> _entries = [];
 
     public IReadOnlyList<string> Entries => _entries;
+    public long ContentRevision { get; private set; }
     public int CurrentIndex { get; private set; } = -1;
     public bool Shuffle { get; private set; }
     public string RepeatMode { get; private set; } = "Off";
@@ -31,6 +32,7 @@ internal sealed class PlaybackQueueCoordinator
         ArgumentNullException.ThrowIfNull(paths);
         _entries.Clear();
         _entries.AddRange(paths);
+        ContentRevision++;
         SetCurrentIndex(currentIndex);
     }
 
@@ -96,7 +98,11 @@ internal sealed class PlaybackQueueCoordinator
     public void SetCurrentIndex(int index) =>
         CurrentIndex = index >= 0 && index < _entries.Count ? index : -1;
 
-    public void ShuffleUpcoming(int startIndex) => QueueNavigation.ShuffleUpcoming(_entries, startIndex);
+    public void ShuffleUpcoming(int startIndex)
+    {
+        QueueNavigation.ShuffleUpcoming(_entries, startIndex);
+        if (_entries.Count - Math.Clamp(startIndex, 0, _entries.Count) > 1) ContentRevision++;
+    }
 
     public bool MoveEntry(int index, int direction)
     {
@@ -112,6 +118,7 @@ internal sealed class PlaybackQueueCoordinator
         var entry = _entries[index];
         _entries.RemoveAt(index);
         _entries.Insert(targetIndex, entry);
+        ContentRevision++;
         return true;
     }
 
@@ -120,12 +127,14 @@ internal sealed class PlaybackQueueCoordinator
         if (index < 0 || index >= _entries.Count || index == CurrentIndex) return false;
         _entries.RemoveAt(index);
         if (index < CurrentIndex) CurrentIndex--;
+        ContentRevision++;
         return true;
     }
 
     public void ClearUpcoming(string? currentTrackPath)
     {
         _entries.Clear();
+        ContentRevision++;
         if (string.IsNullOrWhiteSpace(currentTrackPath))
         {
             CurrentIndex = -1;
@@ -142,6 +151,7 @@ internal sealed class PlaybackQueueCoordinator
         if (_entries.Count == 0)
         {
             _entries.Add(currentTrackPath);
+            ContentRevision++;
             CurrentIndex = 0;
             return;
         }
@@ -156,6 +166,7 @@ internal sealed class PlaybackQueueCoordinator
 
         var insertAt = Math.Clamp(CurrentIndex + 1, 0, _entries.Count);
         _entries.Insert(insertAt, currentTrackPath);
+        ContentRevision++;
         CurrentIndex = insertAt;
     }
 
@@ -169,6 +180,7 @@ internal sealed class PlaybackQueueCoordinator
 
         var insertAt = Math.Clamp(CurrentIndex + 1, 0, _entries.Count);
         _entries.Insert(insertAt, path);
+        ContentRevision++;
         if (CurrentIndex >= 0 && insertAt <= CurrentIndex) CurrentIndex++;
         if (Shuffle) ShuffleUpcoming(insertAt + 1);
         return insertAt;
@@ -177,7 +189,9 @@ internal sealed class PlaybackQueueCoordinator
     public void Append(IEnumerable<string> paths, string? currentTrackPath)
     {
         EnsureCurrentTrack(currentTrackPath);
+        var previousCount = _entries.Count;
         _entries.AddRange(paths);
+        if (_entries.Count != previousCount) ContentRevision++;
     }
 
     public void ToggleShuffle(IEnumerable<string> currentViewPaths, string? currentTrackPath)
@@ -243,8 +257,9 @@ internal sealed class PlaybackQueueCoordinator
         RepeatB = null;
     }
 
-    public PlaybackSession CreateSession(string? currentTrackPath, long positionMilliseconds, int? currentIndexOverride = null) =>
-        new(currentTrackPath, positionMilliseconds, _entries.ToArray(), Shuffle, RepeatMode,
+    public PlaybackSession CreateSession(string? currentTrackPath, long positionMilliseconds, int? currentIndexOverride = null,
+        bool includeQueue = true) =>
+        new(currentTrackPath, positionMilliseconds, includeQueue ? _entries.ToArray() : Array.Empty<string>(), Shuffle, RepeatMode,
             RepeatA is { } repeatA ? (long)repeatA.TotalMilliseconds : null,
             RepeatB is { } repeatB ? (long)repeatB.TotalMilliseconds : null,
             currentIndexOverride ?? CurrentIndex);

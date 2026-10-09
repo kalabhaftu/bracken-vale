@@ -20,11 +20,14 @@ public partial class App : Application
         LocalAppLog.Shared.Info("app", $"Starting Music Player {GetType().Assembly.GetName().Version} from '{Environment.ProcessPath}' on {System.Runtime.InteropServices.RuntimeInformation.OSDescription} ({System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}, .NET {Environment.Version}); data profile is LocalAppData\\MusicPlayer.");
     }
 
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         try
         {
-            _window ??= new MainWindow();
+            // Integrity checks, migrations and recovery finish on a worker before any
+            // service can write. The UI dispatcher stays available during disk work.
+            var store = await Task.Run(LibraryStore.InAppData);
+            _window ??= new MainWindow(store);
             _window.Activate();
             HandleActivation(Program.InitialActivation);
             while (_pendingFileActivations.TryDequeue(out var pending)) HandleActivation(pending);

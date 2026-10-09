@@ -106,7 +106,7 @@ public sealed partial class MainWindow : Window
             _store.SetSetting("library-roots", JsonSerializer.Serialize(roots));
         _libraryFileWatcher.SetRoots(roots, _libraryLocations.GetScanExclusions(), _libraryLocations.GetEnabledExtensions());
         LocalAppLog.Shared.Info("scanner", $"New local storage mounted: roots=[{string.Join(", ", newlyMounted.Select(DescribeRoot))}]; starting an automatic scan.");
-        if (_libraryScan.IsRunning) _libraryWatcherRescanPending = true;
+        if (_libraryScan.IsRunning) RequestLibraryWatcherRescan(newlyMounted, false);
         else StartScan(newlyMounted);
     }
 
@@ -168,7 +168,8 @@ public sealed partial class MainWindow : Window
     }
 
 
-    private async void StartScan(IEnumerable<string> roots, bool forceRefresh = false, bool databaseRecoveryAttempted = false)
+    private async void StartScan(IEnumerable<string> roots, bool forceRefresh = false, bool databaseRecoveryAttempted = false,
+        bool reconcileWholeLibrary = true)
     {
         if (_libraryScan.IsRunning)
         {
@@ -214,7 +215,7 @@ public sealed partial class MainWindow : Window
                 {
                     _scanCurrentPath = "Scan complete";
                     var unavailableRoots = result.UnavailableRoots ?? Array.Empty<string>();
-                    _libraryQueries.SetUnavailableRoots(unavailableRoots);
+                    if (reconcileWholeLibrary) _libraryQueries.SetUnavailableRoots(unavailableRoots);
                     if (unavailableRoots.Count > 0)
                     {
                         _trackAvailability.MarkUnavailableRoots(unavailableRoots);
@@ -234,7 +235,7 @@ public sealed partial class MainWindow : Window
                     // currently selected roots, while the availability service retains
                     // references whose containing drive or folder cannot be reached.
                     var reconciliation = await Task.Run(() => _trackAvailability.ReconcileIndexedTracks(
-                        unavailableRoots, result.IncompletePaths ?? Array.Empty<string>()));
+                        unavailableRoots, result.IncompletePaths ?? Array.Empty<string>(), reconcileWholeLibrary ? null : scanRoots));
                     foreach (var path in reconciliation.RemovedPaths)
                         _webBridge?.SendEvent("trackAvailabilityChanged", new { id = _libraryQueries.TrackId(path), fileUnavailable = true });
                     foreach (var path in _trackAvailability.ClearUnavailableTracksThatExist())
@@ -319,6 +320,7 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            _ = _store.CheckpointWalAsync();
             if (!_windowClosed)
             {
                 PublishLibraryChanged(); PublishScanState();

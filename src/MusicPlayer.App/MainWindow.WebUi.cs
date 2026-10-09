@@ -13,8 +13,8 @@ public sealed partial class MainWindow
     private string? _webArtworkAccent;
     private object? _webArtworkPalette;
     private Color? _webArtworkTitleBarColor;
-    private string? _lastWebQueueSignature;
-    private string? _lastWebQueueContentSignature;
+    private long _lastWebQueueRevision = -1;
+    private int _lastWebQueueIndex = -1;
     private DateTimeOffset _lastWebScanUpdateUtc;
     private readonly Dictionary<string, string> _webArtworkPaths = new(StringComparer.Ordinal);
 

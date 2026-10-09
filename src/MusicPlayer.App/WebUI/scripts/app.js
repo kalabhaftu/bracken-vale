@@ -650,7 +650,6 @@ function setImmersiveLyricsOpen(open){
   toggle.setAttribute("aria-expanded",String(state.immersiveLyricsOpen));toggle.setAttribute("aria-label",state.immersiveLyricsOpen?"Hide lyrics":"Show lyrics");toggle.title=state.immersiveLyricsOpen?"Hide lyrics":"Show lyrics";
   $("#immersiveLyricsClose").setAttribute("aria-label","Hide lyrics");$("#immersiveLyricsClose").title="Hide lyrics";
   panel.setAttribute("aria-hidden",String(!state.immersiveLyricsOpen));panel.inert=!state.immersiveLyricsOpen;
-  immersiveLyricsRenderKey="";
   updatePlayer();
   if(state.immersiveLyricsOpen&&state.track)void loadLyricsForTrack(state.track.id,!!state.settings.autoLoadLyrics);
   revealImmersiveExit();
@@ -807,7 +806,8 @@ $("#routeView").addEventListener("click",async e=>{
 $("#modalClose").addEventListener("click",closeModal); $("#modalLayer").addEventListener("click",e=>{if(e.target===$("#modalLayer"))closeModal();});
 
 onEvent((name,data)=>{
-  if(name==="playbackStateChanged"){
+  if(name==="windowRestored"){void (async()=>{await refreshCurrent();const fresh=await call("getBootstrap");state.settings={...state.settings,...fresh.settings};setTheme(state.settings);updateScanPresentation(fresh.scan);applyUpdateCheckState(!!fresh.updateCheckActive);state.latestRelease=fresh.latestRelease||null;state.updateAvailable=fresh.updateAvailable||null;await renderView();})();}
+  else if(name==="playbackStateChanged"){
     const wasPlaying=state.playing;Object.assign(state,data,{position:Number(data.positionSeconds)||0,duration:Number(data.durationSeconds)||0});state.positionUpdatedAt=performance.now();
     updatePlayer();
     if(!wasPlaying&&state.playing&&state.track)void loadLyricsForTrack(state.track.id,!!state.settings.autoLoadLyrics);
@@ -843,6 +843,8 @@ async function start() {
     state.scan=data.scan||null; state.view=data.view||"Home"; state.search=data.search||""; state.group=data.group||null; state.playlist=data.playlist||null;
     if(state.view==="Search")$("#globalSearch").value=state.search;
     state.trackId=state.track?.id||"";setTheme(state.settings); setPanelOpen(state.panelOpen,false); await renderView(); updateScanPresentation(state.scan); loadTrackDetails(state.track);if(state.track)void loadLyricsForTrack(state.track.id,!!state.settings.autoLoadLyrics);
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    await call("uiReady");
     if(data.updateAvailable)openModal(`Music Player ${esc(data.updateAvailable.tag||"")} is available`,"Updates are opened in your browser and are never installed automatically.",`<button class="action" data-modal-close>Later</button><button class="action primary" data-action="open-release" data-url="${esc(data.updateAvailable.url||"")}">View release</button>`);
   }
   catch(error) { $("#routeView").innerHTML=`<div class="empty-state"><b>Music Player could not connect to Windows</b>${esc(error.message)}</div>`; }

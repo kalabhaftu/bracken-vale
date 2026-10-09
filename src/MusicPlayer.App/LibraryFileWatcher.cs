@@ -10,16 +10,17 @@ internal sealed class LibraryFileWatcher : IDisposable
     private readonly List<FileSystemWatcher> _watchers = [];
     private readonly Timer _flushTimer;
     private readonly Timer _rescanTimer;
+    private readonly LibraryWatchBatch _changes = new();
     private string[] _ignoredDirectories = [];
     private bool _disposed;
 
     public event Action<IReadOnlyList<string>>? PathsRemoved;
-    public event Action? RescanRequested;
+    public event Action<IReadOnlyList<string>, bool>? RescanRequested;
 
     public LibraryFileWatcher()
     {
         _flushTimer = new Timer(_ => FlushRemoved(), null, Timeout.Infinite, Timeout.Infinite);
-        _rescanTimer = new Timer(_ => RescanRequested?.Invoke(), null, Timeout.Infinite, Timeout.Infinite);
+        _rescanTimer = new Timer(_ => FlushChanges(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
     public void SetRoots(IEnumerable<string> roots, IEnumerable<string>? ignoredDirectories = null, IEnumerable<string>? supportedExtensions = null)
@@ -59,17 +60,17 @@ internal sealed class LibraryFileWatcher : IDisposable
                         // Moving or copying a populated directory does not emit a
                         // Created event for every file in its subtree.
                         if (!IsExcludedPath(args.FullPath, root) &&
-                            (IsSupportedFile(args.FullPath) || Directory.Exists(args.FullPath))) QueueRescan();
+                            (IsSupportedFile(args.FullPath) || Directory.Exists(args.FullPath))) QueueRescan(args.FullPath);
                     };
                     watcher.Changed += (_, args) =>
                     {
-                        if (!IsExcludedPath(args.FullPath, root) && IsSupportedFile(args.FullPath)) QueueRescan();
+                        if (!IsExcludedPath(args.FullPath, root) && IsSupportedFile(args.FullPath)) QueueRescan(args.FullPath);
                     };
                     watcher.Renamed += (_, args) =>
                     {
                         if (!IsExcludedPath(args.OldFullPath, root)) QueueRemoved(args.OldFullPath);
                         if (!IsExcludedPath(args.FullPath, root) &&
-                            (IsSupportedFile(args.FullPath) || Directory.Exists(args.FullPath))) QueueRescan();
+                            (IsSupportedFile(args.FullPath) || Directory.Exists(args.FullPath))) QueueRescan(args.FullPath);
                     };
                     watcher.Error += (_, args) =>
                     {
@@ -127,13 +128,27 @@ internal sealed class LibraryFileWatcher : IDisposable
         }
     }
 
-    private void QueueRescan()
+    private void QueueRescan(string? path = null)
     {
         lock (_gate)
         {
             if (_disposed) return;
+            if (path is null) _changes.RequestRecovery();
+            else _changes.AddDirectory(Directory.Exists(path) ? path : Path.GetDirectoryName(path)!);
             _rescanTimer.Change(1200, Timeout.Infinite);
         }
+    }
+
+    private void FlushChanges()
+    {
+        (string[] Directories, bool FullScan, TimeSpan? RetryAfter) batch;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            batch = _changes.Drain(DateTimeOffset.UtcNow);
+            if (batch.RetryAfter is { } delay) _rescanTimer.Change(delay, Timeout.InfiniteTimeSpan);
+        }
+        if (batch.FullScan || batch.Directories.Length > 0) RescanRequested?.Invoke(batch.Directories, batch.FullScan);
     }
 
     private void FlushRemoved()

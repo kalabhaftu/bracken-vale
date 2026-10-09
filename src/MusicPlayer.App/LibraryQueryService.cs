@@ -415,7 +415,7 @@ internal sealed class LibraryQueryService
             "Videos" => "videos",
             _ => null
         };
-        return _store.GetTrackPaths(_context.Search, _sort, _descending, filter,
+        return _store.GetTrackPaths(_context.View == "Search" ? _context.Search : string.Empty, _sort, _descending, filter,
             _context.GroupColumn, _context.GroupValue, hideExactDuplicates: HideExactDuplicates);
     }
 
