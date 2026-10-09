@@ -31,8 +31,17 @@ internal sealed class WebViewBridge(WebView2 view, WebUiCommandRouter commandRou
                 view.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                 // Suspend sets the low memory target itself. Use the memory target
                 // only as a fallback when suspension is refused by the runtime.
-                if (!await _core.TrySuspendAsync())
+                try
+                {
+                    if (!await _core.TrySuspendAsync())
+                        _core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low;
+                }
+                catch (InvalidOperationException)
+                {
+                    // XAML visibility can reach the controller a frame later. Keep
+                    // the official low-memory fallback until the next restore.
                     _core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low;
+                }
             }
             else
             {
