@@ -30,6 +30,7 @@ if(!$RemoveUserData -and (Test-Path -LiteralPath $privateData)){
 }
 Remove-AppxPackage -Package $package.PackageFullName
 if($RemoveUserData -and (Test-Path -LiteralPath $data)){
+    if(Get-Process MusicPlayer -ErrorAction SilentlyContinue){throw 'Close all Music Player copies before deleting their shared saved data.'}
     # Resolve and constrain the one deletion target; source music is outside it.
     if($data -ne [IO.Path]::GetFullPath((Join-Path $local 'MusicPlayer'))){throw 'Unexpected data deletion target.'}
     Remove-Item -LiteralPath $data -Recurse -Force

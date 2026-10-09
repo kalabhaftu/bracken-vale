@@ -62,6 +62,12 @@ try {
         try {
             node (Join-Path $PSScriptRoot 'smoke.mjs') @arguments
             if($LASTEXITCODE -ne 0){throw 'Windows UI smoke failed.'}
+            $portableUninstaller=Join-Path (Split-Path -Parent $exe) 'Uninstall-MusicPlayer.ps1'
+            if(!$ApplicationId -and $arguments -contains '--restart' -and (Test-Path -LiteralPath $portableUninstaller)){
+                & $portableUninstaller -Quiet
+                if(!(Test-Path (Join-Path $env:LOCALAPPDATA 'MusicPlayer/library.db'))){throw 'Portable uninstall did not retain the saved library.'}
+                if(!(Test-Path (Join-Path $music 'MusicPlayerSmoke-A.wav'))){throw 'Portable uninstall removed source music.'}
+            }
         } finally {
             Save-Diagnostics
             $process.Refresh()
