@@ -75,7 +75,8 @@ jobs:
           Compress-Archive -LiteralPath $stage -DestinationPath $archive -CompressionLevel Optimal
       - name: Install WebView UI test driver
         shell: pwsh
-        run: npm install --prefix tests/MusicPlayer.Ui.Tests --ignore-scripts
+        working-directory: tests/MusicPlayer.Ui.Tests
+        run: npm install --ignore-scripts
       - name: Test clean-profile discovery, queue dragging, lyrics and restart
         shell: pwsh
         run: |

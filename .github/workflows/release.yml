@@ -85,6 +85,7 @@ jobs:
                 $env:SIGNING_PASSWORD,
                 [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
               )
+              Write-Host 'Opened signing certificate; validating validity, key and purpose.'
               $now = [DateTime]::UtcNow
               if ($certificate.NotBefore.ToUniversalTime() -gt $now -or $certificate.NotAfter.ToUniversalTime() -le $now) { throw 'Signing certificate is outside its validity period.' }
               if (-not $certificate.HasPrivateKey) { throw 'Signing certificate has no private key.' }
@@ -100,13 +101,17 @@ jobs:
               if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Trust setup is restricted to the isolated GitHub runner.' }
               # These stores exist only on this disposable hosted runner. No end-user
               # helper installs trust, and the public certificate ships separately.
-              Import-Certificate -FilePath packaging/windows/MusicPlayer-Signing.cer -CertStoreLocation Cert:/CurrentUser/Root | Out-Null
-              Import-Certificate -FilePath packaging/windows/MusicPlayer-Signing.cer -CertStoreLocation Cert:/CurrentUser/TrustedPeople | Out-Null
+              Write-Host 'Installing public trust on the disposable runner.'
+              # LocalMachine import avoids the interactive CurrentUser root warning.
+              Import-Certificate -FilePath packaging/windows/MusicPlayer-Signing.cer -CertStoreLocation Cert:/LocalMachine/Root | Out-Null
+              Import-Certificate -FilePath packaging/windows/MusicPlayer-Signing.cer -CertStoreLocation Cert:/LocalMachine/TrustedPeople | Out-Null
+              Write-Host 'Importing the signing key into the disposable runner personal store.'
               $secretPassword = ConvertTo-SecureString $env:SIGNING_PASSWORD -AsPlainText -Force
               Import-PfxCertificate -FilePath $pfxPath -Password $secretPassword -CertStoreLocation Cert:/CurrentUser/My | Out-Null
               $secretPassword = $null
 
               $preflightStage = 'validate the signing certificate trust chain'
+              Write-Host 'Validating the explicitly trusted self-signed chain.'
               $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
               $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
               $chain.ChainPolicy.RevocationFlag = [System.Security.Cryptography.X509Certificates.X509RevocationFlag]::ExcludeRoot
@@ -319,10 +324,11 @@ jobs:
           if ($manifest.Count -ne 1) { throw 'Expected one candidate manifest.' }
           & packaging/windows/Verify-MusicPlayer-ReleaseManifest.ps1 -ManifestPath $manifest[0].FullName
           if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Trust changes require the isolated runner.' }
-          Import-Certificate -FilePath artifacts/MusicPlayer-Signing.cer -CertStoreLocation Cert:/CurrentUser/Root | Out-Null
-          Import-Certificate -FilePath artifacts/MusicPlayer-Signing.cer -CertStoreLocation Cert:/CurrentUser/TrustedPeople | Out-Null
+          Import-Certificate -FilePath artifacts/MusicPlayer-Signing.cer -CertStoreLocation Cert:/LocalMachine/Root | Out-Null
+          Import-Certificate -FilePath artifacts/MusicPlayer-Signing.cer -CertStoreLocation Cert:/LocalMachine/TrustedPeople | Out-Null
       - name: Install UI driver
-        run: npm install --prefix tests/MusicPlayer.Ui.Tests --ignore-scripts
+        working-directory: tests/MusicPlayer.Ui.Tests
+        run: npm install --ignore-scripts
       - name: Verify signed setup installation, replacement and both uninstall choices
         shell: pwsh
         run: |
