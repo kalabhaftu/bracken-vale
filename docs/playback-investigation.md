@@ -46,3 +46,21 @@ WAV type override is shared by indexing, tag editing, lyrics and track details.
 The core regression edits a genuine PCM `.WAVE`, reads its metadata and embedded
 lyrics, then verifies byte-for-byte recovery. Full format checks run on both
 architectures; no failing format is silently excluded.
+
+## DFF EOF correction and current checks (2026-10-10)
+
+A cold DFF file reader spent over 20 seconds repeatedly rejecting FFmpeg's seek
+to the exact file end during IFF header parsing. The documented StreamMediaInput
+unknown-size mode accepts that seek and opens the same bytes in about one second.
+A bounded read of uncompressed DSDIFF headers supplies the duration without
+loading or rewriting audio. Inputs belong to their actual native player across
+crossfades and are disposed after playback releases them. Compressed DST retains
+the default reader. Native checks cover DFF seek, natural end/restart and exclusive
+file reopening after disposal. Core checks cover duration, indexing, odd-length
+unknown chunks and truncated payload rejection.
+
+At `19577d5`, all 49 native cases passed on x64 and ARM64 (LibVLC 3.0.24), and all
+76 core cases passed. x64 completed both initial and restarted WebView smoke
+checks including native media keys. ARM64 tray registration remains open.
+Local cached-engine checks also passed 11/11 playback/queue/DFF cases with the
+older cached LibVLC 3.0.23.1; these are supplementary, not the final engine gate.

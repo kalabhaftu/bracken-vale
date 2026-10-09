@@ -21,7 +21,7 @@ internal sealed class TrayIconService : IDisposable
     public TrayIconService(IntPtr window, string iconPath, Action restore)
     {
         _window = window; _restore = restore; _procedure = WindowProcedure;
-        _icon = LoadImage(IntPtr.Zero, iconPath, ImageIcon, 0, 0, LoadFromFile);
+        _icon = LoadSmallIcon(iconPath);
         if (_icon == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not load the Music Player tray icon.");
         if (!SetWindowSubclass(_window, _procedure, (UIntPtr)0xB4A7, UIntPtr.Zero))
         { DestroyIcon(_icon); throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not attach the tray icon to the app window."); }
@@ -30,7 +30,7 @@ internal sealed class TrayIconService : IDisposable
         {
             var error = Marshal.GetLastWin32Error();
             RemoveWindowSubclass(_window, _procedure, (UIntPtr)0xB4A7); DestroyIcon(_icon);
-            throw new Win32Exception(error, "Windows could not register the tray icon.");
+            throw new Win32Exception(error, $"Windows could not register the tray icon (native error {error}, data size {data.cbSize}).");
         }
         _registered = true;
         data.uTimeoutOrVersion = 4;
@@ -45,7 +45,7 @@ internal sealed class TrayIconService : IDisposable
 
     public void UpdateIcon(string iconPath)
     {
-        var next = LoadImage(IntPtr.Zero, iconPath, ImageIcon, 0, 0, LoadFromFile);
+        var next = LoadSmallIcon(iconPath);
         if (next == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not load the Music Player tray icon.");
         var previous = _icon;
         _icon = next;
@@ -65,6 +65,9 @@ internal sealed class TrayIconService : IDisposable
         uFlags = NifMessage | NifIcon | NifTip, uCallbackMessage = CallbackMessage, hIcon = _icon,
         szTip = "Music Player", szInfo = string.Empty, szInfoTitle = string.Empty
     };
+
+    private static IntPtr LoadSmallIcon(string path) =>
+        LoadImage(IntPtr.Zero, path, ImageIcon, GetSystemMetrics(49), GetSystemMetrics(50), LoadFromFile);
 
     private IntPtr WindowProcedure(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, UIntPtr referenceData)
     {
@@ -127,6 +130,7 @@ internal sealed class TrayIconService : IDisposable
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr window, uint command);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string message);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
     [DllImport("comctl32.dll", SetLastError = true)] private static extern bool SetWindowSubclass(IntPtr window, SubclassProcedure procedure, UIntPtr subclassId, UIntPtr referenceData);
     [DllImport("comctl32.dll", SetLastError = true)] private static extern bool RemoveWindowSubclass(IntPtr window, SubclassProcedure procedure, UIntPtr subclassId);
     [DllImport("comctl32.dll")] private static extern IntPtr DefSubclassProc(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
