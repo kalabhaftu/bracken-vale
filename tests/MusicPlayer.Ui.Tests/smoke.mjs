@@ -14,7 +14,12 @@ for(let attempt=0;attempt<120;attempt++){
   try{browser=await chromium.connectOverCDP("http://127.0.0.1:9222");break;}catch{await new Promise(resolve=>setTimeout(resolve,500));}
 }
 assert(browser,"WebView2 CDP connection did not become ready");
-const page=browser.contexts().flatMap(context=>context.pages()).find(page=>page.url().startsWith("https://musicplayer.local/"));
+let page;
+for(let attempt=0;attempt<120;attempt++){
+  page=browser.contexts().flatMap(context=>context.pages()).find(page=>page.url().startsWith("https://musicplayer.local/"));
+  if(page)break;
+  await new Promise(resolve=>setTimeout(resolve,500));
+}
 assert(page,"Embedded Music Player page was not found");
 const errors=[];
 page.on("pageerror",error=>errors.push(error.message));
