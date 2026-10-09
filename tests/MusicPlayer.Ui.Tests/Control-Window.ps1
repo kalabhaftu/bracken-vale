@@ -4,15 +4,18 @@ if($env:GITHUB_ACTIONS -ne 'true'){throw 'Native window tests require an isolate
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class MusicPlayerWindowTest {
   public delegate bool EnumerateWindow(IntPtr window, IntPtr data);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumerateWindow callback, IntPtr data);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint id);
   [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, uint command);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
   public static IntPtr FindWindow(int processId) {
     IntPtr found=IntPtr.Zero;
     EnumWindows((window,data)=> {uint id; GetWindowThreadProcessId(window,out id);
-      if(id==(uint)processId && GetWindow(window,4)==IntPtr.Zero){found=window;return false;}return true;
+      var title=new StringBuilder(256); GetWindowText(window,title,title.Capacity);
+      if(id==(uint)processId && GetWindow(window,4)==IntPtr.Zero && title.ToString()=="Music Player"){found=window;return false;}return true;
     },IntPtr.Zero);
     return found;
   }
