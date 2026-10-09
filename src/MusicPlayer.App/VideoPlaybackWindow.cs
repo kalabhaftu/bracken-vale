@@ -369,10 +369,17 @@ internal sealed class VideoPlaybackWindow : Window
             _appWindow.SetPresenter(enabled ? AppWindowPresenterKind.FullScreen : AppWindowPresenterKind.Overlapped);
             _isFullScreen = enabled;
             _details.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+            // The transport that held focus has just been collapsed. Give the
+            // fullscreen layout its own keyboard focus for Escape/F11.
+            _root.IsTabStop = enabled;
             var label = enabled ? "Exit full screen (Esc)" : "Enter full screen (F11)";
             AutomationProperties.SetName(_fullScreenButton, label);
             ToolTipService.SetToolTip(_fullScreenButton, label);
-            _root.Focus(FocusState.Programmatic);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_isFullScreen) _root.Focus(FocusState.Programmatic);
+                else _fullScreenButton.Focus(FocusState.Programmatic);
+            });
         }
         catch (Exception ex) when (ex is InvalidOperationException or COMException or ArgumentException)
         {

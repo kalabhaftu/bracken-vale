@@ -17,9 +17,11 @@ public static class VideoWindowBounds {
         [FieldOffset(0)] public uint Type;[FieldOffset(8)] public ushort Key;[FieldOffset(12)] public uint Flags;
     }
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern uint SendInput(uint count,Input[] inputs,int size);
     public static void Escape(IntPtr window) {
         SetForegroundWindow(window);
+        if(GetForegroundWindow()!=window)throw new InvalidOperationException("The video window did not obtain foreground focus for Escape.");
         var inputs=new[] {new Input {Type=1,Key=0x1B},new Input {Type=1,Key=0x1B,Flags=2}};
         if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the video Escape key input.");
     }

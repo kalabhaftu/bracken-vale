@@ -14,6 +14,9 @@ public sealed class VideoIntegrationTests
             ?? throw new InvalidOperationException("Generate video fixtures before validation.");
         var file = new FileInfo(Path.Combine(fixtures, "fixture.mkv"));
         Assert.True(file.Exists);
+        var indexed = TrackReader.Read(file.FullName, Path.Combine(fixtures, "artwork"));
+        Assert.Equal("fixture", indexed.Title);
+        Assert.True(indexed.Duration > TimeSpan.Zero);
         using var surface = new TestSurface();
         using var playback = new PlaybackService("--aout=dummy", "--vout=wingdi", "--no-video-title-show");
         playback.SetVideoExtensions([".mkv"]);

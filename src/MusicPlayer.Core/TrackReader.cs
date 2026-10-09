@@ -15,14 +15,14 @@ public static class TrackReader
                 HasLyrics: LyricsFiles.HasUsableSidecar(path));
         using var media = AudioTags.Open(path);
         var tag = media.Tag;
-        var artwork = SaveArtwork(tag.Pictures.FirstOrDefault(), artworkCache);
+        var artwork = SaveArtwork(tag.Pictures?.FirstOrDefault(), artworkCache);
         return new(
             path,
             string.IsNullOrWhiteSpace(tag.Title) ? Path.GetFileNameWithoutExtension(path) : tag.Title,
-            string.Join("; ", tag.Performers),
+            string.Join("; ", tag.Performers ?? []),
             tag.Album ?? string.Empty,
-            string.Join("; ", tag.AlbumArtists),
-            string.Join("; ", tag.Genres),
+            string.Join("; ", tag.AlbumArtists ?? []),
+            string.Join("; ", tag.Genres ?? []),
             tag.Year,
             tag.Track,
             media.Properties.Duration,
