@@ -1,5 +1,6 @@
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Notification-area probing requires an isolated runner.'}
+& (Join-Path $PSScriptRoot 'Initialize-DisposableDesktop.ps1')
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
