@@ -43,7 +43,7 @@ switch($Action){
         $item=$combo.FindFirst([Windows.Automation.TreeScope]::Descendants,$condition)
         if(!$item){throw 'Video speed option did not appear.'}
         $item.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
-        $selected=$combo.GetCurrentPattern([Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection()
+        $selected=$combo.GetCurrentPattern([Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
         if($selected.Count -ne 1 -or $selected[0].Current.Name -ne $Name){throw 'The video speed selection did not persist.'}
     }
     Subtitle {
