@@ -34,6 +34,7 @@ jobs:
           dotnet-version: 10.0.x
       - name: Validate release and privately preflight signing
         id: release
+        timeout-minutes: 5
         shell: pwsh
         env:
           SIGNING_PFX: ${{ secrets.MUSICPLAYER_SIGNING_PFX_BASE64 }}
@@ -78,6 +79,7 @@ jobs:
               $pfxBytes = $null
 
               $preflightStage = 'open the signing certificate and validate its identity'
+              Write-Host 'Validating the persistent self-signed project identity.'
               $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
                 $pfxPath,
                 $env:SIGNING_PASSWORD,
@@ -122,13 +124,15 @@ jobs:
               if (-not (Test-Path -LiteralPath $probeSource -PathType Leaf)) { throw 'PowerShell executable was not found for the signing probe.' }
               Copy-Item -LiteralPath $probeSource -Destination $probePath
               $preflightStage = 'sign the disposable executable probe'
-              & $signtool sign /as /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /sha1 $certificate.Thumbprint /s My $probePath
+              Write-Host 'Signing the disposable executable probe with a timestamp.'
+              & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /sha1 $certificate.Thumbprint /s My $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signing probe failed.' }
               $preflightStage = 'verify the disposable executable signature'
-              & $signtool verify /pa /all $probePath
+              Write-Host 'Verifying the project signature and timestamp.'
+              & $signtool verify /pa /all /tw $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signature verification failed.' }
               $probeSignature = Get-AuthenticodeSignature -LiteralPath $probePath
-              if (-not $probeSignature.TimeStamperCertificate) { throw 'Signing probe lacks a trusted timestamp.' }
+              if ($probeSignature.SignerCertificate.Thumbprint -ne $certificate.Thumbprint -or -not $probeSignature.TimeStamperCertificate) { throw 'Signing probe has the wrong signer or lacks a trusted timestamp.' }
 
               $preflightStage = 'verify detached SHA-256 manifest signing support'
               Add-Type -AssemblyName System.Security.Cryptography.Pkcs
@@ -289,8 +293,50 @@ jobs:
         shell: pwsh
         run: Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'music-player-signing.pfx') -Force -ErrorAction SilentlyContinue
 
-  publish:
+  validate-installed:
     needs: build
+    if: needs.build.outputs.preflight_only != 'true' && needs.build.outputs.signed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-2022
+          - arch: arm64
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: music-player-release-assets
+          path: artifacts
+      - name: Authenticate candidate assets before isolated trust setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = @(Get-ChildItem artifacts -Filter 'MusicPlayer-*-SHA256SUMS.txt')
+          if ($manifest.Count -ne 1) { throw 'Expected one candidate manifest.' }
+          & packaging/windows/Verify-MusicPlayer-ReleaseManifest.ps1 -ManifestPath $manifest[0].FullName
+          if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Trust changes require the isolated runner.' }
+          Import-Certificate -FilePath artifacts/MusicPlayer-Signing.cer -CertStoreLocation Cert:/CurrentUser/Root | Out-Null
+          Import-Certificate -FilePath artifacts/MusicPlayer-Signing.cer -CertStoreLocation Cert:/CurrentUser/TrustedPeople | Out-Null
+      - name: Install UI driver
+        run: npm install --prefix tests/MusicPlayer.Ui.Tests --ignore-scripts
+      - name: Verify signed setup installation, replacement and both uninstall choices
+        shell: pwsh
+        run: |
+          & tests/MusicPlayer.Ui.Tests/Test-SetupPackage.ps1 -SetupPath artifacts/MusicPlayer-Setup-${{ matrix.arch }}.exe -Architecture '${{ matrix.arch }}'
+      - name: Upload installed runtime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: installed-${{ matrix.arch }}-evidence
+          path: artifacts/ui-evidence/
+          if-no-files-found: warn
+
+  publish:
+    needs: [build, validate-installed]
     if: github.event_name == 'push' && needs.build.outputs.preflight_only != 'true' && needs.build.outputs.signed == 'true'
     runs-on: windows-2022
     permissions:

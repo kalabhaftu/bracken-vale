@@ -30,7 +30,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorAction
 if errorlevel 1 goto :failed
 
 echo Building the latest source for Windows x64...
-dotnet build "%PROJECT%" --configuration Release --runtime win-x64 --no-restore -p:Platform=x64 -p:BaseOutputPath="%~dp0artifacts\launcher\"
+dotnet build "%PROJECT%" --configuration Release --runtime win-x64 --no-restore -p:Platform=x64 -p:BaseOutputPath="%~dp0artifacts/launcher/"
 if errorlevel 1 goto :build_failed
 
 if not exist "%APP_EXE%" (

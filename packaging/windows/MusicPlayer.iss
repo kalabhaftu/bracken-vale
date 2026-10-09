@@ -73,9 +73,14 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
-    RemoveMusicPlayerData := MsgBox(
-      'Also delete Music Player''s local library index, playlists, favorites, settings, artwork cache, and logs? This does not delete your music files. Choose No to keep your library data if you may reinstall.',
-      mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+  begin
+    if UninstallSilent then
+      RemoveMusicPlayerData := ExpandConstant('{param:REMOVEUSERDATA|0}') = '1'
+    else
+      RemoveMusicPlayerData := MsgBox(
+        'Also delete Music Player''s local library index, playlists, favorites, settings, artwork cache, and logs? This does not delete your music files. Choose No to keep your library data if you may reinstall.',
+        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

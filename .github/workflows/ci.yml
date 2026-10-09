@@ -73,24 +73,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Portable package preparation failed.' }
           $archive = "artifacts/$packageName.zip"
           Compress-Archive -LiteralPath $stage -DestinationPath $archive -CompressionLevel Optimal
-      - name: Smoke test self-contained app startup
+      - name: Install WebView UI test driver
+        shell: pwsh
+        run: npm install --prefix tests/MusicPlayer.Ui.Tests --ignore-scripts
+      - name: Test clean-profile discovery, queue dragging, lyrics and restart
         shell: pwsh
         run: |
           $arch = '${{ matrix.arch }}'.ToLowerInvariant()
           $packageName = "MusicPlayer-ci-$arch-portable"
           $exe = Join-Path $PWD "artifacts/$packageName/MusicPlayer.exe"
-          $process = Start-Process -FilePath $exe -PassThru
-          try {
-            Start-Sleep -Seconds 8
-            $process.Refresh()
-            if ($process.HasExited) {
-              $logs = Join-Path $env:LOCALAPPDATA 'MusicPlayer/Logs'
-              if (Test-Path $logs) { Get-ChildItem $logs -Filter 'music-player-*.log' | Get-Content }
-              throw "Music Player exited during startup with code $($process.ExitCode)."
-            }
-          } finally {
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-          }
+          & tests/MusicPlayer.Ui.Tests/Run-Smoke.ps1 -Executable $exe
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: music-player-${{ matrix.rid }}-runtime-evidence
+          path: artifacts/ui-evidence/
+          if-no-files-found: warn
       - name: Upload portable build
         # actions/upload-artifact v7, pinned to the verified tag commit.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
