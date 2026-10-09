@@ -198,7 +198,16 @@ jobs:
           if ('${{ steps.release.outputs.signed }}' -ne 'true') { throw 'Release packaging requires a successful private signing preflight.' }
       - name: Install Inno Setup 7
         if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
-        run: choco install innosetup --version=7.1.0 --yes --no-progress
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-7.1.0-x64.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe' -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne '0362A383ED217D4C4239B5933866DD96D3EB2102737DA92F80F6057A4B40DF2F') { throw 'Inno Setup installer digest does not match the immutable official release.' }
+          if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw 'Inno Setup vendor signature is invalid.' }
+          $process = Start-Process $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/ALLUSERS' -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed.' }
+          Join-Path $env:ProgramFiles 'Inno Setup 7' | Out-File $env:GITHUB_PATH -Append -Encoding utf8
       - name: Build signed portable packages and setup installers
         if: steps.release.outputs.preflight_only != 'true' && steps.release.outputs.signed == 'true'
         shell: pwsh
