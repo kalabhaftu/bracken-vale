@@ -290,9 +290,13 @@ public sealed partial class MainWindow : Window
 
     private void AdvanceQueue(bool automatic)
     {
+        var queuedCount = _playbackQueue.Entries.Count;
+        var currentIndex = _playbackQueue.CurrentIndex;
+        var nextIndex = _playbackQueue.NextIndex(automatic);
         var crossfadeSourceIndex = _crossfadeInProgress ? _crossfadeSourceQueueIndex : null;
         var result = _playbackCommands.Advance(automatic, _crossfadeSeconds * 1000,
             SameTrack(_crossfadeFailureSource, _playback.CurrentTrack?.Path), crossfadeSourceIndex);
+        LocalAppLog.Shared.Info("playback-queue", $"Advance requested: automatic={automatic}, queuedTracks={queuedCount}, currentIndex={currentIndex}, nextIndex={nextIndex}, repeatMode={_repeatMode}, result={result.Kind}.");
         ApplyPlaybackCommandResult(result);
     }
 
@@ -409,6 +413,7 @@ public sealed partial class MainWindow : Window
 
     private void Playback_TrackEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
+        if (!_playback.HasEnded) return;
         if (_playback.IsVideoMode && _videoWindow?.RepeatCurrent == true && _playback.CurrentTrack is { } videoTrack)
         {
             _playback.Seek(0);

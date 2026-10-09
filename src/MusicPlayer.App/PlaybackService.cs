@@ -570,23 +570,35 @@ public sealed class PlaybackService : IDisposable
     private void EndReached(object? sender, EventArgs e)
     {
         bool ended = false;
+        long generation;
         lock (_gate)
         {
-            var generation = _mediaGeneration;
-            var length = _active.Length;
-            var position = _active.Time;
-            var endTolerance = Math.Clamp(length / 100, 250, 1500);
-            var reachedNaturalEnd = _active.State == VLCState.Ended || (length > 0 && position >= length - endTolerance);
-            if (_handledEndReachedGeneration != generation && PlaybackEventPolicy.ShouldHandleEndReached(
-                    ReferenceEquals(sender, _active), _currentTrack is not null, reachedNaturalEnd,
-                    _crossfadeCancellation is not null))
+            generation = _mediaGeneration;
+            if (!_disposed && _handledEndReachedGeneration != generation && PlaybackEventPolicy.ShouldHandleEndReached(
+                    ReferenceEquals(sender, _active), _currentTrack is not null, currentStateIsEnded: true,
+                    crossfadePending: _crossfadeCancellation is not null))
             {
                 _handledEndReachedGeneration = generation;
                 _trackEnded = true;
                 ended = true;
             }
         }
-        if (ended) TrackEnded?.Invoke(this, EventArgs.Empty);
+
+        // LibVLCSharp raises this on a native event thread. Do not query the
+        // player or run playback commands from that callback; EndReached itself
+        // is the authoritative signal that this media reached its end.
+        if (!ended) return;
+        var queued = ThreadPool.QueueUserWorkItem(_ =>
+        {
+            lock (_gate)
+                if (_disposed || _mediaGeneration != generation || _handledEndReachedGeneration != generation)
+                    return;
+
+            LocalAppLog.Shared.Info("playback", "LibVLC reported the current track ended; requesting the next queue item.");
+            TrackEnded?.Invoke(this, EventArgs.Empty);
+        });
+        if (!queued)
+            LocalAppLog.Shared.Warning("playback", "Could not queue the end-of-track notification from the LibVLC callback.");
     }
 
     private void EncounteredError(object? sender, EventArgs e)
