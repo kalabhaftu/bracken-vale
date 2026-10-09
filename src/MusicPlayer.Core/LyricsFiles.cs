@@ -17,6 +17,10 @@ public sealed record LyricsReadResult(string Text, string Source);
 public static class LyricsFiles
 {
     private static readonly HttpClient LrclibClient = CreateLrclibClient();
+    private static readonly SemaphoreSlim LrclibRequestGate = new(1, 1);
+    private static readonly object LrclibThrottleGate = new();
+    private static DateTimeOffset _lrclibNextRequestUtc = DateTimeOffset.MinValue;
+    private static DateTimeOffset _lrclibBackoffUntilUtc = DateTimeOffset.MinValue;
 
     public static string SidecarPath(string trackPath) => Path.ChangeExtension(trackPath, ".lrc");
 
@@ -108,11 +112,47 @@ public static class LyricsFiles
 
     public static async Task<IReadOnlyList<LyricsSearchResult>> SearchLrclibAsync(string title, string artist, CancellationToken cancellationToken = default)
     {
+        await LrclibRequestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            DateTimeOffset nextAllowed;
+            lock (LrclibThrottleGate) nextAllowed = _lrclibNextRequestUtc > _lrclibBackoffUntilUtc ? _lrclibNextRequestUtc : _lrclibBackoffUntilUtc;
+            var delay = nextAllowed - DateTimeOffset.UtcNow;
+            if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            lock (LrclibThrottleGate) _lrclibNextRequestUtc = DateTimeOffset.UtcNow.AddMilliseconds(1300);
+
         var url = "https://lrclib.net/api/search?track_name=" + Uri.EscapeDataString(title) + "&artist_name=" + Uri.EscapeDataString(artist);
         using var response = await LrclibClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                var retryDelay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30);
+                if (response.Headers.RetryAfter?.Date is { } retryDate) retryDelay = retryDate - DateTimeOffset.UtcNow;
+                SetLrclibBackoff(TimeSpan.FromSeconds(Math.Clamp(retryDelay.TotalSeconds, 5, 120)));
+            }
         response.EnsureSuccessStatusCode();
         await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         return await JsonSerializer.DeserializeAsync<List<LyricsSearchResult>>(body, cancellationToken: cancellationToken).ConfigureAwait(false) ?? [];
+    }
+        catch (HttpRequestException)
+        {
+            SetLrclibBackoff(TimeSpan.FromSeconds(15));
+            throw;
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            SetLrclibBackoff(TimeSpan.FromSeconds(15));
+            throw;
+        }
+        finally { LrclibRequestGate.Release(); }
+    }
+
+    private static void SetLrclibBackoff(TimeSpan duration)
+    {
+        lock (LrclibThrottleGate)
+        {
+            var retryAfter = DateTimeOffset.UtcNow + duration;
+            if (retryAfter > _lrclibBackoffUntilUtc) _lrclibBackoffUntilUtc = retryAfter;
+        }
     }
 
     private static HttpClient CreateLrclibClient()

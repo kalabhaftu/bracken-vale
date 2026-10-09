@@ -17,7 +17,7 @@ public sealed partial class MainWindow
                 var paths = _libraryQueries.CurrentTrackPaths();
                 _playbackQueue.SelectTrack(paths, track.Path);
                 PlayTrack(track, false, _queueIndex);
-                PublishQueueState(force: true);
+                PublishQueueStateIfChanged();
                 return null;
             }
             case "playView":
@@ -28,7 +28,7 @@ public sealed partial class MainWindow
                 if (!_playbackQueue.StartView(paths, name == "shuffleView")) return null;
                 var first = _store.GetTrack(_queue[0]);
                 if (first is not null) PlayTrack(first, false, 0);
-                PublishQueueState(force: true);
+                PublishQueueStateIfChanged();
                 return null;
             }
             case "playGroup":
@@ -38,7 +38,7 @@ public sealed partial class MainWindow
                 var paths = _libraryQueries.GroupTrackPaths(column, value);
                 if (!_playbackQueue.StartView(paths, shuffleUpcoming: false)) return null;
                 if (_store.GetTrack(paths[0]) is { } first) PlayTrack(first, false, 0);
-                PublishQueueState(force: true);
+                PublishQueueStateIfChanged();
                 return null;
             }
             case "playPause":
@@ -72,7 +72,7 @@ public sealed partial class MainWindow
             case "seek":
                 CancelCrossfadeAndRestoreQueue();
                 _playback.Seek((long)(Double(payload, "seconds") * 1000));
-                PublishQueueState(force: true);
+                PublishQueueStateIfChanged();
                 PublishPlaybackState();
                 return null;
             case "setVolume": SetPlaybackVolume(Int(payload, "volume", 75)); return null;
@@ -105,22 +105,26 @@ public sealed partial class MainWindow
                 var track = RequireTrack(payload, "id");
                 EnsureQueueInitialized();
                 _playbackQueue.InsertNext(track.Path, _playback.CurrentTrack?.Path);
-                SaveSession(); PublishQueueStateIfChanged(); PublishQueueState(force: true);
+                SaveSession(); PublishQueueStateIfChanged();
                 return null;
             }
             case "addToQueue":
             {
                 var track = RequireTrack(payload, "id");
                 _playbackQueue.Append([track.Path], _playback.CurrentTrack?.Path);
-                SaveSession(); PublishQueueStateIfChanged(); PublishQueueState(force: true);
+                SaveSession(); PublishQueueStateIfChanged();
                 return null;
             }
             case "moveQueue":
-                MoveQueueEntry(Int(payload, "index", -1), Int(payload, "direction")); PublishQueueState(force: true); return null;
+            {
+                var targetIndex = Int(payload, "toIndex", -1);
+                MoveQueueEntry(Int(payload, "index", -1), Int(payload, "direction"), targetIndex >= 0 ? (int?)targetIndex : null);
+                return null;
+            }
             case "removeQueue":
-                RemoveQueueEntry(Int(payload, "index", -1)); PublishQueueState(force: true); return null;
-            case "clearQueue": ClearUpcomingQueue(); PublishQueueState(force: true); return null;
-            case "playQueueEntry": await PlayQueueEntryAsync(Int(payload, "index", -1)); PublishQueueState(force: true); return null;
+                RemoveQueueEntry(Int(payload, "index", -1)); return null;
+            case "clearQueue": ClearUpcomingQueue(); return null;
+            case "playQueueEntry": await PlayQueueEntryAsync(Int(payload, "index", -1)); return null;
             default: throw new InvalidOperationException("This Music Player command is not available in the playback handler.");
         }
     }

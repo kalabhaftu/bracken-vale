@@ -60,8 +60,11 @@ internal sealed class PlaybackCommandCoordinator(
 
     public PlaybackCommandResult Toggle()
     {
-        if (playback.CurrentTrack is null) return PlaybackCommandResult.NoChange;
-        return playback.IsPlaying ? Pause() : Resume();
+        if (playback.CurrentTrack is not { } current) return PlaybackCommandResult.NoChange;
+        if (playback.IsPlaying) return Pause();
+        if (playback.HasEnded || (playback.Duration > 0 && playback.Position >= playback.Duration - 250))
+            return StartTrack(current, resetQueue: false, queue.CurrentIndex >= 0 ? queue.CurrentIndex : null);
+        return Resume();
     }
 
     public PlaybackCommandResult Pause()

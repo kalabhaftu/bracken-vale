@@ -99,7 +99,11 @@ public sealed partial class MainWindow : Window
         _noticeDismissTimer.Tick += (_, _) => AppNotice.IsOpen = false;
         Closed += MainWindow_Closed;
         ApplyStoredAppearance();
-        Activated += (_, _) => ApplyNativeWindowIcon();
+        Activated += (_, _) =>
+        {
+            ApplyNativeWindowIcon();
+            ApplyNativeWindowChrome();
+        };
         RestoreSession();
         StartStartupScan();
         _ = CheckForUpdatesAsync(false);

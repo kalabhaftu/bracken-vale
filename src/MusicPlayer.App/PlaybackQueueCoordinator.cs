@@ -100,14 +100,18 @@ internal sealed class PlaybackQueueCoordinator
 
     public bool MoveEntry(int index, int direction)
     {
-        var next = index + direction;
+        return MoveEntryTo(index, index + direction);
+    }
+
+    public bool MoveEntryTo(int index, int targetIndex)
+    {
         var firstUpcomingIndex = Math.Max(0, CurrentIndex + 1);
         if (index < firstUpcomingIndex || index >= _entries.Count ||
-            next < firstUpcomingIndex || next >= _entries.Count) return false;
+            targetIndex < firstUpcomingIndex || targetIndex >= _entries.Count || targetIndex == index) return false;
 
-        (_entries[index], _entries[next]) = (_entries[next], _entries[index]);
-        if (CurrentIndex == index) CurrentIndex = next;
-        else if (CurrentIndex == next) CurrentIndex = index;
+        var entry = _entries[index];
+        _entries.RemoveAt(index);
+        _entries.Insert(targetIndex, entry);
         return true;
     }
 

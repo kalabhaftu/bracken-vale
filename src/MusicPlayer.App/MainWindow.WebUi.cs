@@ -14,6 +14,7 @@ public sealed partial class MainWindow
     private object? _webArtworkPalette;
     private Color? _webArtworkTitleBarColor;
     private string? _lastWebQueueSignature;
+    private string? _lastWebQueueContentSignature;
     private DateTimeOffset _lastWebScanUpdateUtc;
     private readonly Dictionary<string, string> _webArtworkPaths = new(StringComparer.Ordinal);
 

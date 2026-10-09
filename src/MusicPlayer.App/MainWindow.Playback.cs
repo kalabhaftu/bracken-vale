@@ -29,9 +29,12 @@ namespace MusicPlayer.App;
 
 public sealed partial class MainWindow : Window
 {
-    private bool MoveQueueEntry(int index, int direction)
+    private bool MoveQueueEntry(int index, int direction, int? targetIndex = null)
     {
-        if (!_playbackQueue.MoveEntry(index, direction)) return false;
+        var changed = targetIndex is { } destination
+            ? _playbackQueue.MoveEntryTo(index, destination)
+            : _playbackQueue.MoveEntry(index, direction);
+        if (!changed) return false;
         SaveSession();
         PublishQueueStateIfChanged();
         return true;

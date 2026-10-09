@@ -28,6 +28,8 @@ public sealed class PlaybackService : IDisposable
     private float _videoPlaybackRate = 1f;
     private long _restorePosition;
     private long _mediaGeneration;
+    private long _handledEndReachedGeneration = -1;
+    private bool _trackEnded;
     private bool _videoTrack;
     private bool _disposed;
 
@@ -55,6 +57,7 @@ public sealed class PlaybackService : IDisposable
 
     public Track? CurrentTrack { get { lock (_gate) return _currentTrack; } }
     public bool IsPlaying { get { lock (_gate) return !_disposed && _active.IsPlaying; } }
+    public bool HasEnded { get { lock (_gate) return !_disposed && _trackEnded; } }
     public bool IsVideoMode { get { lock (_gate) return !_disposed && _videoTrack; } }
     public long Position { get { lock (_gate) return _disposed ? 0 : _restorePosition > _active.Time ? _restorePosition : _active.Time; } }
     public long Duration
@@ -177,6 +180,7 @@ public sealed class PlaybackService : IDisposable
             if (_disposed) return;
             CancelCrossfadeCore();
             _mediaGeneration++;
+            _trackEnded = false;
             _active.Stop();
             _videoTrack = IsVideoPathCore(track.Path);
             if (_videoTrack && requestedSurface == 0)
@@ -213,6 +217,7 @@ public sealed class PlaybackService : IDisposable
             if (_disposed) return;
             CancelCrossfadeCore();
             _mediaGeneration++;
+            _trackEnded = false;
             _active.Stop();
             _videoTrack = IsVideoPathCore(track.Path);
             if (_videoTrack && requestedSurface == 0)
@@ -301,6 +306,7 @@ public sealed class PlaybackService : IDisposable
             if (_disposed) return;
             CancelCrossfadeCore();
             _mediaGeneration++;
+            _trackEnded = false;
             _restorePosition = 0;
             var duration = _active.Length;
             _active.Time = Math.Clamp(positionMilliseconds, 0, duration > 0 ? duration : long.MaxValue);
@@ -563,12 +569,23 @@ public sealed class PlaybackService : IDisposable
 
     private void EndReached(object? sender, EventArgs e)
     {
-        bool ended;
-        lock (_gate) ended = !_disposed && PlaybackEventPolicy.ShouldHandleEndReached(
-            ReferenceEquals(sender, _active),
-            _currentTrack is not null,
-            _active.State == VLCState.Ended,
-            _crossfadeCancellation is not null);
+        bool ended = false;
+        lock (_gate)
+        {
+            var generation = _mediaGeneration;
+            var length = _active.Length;
+            var position = _active.Time;
+            var endTolerance = Math.Clamp(length / 100, 250, 1500);
+            var reachedNaturalEnd = _active.State == VLCState.Ended || (length > 0 && position >= length - endTolerance);
+            if (_handledEndReachedGeneration != generation && PlaybackEventPolicy.ShouldHandleEndReached(
+                    ReferenceEquals(sender, _active), _currentTrack is not null, reachedNaturalEnd,
+                    _crossfadeCancellation is not null))
+            {
+                _handledEndReachedGeneration = generation;
+                _trackEnded = true;
+                ended = true;
+            }
+        }
         if (ended) TrackEnded?.Invoke(this, EventArgs.Empty);
     }
 

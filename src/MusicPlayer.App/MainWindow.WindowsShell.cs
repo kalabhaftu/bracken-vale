@@ -91,7 +91,9 @@ public sealed partial class MainWindow : Window
             var hoverBackground = artworkSurface ? Shift(background, 15) : dark ? Color.FromArgb(255, 36, 38, 36) : Color.FromArgb(255, 212, 217, 211);
             var pressedBackground = artworkSurface ? Shift(background, 24) : dark ? Color.FromArgb(255, 48, 52, 48) : Color.FromArgb(255, 200, 206, 199);
             titleBar.BackgroundColor = background;
+            titleBar.InactiveBackgroundColor = background;
             titleBar.ForegroundColor = foreground;
+            titleBar.InactiveForegroundColor = foreground;
             titleBar.ButtonBackgroundColor = background;
             titleBar.ButtonForegroundColor = foreground;
             titleBar.ButtonInactiveBackgroundColor = background;

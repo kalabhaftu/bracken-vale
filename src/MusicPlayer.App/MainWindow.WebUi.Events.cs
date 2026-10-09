@@ -30,10 +30,13 @@ public sealed partial class MainWindow
     private void PublishQueueState(bool force = false)
     {
         _taskbarPeekControls?.Update(_playback.CurrentTrack is not null || _queue.Count > 0, _playback.IsPlaying);
-        var signature = $"{_queueIndex}:{string.Join(';', _queue.Select(_libraryQueries.OpaqueId))}";
+        var contentSignature = string.Join(';', _queue.Select(_libraryQueries.OpaqueId));
+        var signature = $"{_queueIndex}:{contentSignature}";
         if (!force && signature == _lastWebQueueSignature) return;
+        var itemsChanged = contentSignature != _lastWebQueueContentSignature;
         _lastWebQueueSignature = signature;
-        _webBridge?.SendEvent("queueChanged", new { entries = QueueDtos(Math.Max(0, _queueIndex), 30), queueOffset = Math.Max(0, _queueIndex), queueIndex = _queueIndex, totalCount = _queue.Count });
+        _lastWebQueueContentSignature = contentSignature;
+        _webBridge?.SendEvent("queueChanged", new { entries = QueueDtos(Math.Max(0, _queueIndex), 30), queueOffset = Math.Max(0, _queueIndex), queueIndex = _queueIndex, totalCount = _queue.Count, itemsChanged });
     }
 
     private object ScanDto()

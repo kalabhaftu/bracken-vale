@@ -67,7 +67,7 @@ function renderImmersiveLyrics(){
   immersiveLyricsRenderKey=revisionKey;
   const lines=$("#immersiveLyricsLines");if(!lines)return;
   const source=state.lyricsSource==="lrclib"?"LRCLIB (online)":state.lyricsSource==="embedded"?"Embedded audio tags":state.lyricsSource==="sidecar"?"Sidecar file":"";
-  $("#immersiveLyricsSource").textContent=current?source:"";
+  $("#immersiveLyricsSource").textContent=current&&source?`· ${source}`:"";
   if(!current)lines.innerHTML=`<div class="empty-state"><b>Loading lyrics…</b>Saved lyrics appear here when they are ready.</div>`;
   else if(state.lyricLines?.length)lines.innerHTML=lyricLinesMarkup(state.lyricLines,esc,state.settings.seekFromLyrics!==false);
   else if(state.lyricText)lines.innerHTML=`<div class="lyrics-plain">${esc(state.lyricText)}</div>`;
