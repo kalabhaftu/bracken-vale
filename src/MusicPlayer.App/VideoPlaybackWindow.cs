@@ -101,6 +101,8 @@ internal sealed class VideoPlaybackWindow : Window
         AutomationProperties.SetName(_position, "Video position");
         AutomationProperties.SetName(_volume, "Video volume");
         AutomationProperties.SetName(_speed, "Playback speed");
+        AutomationProperties.SetAutomationId(_fullScreenButton, "VideoFullscreen");
+        AutomationProperties.SetAutomationId(_playPause, "VideoPlayPause");
         _details.Children.Add(timeline);
 
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center };

@@ -4,6 +4,22 @@ param([Parameter(Mandatory=$true)][int] $AppProcessId,
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Video interaction tests require an isolated Windows runner.'}
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class VideoWindowBounds {
+    [StructLayout(LayoutKind.Sequential)] public struct Rect {public int Left,Top,Right,Bottom;}
+    [StructLayout(LayoutKind.Sequential)] public struct MonitorInfo {public int Size;public Rect Monitor,Work;public uint Flags;}
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window,out Rect rect);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr window,uint flags);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr monitor,ref MonitorInfo info);
+    public static bool Fullscreen(IntPtr window) {
+        Rect rect;var info=new MonitorInfo {Size=Marshal.SizeOf(typeof(MonitorInfo))};
+        if(!GetWindowRect(window,out rect)||!GetMonitorInfo(MonitorFromWindow(window,2),ref info))throw new InvalidOperationException("Could not inspect the video window bounds.");
+        return Math.Abs(rect.Left-info.Monitor.Left)<=2&&Math.Abs(rect.Top-info.Monitor.Top)<=2&&Math.Abs(rect.Right-info.Monitor.Right)<=2&&Math.Abs(rect.Bottom-info.Monitor.Bottom)<=2;
+    }
+}
+'@
 $process=Get-Process -Id $AppProcessId
 if($process.ProcessName -ne 'MusicPlayer'){throw 'Target is not the launched player.'}
 $owned=[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty,$AppProcessId)
@@ -13,6 +29,11 @@ if(!$window){throw 'The installed video window did not appear.'}
 function Find-Control([string] $Label){
     $condition=[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty,$Label)
     $control=$window.FindFirst([Windows.Automation.TreeScope]::Descendants,$condition)
+    if(!$control -and ($Label -match 'full screen' -or $Label -in @('Play','Pause'))){
+        $id=if($Label -match 'full screen'){'VideoFullscreen'}else{'VideoPlayPause'}
+        $byId=[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty,$id)
+        $control=$window.FindFirst([Windows.Automation.TreeScope]::Descendants,$byId)
+    }
     if(!$control){throw "Video control is missing: $Label"}
     return $control
 }
@@ -20,6 +41,12 @@ switch($Action){
     Invoke {
         $invokedAt=[DateTime]::UtcNow
         (Find-Control $Name).GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+        if($Name -match 'full screen'){
+            $expected=$Name.StartsWith('Enter')
+            $handle=[IntPtr]$window.Current.NativeWindowHandle
+            for($attempt=0;$attempt -lt 30 -and [VideoWindowBounds]::Fullscreen($handle) -ne $expected;$attempt++){Start-Sleep -Milliseconds 200}
+            if([VideoWindowBounds]::Fullscreen($handle) -ne $expected){throw 'Video fullscreen presenter did not change the actual window bounds.'}
+        }
         if($Name -eq 'Save a screenshot of the current frame'){
             $screenshots=Join-Path ([Environment]::GetFolderPath('MyPictures')) 'Music Player/Screenshots'
             $snapshot=$null

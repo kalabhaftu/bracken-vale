@@ -1,0 +1,23 @@
+name: Temporary Windows shell diagnostics
+on:
+  push:
+    branches: [codex/update-verification-status]
+permissions:
+  contents: read
+jobs:
+  shell:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-11-vs2026-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Probe native and GUID notification registration
+        shell: pwsh
+        run: tests/MusicPlayer.Ui.Tests/Probe-NotificationArea.ps1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: shell-${{ matrix.os }}
+          path: artifacts/ui-evidence/

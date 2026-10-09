@@ -6,6 +6,9 @@ Changes to Music Player are documented here. The app name, executable, package i
 
 ## [1.0.0]
 
+- Fix Ogg/OGA seeking, WAV alias metadata and DFF startup/duration handling; preserve original media bytes and tag recovery copies.
+- Preserve user-owned files during setup upgrades and honor the explicit saved-data removal choice during uninstall.
+- Allow enabled video extensions through file activation and name native video controls for accessibility.
 - Reduce self-contained Windows packages by selecting the required WinUI components; retain LibVLC's audio/video modules and dependency notices.
 - Restore the saved library before scanning and checking updates; batch filesystem changes into bounded directory scans.
 - Store ordered queue entries separately from playback state, preserving duplicates and missing paths through migration and recovery. Position checkpoints no longer rewrite the queue.

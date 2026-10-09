@@ -25,7 +25,10 @@ public static class NotificationAreaProbe {
         try {
             var added=Shell_NotifyIcon(0,ref data);var error=Marshal.GetLastWin32Error();
             if(added) Shell_NotifyIcon(2,ref data);
-            return "{\"registered\":"+added.ToString().ToLowerInvariant()+",\"nativeError\":"+error+",\"dataSize\":"+data.cbSize+",\"pointerSize\":"+IntPtr.Size+"}";
+            data.flags|=0x20;data.guid=Guid.NewGuid();
+            var guidAdded=Shell_NotifyIcon(0,ref data);var guidError=Marshal.GetLastWin32Error();
+            if(guidAdded) Shell_NotifyIcon(2,ref data);
+            return "{\"registered\":"+added.ToString().ToLowerInvariant()+",\"guidRegistered\":"+guidAdded.ToString().ToLowerInvariant()+",\"guidError\":"+guidError+",\"nativeError\":"+error+",\"dataSize\":"+data.cbSize+",\"pointerSize\":"+IntPtr.Size+"}";
         } finally {DestroyWindow(window);}
     }
 }

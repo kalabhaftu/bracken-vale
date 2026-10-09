@@ -20,7 +20,9 @@ and actual results in [project-status.md](project-status.md) and
 Review unique backup-branch content and verify a full Git bundle outside the
 checkout before deleting the local backup branch. Merge the verified PR using
 GitHub's protected squash merge, synchronize local `main`, and verify the merge
-commit's REST API `commit.verification.verified` value and `reason: valid`.
+commit's REST API `commit.verification.verified` value, `reason: valid`, and
+`committer.login: web-flow`. This confirms the commit was created on GitHub.com
+and signed with GitHub's verified signature, as requested.
 GitHub's verified commit signature authenticates the source revision. Windows
 package signing uses the separate project certificate described below.
 
