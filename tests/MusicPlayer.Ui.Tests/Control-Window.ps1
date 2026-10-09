@@ -1,21 +1,18 @@
-param([Parameter(Mandatory=$true)][int] $AppProcessId,[Parameter(Mandatory=$true)][ValidateSet('Minimize','Restore','TrayRestore','TaskbarToggle','MediaKey','Inspect')][string] $Action)
+param([Parameter(Mandatory=$true)][int] $AppProcessId,[Parameter(Mandatory=$true)][ValidateSet('Minimize','Restore','TrayRestore','TaskbarToggle','MediaKey','Inspect')][string] $Action,[long] $MainWindowHandle=0)
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Native window tests require an isolated Windows runner.'}
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 public static class MusicPlayerWindowTest {
   public delegate bool EnumerateWindow(IntPtr window, IntPtr data);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumerateWindow callback, IntPtr data);
-  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint id);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint id);
   [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, uint command);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
   public static IntPtr FindWindow(int processId) {
     IntPtr found=IntPtr.Zero;
     EnumWindows((window,data)=> {uint id; GetWindowThreadProcessId(window,out id);
-      var title=new StringBuilder(256); GetWindowText(window,title,title.Capacity);
-      if(id==(uint)processId && GetWindow(window,4)==IntPtr.Zero && title.ToString()=="Music Player"){found=window;return false;}return true;
+      if(id==(uint)processId && GetWindow(window,4)==IntPtr.Zero){found=window;return false;}return true;
     },IntPtr.Zero);
     return found;
   }
@@ -35,9 +32,12 @@ public static class MusicPlayerWindowTest {
 '@
 $process=Get-Process -Id $AppProcessId
 if($process.ProcessName -ne 'MusicPlayer'){throw 'The target is not the launched Music Player process.'}
-$window=$process.MainWindowHandle
+$window=if($MainWindowHandle){[IntPtr]$MainWindowHandle}else{$process.MainWindowHandle}
 if($window -eq 0){$window=[MusicPlayerWindowTest]::FindWindow($AppProcessId)}
 if($window -eq 0){throw 'Music Player has no native window handle.'}
+$ownerId=[uint32]0
+$null=[MusicPlayerWindowTest]::GetWindowThreadProcessId($window,[ref]$ownerId)
+if($ownerId -ne $AppProcessId){throw 'Saved window handle no longer belongs to the test process.'}
 switch($Action){
     Minimize {$null=[MusicPlayerWindowTest]::ShowWindow($window,6)}
     Restore {$null=[MusicPlayerWindowTest]::ShowWindow($window,9);$null=[MusicPlayerWindowTest]::SetForegroundWindow($window)}
@@ -45,4 +45,4 @@ switch($Action){
     TaskbarToggle {$null=[MusicPlayerWindowTest]::SendMessage($window,0x111,[IntPtr]0x18000002,[IntPtr]::Zero)}
     MediaKey {[MusicPlayerWindowTest]::MediaKey()}
 }
-[pscustomobject]@{action=$Action;visible=[MusicPlayerWindowTest]::IsWindowVisible($window)} | ConvertTo-Json -Compress
+[pscustomobject]@{action=$Action;handle=$window.ToInt64().ToString();visible=[MusicPlayerWindowTest]::IsWindowVisible($window)} | ConvertTo-Json -Compress
