@@ -8,6 +8,7 @@ public static class MusicPlayerShellTest {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string name, string title);
 }
 '@
+& (Join-Path $PSScriptRoot 'Probe-NotificationArea.ps1')
 # Tray and thumbnail tests need Explorer in this disposable runner session.
 if([MusicPlayerShellTest]::FindWindow('Shell_TrayWnd',$null) -eq [IntPtr]::Zero){
     Start-Process explorer.exe -WindowStyle Hidden

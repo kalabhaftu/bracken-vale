@@ -25,30 +25,33 @@ verification precedes draft-release publication. See [release.md](release.md).
 
 ## Observed results and open gates
 
-- Core suite: 74/74 passed on Linux, x64 and ARM64 at `0554caa`, CI
-  [37980162002](https://github.com/kalabhaftu/music-player/actions/runs/37980162002).
-  A new `.wave` metadata/index/edit/recovery regression also passed locally;
-  final complete-suite validation is pending the next candidate revision.
-- Native suite at `0554caa`: x64 46/49, ARM64 45/49. Video rendering, embedded
-  subtitles, rate changes, seeking and PNG snapshots passed on both architectures.
-  Failures: default Ogg/OGA seeking, `.wave` metadata alias, and ARM64 DFF opening.
-  Local raw-engine reproduction confirms VLC's bundled FFmpeg Ogg reader fixes
-  seeking. The equivalent DFF experiment failed and was removed. DFF remains open.
-- Windows UI at `0554caa`: clean-profile discovery, search, queue dragging with
-  duplicate entries, immersive lyrics and repeated navigation passed up to later
-  native-control gates. x64 tray restoration/minimized queue advancement/taskbar
-  controls reached the media-key gate, which failed. ARM64 lacked a working tray
-  notification area. Complete restart/installed interaction checks remain open.
-- Private package run
-  [37980181914](https://github.com/kalabhaftu/music-player/actions/runs/37980181914)
-  built signed portable/setup/MSIX packages, then failed manifest verification
-  because the required-assets list omitted the MSIX uninstall helper. The list is
-  corrected in the next candidate. Installed and performance jobs did not run.
-- Preliminary package reduction and constant-size checkpoint measurements are in
-  [optimization-validation.md](optimization-validation.md). Final signed package
-  size, usable-library startup, CPU and native-plus-WebView memory measurements
-  for 100/100,000 tracks remain gated on successful candidate packaging.
-
+- Core suite: 76/76 passed locally and on Linux/x64/ARM64 at `19577d5`.
+- Native playback/format suite: 49/49 passed on x64 and ARM64 at `19577d5`,
+  CI [37996036525](https://github.com/kalabhaftu/music-player/actions/runs/37996036525).
+  Genuine fixtures cover all 19 audio extensions, tag editing or safe read-only
+  rejection, video rendering, subtitles, rate changes, seeking and snapshots.
+  Ogg seeking, WAV alias metadata and DFF opening/duration failures are fixed.
+- x64 portable UI completed discovery, search, duplicate queue dragging, immersive
+  lyrics, 60 navigations, minimized queue advancement, tray restore, taskbar/media
+  keys and restart persistence. ARM64 tray registration still fails with Windows
+  E_FAIL and a correctly sized 976-byte NOTIFYICONDATA. An independent Windows
+  notification probe is being added; this gate remains open.
+- Private signed candidate [37996130358](https://github.com/kalabhaftu/music-player/actions/runs/37996130358)
+  authenticated all required assets. x64 setup installation and upgrade completed
+  four UI checks; explicit data-removal uninstall failed because Inno Setup checks
+  are evaluated at installation. `efc6241` moves the choice into uninstallation.
+  MSIX installation has not yet run past the setup gate.
+- Performance baseline completed both 100-track runs, then its 100,000-track
+  scan failed to cancel within 60 seconds. The next run records that baseline
+  limitation without labeling its CPU sample idle. Candidate scan cancellation
+  must still settle before its idle measurement. Final package/resource comparison
+  remains pending. Constant-size database checkpoint results are recorded in
+  [optimization-validation.md](optimization-validation.md).
+- `9c2f75c` adds installed video controls/subtitle/screenshot checks and repairs
+  video file activation while retaining the opt-in video-extension setting.
+  Final release commits must be GitHub-created (`web-flow`) and verified; this
+  provides the requested GitHub.com signature badge, separately from self-signed
+  Windows package signatures.
 ## Still required
 
 - [ ] Pass all protected CI checks on the final candidate, including all formats.
