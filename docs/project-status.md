@@ -1,34 +1,64 @@
 # Project status
 
-Updated: 2026-10-09. This tracker separates code that exists from checks that still need a real Windows run. A source checkbox does not mean the feature has passed runtime validation.
+Updated: 2026-10-10. Implementation and observed validation are recorded separately.
+No stable tag or public GitHub Release has been created. The running user instance
+has remained undisturbed; GUI and package tests run on disposable GitHub runners.
 
-Current optimization commits and measured results are recorded in
-[optimization-validation.md](optimization-validation.md): 73 core tests and 10
-native tests passed locally; x64/ARM64 self-contained publishes succeeded;
-component selection reduced the preliminary x64 publish by 15.7%; schema 9
-checkpoints wrote 4,152 WAL bytes with both small and 100,000-entry queues.
-Signing now explicitly uses a persistent self-signed certificate. Expected GitHub
-secrets are configured. Private candidate packaging and installed interaction
-validation remain release gates. The running user instance was left undisturbed.
+## Reviewed implementation
 
-## Implemented in the current source
+Playback ownership/generation guards fix native end/error callbacks and seeking
+after a song ends. Queue revisions avoid repeated full-library reads and queue
+hash allocations. Schema 9 stores ordered queue entries separately, preserving
+duplicate/unavailable paths. Five-second state checkpoints no longer rewrite
+queues; recovery, migration backups, durability and tag backups remain intact.
+Startup loads saved library data before background work. Watchers batch affected
+directories and bound overflow scans. Small discovery batches become visible
+before full-drive scanning finishes. WebView minimizes using official suspension
+APIs while native playback advances. WinUI component selection removes unused
+SDK payloads. The launcher explicitly builds x64 and preserves a running instance.
 
-- [x] The desktop app uses the WebView2 interface for library browsing, search, playlists, queue, lyrics, settings, and the immersive player. The native shell handles playback, Windows media controls, file activation, folder pickers, and the separate video window.
-- [x] Library scanning, file watching, stale-path reconciliation, offline-root preservation, artwork repair, database migration/recovery, and scan cancellation recovery are implemented in the current source.
-- [x] Lyrics editing, embedded and sidecar lyrics, LRCLIB search, queue mutations, playback history, themes, transparency, keyboard controls, and taskbar playback controls are wired through the app bridge.
-- [x] The release workflow defines x64 and ARM64 portable packages, per-user setup installers, and MSIX packages. The setup and portable package scripts include uninstall/data-cleanup support. This is packaging implementation, not proof that installation and upgrades work on Windows.
-- [x] The repository has the core test project, CI workflow, issue and contribution guidance, license, and third-party notices.
-- [x] The two failures in the earlier PR CI run have corresponding source fixes: the migration test now expects schema version 9, and the indexer flushes completed tracks when a scan is cancelled.
-- [x] The latest queue reorder implementation uses pointer capture like Settings and preserves the queue grip icon. Full-screen lyrics styling removes the visible panel fill and border while keeping a scrollable column.
+Signing uses one persistent **self-signed** project key, with expected Actions
+secrets configured. Portable/setup/MSIX pipelines sign first-party binaries and
+helpers and retain vendor signatures. Installed-package and performance gates
+are automated. Final source must have a GitHub-verified commit signature; upload
+verification precedes draft-release publication. See [release.md](release.md).
 
-## Still required before a stable release
+## Observed results and open gates
 
-- [x] **Prepare candidate source snapshots.** Playback/UI work is preserved and optimization changes are committed in focused groups. Final validation must still identify the final tested revision.
-- [ ] **Rerun required CI on the candidate.** PR #2 is still open at commit `1f0042c`; its latest CI run failed all three required jobs. The test failures were the old schema assertion (expected 5, actual 8) and the cancellation test (expected 16 saved tracks, actual 0). The fixes are present in the newer local source, but have not passed CI on the candidate revision.
-- [ ] **Verify the installed app on Windows.** On a clean install/data state, add a music folder, scan it, confirm songs and artwork appear, restart the app, and confirm the library remains. Then smoke-check search, playback and queue transitions, queue dragging, lyrics selection, settings persistence, the video window, and taskbar controls. The previous zero-song report has not been closed by a successful installed-build check.
-- [ ] **Verify distribution packages.** Install, launch, upgrade, and uninstall the setup package; check its data-retention choice. Install and launch MSIX and verify its declared file actions. The workflow and scripts exist, but these package behaviors have not been confirmed on Windows.
-- [ ] **Pass signing preflight.** The earlier run `37403559751` failed and predates the current package identity. The persistent self-signed certificate and expected secrets are configured; private candidate signing and the final preflight on `main` must pass. This is not publicly trusted signing.
-- [ ] **Validate supported media on Windows.** The format matrix still marks every listed audio format as pending playback validation. Check representative files and output devices, and update [format-matrix.md](format-matrix.md) with observed results.
-- [ ] **Merge and publish only after the checks above pass.** PR #2 is open; there are no release tags or GitHub Releases yet.
+- Core suite: 74/74 passed on Linux, x64 and ARM64 at `0554caa`, CI
+  [37980162002](https://github.com/kalabhaftu/music-player/actions/runs/37980162002).
+  A new `.wave` metadata/index/edit/recovery regression also passed locally;
+  final complete-suite validation is pending the next candidate revision.
+- Native suite at `0554caa`: x64 46/49, ARM64 45/49. Video rendering, embedded
+  subtitles, rate changes, seeking and PNG snapshots passed on both architectures.
+  Failures: default Ogg/OGA seeking, `.wave` metadata alias, and ARM64 DFF opening.
+  Local raw-engine reproduction confirms VLC's bundled FFmpeg Ogg reader fixes
+  seeking. The equivalent DFF experiment failed and was removed. DFF remains open.
+- Windows UI at `0554caa`: clean-profile discovery, search, queue dragging with
+  duplicate entries, immersive lyrics and repeated navigation passed up to later
+  native-control gates. x64 tray restoration/minimized queue advancement/taskbar
+  controls reached the media-key gate, which failed. ARM64 lacked a working tray
+  notification area. Complete restart/installed interaction checks remain open.
+- Private package run
+  [37980181914](https://github.com/kalabhaftu/music-player/actions/runs/37980181914)
+  built signed portable/setup/MSIX packages, then failed manifest verification
+  because the required-assets list omitted the MSIX uninstall helper. The list is
+  corrected in the next candidate. Installed and performance jobs did not run.
+- Preliminary package reduction and constant-size checkpoint measurements are in
+  [optimization-validation.md](optimization-validation.md). Final signed package
+  size, usable-library startup, CPU and native-plus-WebView memory measurements
+  for 100/100,000 tracks remain gated on successful candidate packaging.
 
-The Windows CI workflow runs the core test project and builds and startup-smokes the x64 and ARM64 portable apps. It does not automate the WebView interaction checks listed above.
+## Still required
+
+- [ ] Pass all protected CI checks on the final candidate, including all formats.
+- [ ] Pass complete portable and installed setup/MSIX UI flows on x64 and ARM64.
+- [ ] Verify setup/MSIX upgrade, associations and both data-retention choices.
+- [ ] Meet final package/resource targets and validate stable navigation memory.
+- [ ] Review final PR, protected squash merge, verify GitHub commit signature.
+- [ ] Synchronize main; pass main signing preflight and final package validation.
+- [ ] Delete local backup branch only after the verified external bundle is retained.
+- [ ] Create `v1.0.0`, publish authenticated signed assets and verify downloads.
+
+PR #2 remains open on `codex/update-verification-status`. Do not interpret a
+passing build, partial UI run or self-signature as completion of these gates.

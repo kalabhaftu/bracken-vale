@@ -65,7 +65,8 @@ $requiredNames = @(
     'ThirdPartyNotices.md',
     'MusicPlayer-Signing.cer',
     'SIGNING.md',
-    'Verify-MusicPlayer-ReleaseManifest.ps1'
+    'Verify-MusicPlayer-ReleaseManifest.ps1',
+    'Uninstall-MusicPlayer-MSIX.ps1'
 )
 foreach ($requiredName in $requiredNames) {
     if (-not $seenNames.Contains($requiredName)) { throw "Manifest is missing the required release asset: $requiredName" }

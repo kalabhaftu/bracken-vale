@@ -40,6 +40,7 @@ jobs:
           SIGNING_PFX: ${{ secrets.MUSICPLAYER_SIGNING_PFX_BASE64 }}
           SIGNING_PASSWORD: ${{ secrets.MUSICPLAYER_SIGNING_PFX_PASSWORD }}
           SIGNING_MODE: self-signed
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $preflightOnly = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and '${{ inputs.mode }}' -ne 'candidate'
@@ -47,6 +48,14 @@ jobs:
           $preview = $false
           $notes = ''
           if ($preflightOnly -and $env:GITHUB_REF_NAME -ne 'main') { throw 'Private signing preflight must run from main.' }
+          if ($preflightOnly -or $env:GITHUB_EVENT_NAME -eq 'push') {
+            $commit = gh api "repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Could not obtain the release commit signature status.' }
+            if (-not $commit.commit.verification.verified -or $commit.commit.verification.reason -ne 'valid') {
+              throw 'The final release revision must have a valid GitHub-verified commit signature. Merge the protected PR using GitHub squash merge.'
+            }
+            Write-Host "GitHub verified commit signature confirmed for $($commit.sha)."
+          }
           if (-not $preflightOnly) {
             if ($env:GITHUB_EVENT_NAME -eq 'push') {
               git fetch origin main --no-tags
@@ -451,9 +460,10 @@ jobs:
           $manifest = $manifests[0].FullName
           $verifier = Join-Path $PWD 'artifacts/Verify-MusicPlayer-ReleaseManifest.ps1'
           & $verifier -ManifestPath $manifest -SignaturePath "$manifest.p7s"
-      - name: Publish GitHub Release
+      - name: Upload, verify and publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_PREVIEW: ${{ needs.build.outputs.preview }}
         shell: pwsh
         run: |
@@ -468,8 +478,23 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             throw "Release $tag already exists. Published release assets are immutable; use a new version for a corrected build."
           } elseif ($env:RELEASE_PREVIEW -eq 'true') {
-            gh release create $tag @assets --title $title --notes-file $notes --prerelease
+            gh release create $tag @assets --title $title --notes-file $notes --prerelease --draft
           } else {
-            gh release create $tag @assets --title $title --notes-file $notes
+            gh release create $tag @assets --title $title --notes-file $notes --draft
           }
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation or update failed.' }
+          $download = Join-Path $env:RUNNER_TEMP ('music-player-upload-check-' + [Guid]::NewGuid().ToString('N'))
+          gh release download $tag --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the draft release assets for verification.' }
+          foreach ($asset in $assets) {
+            $uploaded = Join-Path $download ([IO.Path]::GetFileName($asset))
+            if (-not (Test-Path -LiteralPath $uploaded -PathType Leaf) -or
+                (Get-FileHash -LiteralPath $uploaded -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash) {
+              throw "Uploaded asset differs from the validated candidate: $([IO.Path]::GetFileName($asset))"
+            }
+          }
+          $uploadedManifest = @(Get-ChildItem -LiteralPath $download -Filter 'MusicPlayer-*-SHA256SUMS.txt')
+          if ($uploadedManifest.Count -ne 1) { throw 'The draft release must include exactly one checksum manifest.' }
+          & (Join-Path $PWD 'artifacts/Verify-MusicPlayer-ReleaseManifest.ps1') -ManifestPath $uploadedManifest[0].FullName
+          gh release edit $tag --draft=false
+          if ($LASTEXITCODE -ne 0) { throw 'Verified draft release could not be published.' }

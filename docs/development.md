@@ -28,7 +28,7 @@ For ARM64, replace `x64`/`win-x64` with `ARM64`/`win-arm64`. The automated Windo
 
 The core and its tests target .NET 10 without WinUI and can be tested on macOS or Linux. The Windows workflow builds and uploads a self-contained portable ZIP for x64 and ARM64. WebView2 rendering, audio devices, media keys, tray integration, installer behavior, MSIX installation and Windows 10/11 visual behavior must be checked on Windows hardware.
 
-The separate native playback tests require Windows x64. They compile the app's playback service and queue coordinators directly, use the shipped LibVLC packages, and generate silent WAV fixtures with dummy audio output. They cover actual native end/error callbacks, queue advancement, repeat, crossfade promotion, and seeking in ended and paused sessions. Windows x64 CI runs them without requiring an audio device. See [the playback investigation](playback-investigation.md) for the regression these tests reproduce.
+The separate native playback tests run on Windows x64 and native ARM64. They compile the app's playback service and queue coordinators directly, use the shipped LibVLC packages, and generate silent WAV fixtures with dummy audio output. They cover actual native end/error callbacks, queue advancement, repeat, crossfade promotion, and seeking in ended and paused sessions. Windows x64 CI runs them without requiring an audio device. See [the playback investigation](playback-investigation.md) for the regression these tests reproduce.
 
 ## Configuration and data
 
@@ -36,7 +36,7 @@ Application data lives under `%LOCALAPPDATA%\MusicPlayer`; the SQLite database, 
 
 ## Release signing
 
-The release workflow contains signing and verification steps for the executable, setup installer, and MSIX bundle. They run only after the private signing preflight accepts a valid, trusted certificate matching the existing MSIX publisher. No signed release should be claimed until the preflight and packaged-artifact verification have both succeeded. See [the release process](release.md).
+The release workflow contains signing and verification steps for the executable, setup installer, and MSIX bundle. They run after private preflight validates the persistent self-signed project certificate matching the MSIX publisher. Trust-dependent verification is confined to disposable runners; this is not publicly trusted publisher signing. No signed release should be claimed until the preflight and packaged-artifact verification have both succeeded. See [the release process](release.md).
 
 ## Search and memory limits
 

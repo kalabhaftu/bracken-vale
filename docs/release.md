@@ -1,44 +1,98 @@
-# GitHub release process
+# Music Player release process
 
-GitHub Releases is the distribution channel for Music Player. The Microsoft Store is not part of this release process. The executable uses the Music Player product name, and user data is stored under `%LOCALAPPDATA%\MusicPlayer`. The MSIX identity is `Kalabhaftu.MusicPlayer` with publisher `CN=Kalabhaftu`.
+Music Player 1.0.0 uses self-contained x64 and ARM64 portable ZIPs, per-user setup
+installers, and an MSIX bundle. The MSIX identity is `Kalabhaftu.MusicPlayer`,
+publisher `CN=Kalabhaftu`. Setup embeds Microsoft's signed WebView2 Evergreen
+bootstrapper. The managed runtime, WinUI and VLC modules remain included.
 
-## Before merging changes to `main`
+## Evidence required before release
 
-Open a pull request. `main` is configured to require the `Core tests · Linux`, `x64`, and `ARM64` checks. No reviewer approval is required by the branch rule. The Windows jobs build and smoke-start the x64 and native ARM64 portable apps; the Linux job runs the core suite.
+Keep the readiness PR open until protected `Core tests · Linux`, `x64`, and
+`ARM64` checks pass on its final revision. Windows CI includes native playback,
+format, tag, video/subtitle and WebView interaction tests. Dispatch **Signed
+Windows release**, mode **candidate**, on the candidate branch to create private
+artifacts and test signed setup/MSIX installation, upgrade, uninstall, file
+associations, both data-retention choices, package size and startup performance.
+A passing build alone does not complete these gates. Record revision, commands
+and actual results in [project-status.md](project-status.md) and
+[optimization-validation.md](optimization-validation.md).
 
-## Private signing preflight
+Review unique backup-branch content and verify a full Git bundle outside the
+checkout before deleting the local backup branch. Merge the verified PR using
+GitHub's protected squash merge, synchronize local `main`, and verify the merge
+commit's REST API `commit.verification.verified` value and `reason: valid`.
+GitHub's verified commit signature authenticates the source revision. Windows
+package signing uses the separate project certificate described below.
 
-The Actions secrets must be named `MUSICPLAYER_SIGNING_PFX_BASE64` and `MUSICPLAYER_SIGNING_PFX_PASSWORD`. Configure both with a trusted Code Signing certificate whose subject is `CN=Kalabhaftu`; the previous secret names and certificate identity are obsolete. Secret presence is not proof the certificate is valid or trusted.
+Run private signing preflight and repeat full candidate package validation on
+merged `main`. Only after every gate passes, create `v1.0.0` at that verified
+commit. The workflow rejects tags outside `main` and unverified final commits.
 
-Use **Actions → Signed Windows release → Run workflow** on `main` to run the private preflight. A manual run checks the signing certificate's trust chain, validity period, Code Signing purpose, private key and exact `CN=Kalabhaftu` publisher. It signs and verifies a disposable executable copy and tests detached SHA-256 manifest signing, removes the temporary signing files, and does not build or publish release assets. The log reports only pass/fail and never prints secret values.
+## Persistent self-signing
 
-The latest recorded preflight ([run 37403559751](https://github.com/kalabhaftu/music-player/actions/runs/37403559751), October 6, 2026) failed during signing validation on `main`; its publish job was skipped, and it produced no release assets. That run used the previous package publisher and secret names, so it does not validate the current identity. Configure the current secrets and certificate, then run preflight again. The workflow logs the failing stage and exception type while suppressing certificate and password details. Do not describe signing as successful until a later preflight and packaged-artifact verification pass.
+The selected mode is explicitly **self-signed**, not publicly trusted Windows
+publisher signing. Reuse the persistent RSA/SHA-256 Code Signing certificate
+with subject `CN=Kalabhaftu` across builds and upgrades. Protect its PFX and
+password outside the repository. Configure `MUSICPLAYER_SIGNING_PFX_BASE64` and
+`MUSICPLAYER_SIGNING_PFX_PASSWORD` Actions secrets through stdin without exposing
+values. The public certificate's SHA-256 fingerprint is:
 
-Preview and stable releases both fail closed unless the signing secrets are present and the certificate passes trust, identity, validity, Code Signing purpose, private-key, and disposable-signature checks. A failed or missing preflight creates no packages and publishes no GitHub Release. Do not use a self-signed certificate for ordinary public distribution.
-
-## Tag a release
-
-1. Update `CHANGELOG.md` with a heading matching the exact version.
-2. Merge the tested pull request to `main`.
-3. Create and push `vMAJOR.MINOR.PATCH` for stable, or the next unused `vMAJOR.MINOR.PATCH-preview.N` for a preview. The removed `v0.1.0-preview.1` identified the old UI; do not reuse it for the migration release.
-4. Review the release workflow result and GitHub Release assets.
-
-After preflight passes, the workflow creates self-contained portable ZIPs for x64 and ARM64. Each ZIP extracts into one folder named `MusicPlayer-VERSION-ARCHITECTURE-portable` and includes `MusicPlayer.exe`, `Portable-README.txt`, `LICENSE`, `ThirdPartyNotices.md`, `Register-MusicPlayer-FileActions.ps1`, and `Uninstall-MusicPlayer.ps1`. The portable ZIP itself is not Authenticode-signed; `MusicPlayer.exe` is signed and verified before it is archived. The README explains how to launch the app, register or remove the portable copy under Open with and in supported audio-file context menus, and that the library database, settings, artwork cache, and logs live in `%LOCALAPPDATA%\MusicPlayer`. The setup installer registers file actions for the installing Windows account and removes them during uninstall. Its uninstaller offers to remove the local index, playlists, settings, artwork cache, and logs; it never deletes music files. The ZIP and setup installer omit PDB debug symbols and LIB linker artifacts; all other published runtime files are retained.
-
-The portable folder keeps the files needed to run without separately installed .NET or Windows App SDK dependencies. It uses the shared Microsoft Edge WebView2 Evergreen Runtime, which is not copied into each Music Player installation; users can install it from Microsoft's [WebView2 download page](https://developer.microsoft.com/microsoft-edge/webview2/). Setup embeds Microsoft's signed Evergreen bootstrapper and installs the runtime when needed. The WebUI source files are embedded in the app assembly and are not shipped as a loose `WebUI` folder. The package retains the managed runtime and WinUI binaries, VLC native codecs and plugins, application assets, and English resource satellites needed by the app. Native and VLC assets stay in loader-required runtime folders; root-level assemblies stay beside the executable for normal .NET probing. The exact file count varies by architecture and SDK version.
-
-The setup installer is per-user and installs under the current user's Programs folder (normally `%LOCALAPPDATA%\Programs\Music Player`), so it does not need administrator permission. It registers file actions for that Windows account and removes them during uninstall. Setup asks whether to delete Music Player data, with keeping it as the default choice. The portable ZIP remains self-contained in one folder and needs no installer. Build outputs under `src\MusicPlayer.App\bin` are developer artifacts, not the release package layout; use the release workflow's staged portable folder or setup installer when inspecting the distribution layout.
-
-The setup installer, registered portable copies, and MSIX manifest declare separate queue and playlist actions for supported audio files, along with file associations for Open with/default-app selection. Classic Windows shell verbs may appear under **Show more options** on Windows 11. The packaged actions are declared in the manifest but still need an MSIX package/install check. Windows requires the user to choose Music Player in Windows Settings before it can be the default player; installation does not change existing defaults.
-
-When signing preflight passes, the workflow signs and verifies the executable inside each portable ZIP, each setup installer, and the x64/ARM64 MSIX bundle. It also creates `MusicPlayer-VERSION-SHA256SUMS.txt` for both portable ZIPs, both setup installers, the MSIX bundle, third-party notices, and the included verifier script; `MusicPlayer-VERSION-SHA256SUMS.txt.p7s` is a detached CMS signature created with that same release certificate. The signature is verified against the configured certificate and trusted chain before upload. The ZIP container is not Authenticode-signed, but its exact bytes are covered by this signed manifest. Preview and stable release workflows both stop before packaging if signing is not verified.
-
-To verify a downloaded release, place all release assets in one directory and run this included script from that directory:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Verify-MusicPlayer-ReleaseManifest.ps1 -ManifestPath .\MusicPlayer-VERSION-SHA256SUMS.txt
+```text
+91BB3E5022E52803329F928B8CCAD73E3211AE710B764B373480A2FB1C5EDEE4
 ```
 
-The script verifies the detached signature, the trusted `CN=Kalabhaftu` Code Signing certificate and its online revocation status, then checks the SHA-256 hash and presence of every listed asset. It fails if any binary is missing or changed. The manifest signature is not timestamped, so certificate validity and trust must still pass when the manifest is verified.
+Dispatch **Signed Windows release**, mode **preflight**, on `main`. It checks
+the verified source commit, certificate identity, fingerprint, validity, signing
+purpose, private key, timestamped executable signing and detached CMS signing.
+Trust-dependent checks import the certificate only into the disposable runner.
+Preflight publishes nothing. Logs suppress private signing material. Missing
+secrets or failed validation stop packaging.
 
-Signing does not remove every Windows warning. Windows SmartScreen may warn while a new publisher builds reputation, and third-party antivirus results cannot be guaranteed. Test signed installers and MSIX install, launch, upgrade and uninstall behavior on Windows before a stable release. Keep the format/device matrix pending until playback is checked on real audio files and devices.
+Packaging signs first-party executables, assemblies, shipped PowerShell helpers,
+setup and its embedded uninstaller, and MSIX packages, preserving vendor
+signatures. Authenticode/MSIX signatures receive timestamps. ZIP bytes are
+covered by the authenticated SHA-256 checksum manifest.
+
+## Installation and saved data
+
+Setup installs for the current account under `%LOCALAPPDATA%\Programs\Music
+Player`. It registers audio-file actions, removes them on uninstall, and defaults
+to keeping `%LOCALAPPDATA%\MusicPlayer` data. Removing app data never removes
+source music. Portable copies include registration and uninstall helpers.
+Windows requires the user to choose a default player explicitly.
+
+MSIX requires an intentional certificate-trust step. Compare the downloaded
+public certificate's fingerprint with independently obtained repository
+instructions, then follow [SIGNING.md](../packaging/windows/SIGNING.md) to import
+it into **Trusted People**. No installer automatically changes trust on a user's
+PC. Publisher and SmartScreen warnings remain expected with self-signing.
+Microsoft describes the [MSIX self-signed distribution requirements](https://learn.microsoft.com/en-us/windows/msix/package/sign-msix-package-guide).
+
+Windows normally removes MSIX private data during uninstall. The signed
+`Uninstall-MusicPlayer-MSIX.ps1` helper offers retention outside the package or
+explicit removal. Existing recovery copies and source music are preserved.
+Both choices must pass isolated package tests.
+
+## Download verification and publication
+
+The manifest covers both portable ZIPs, both setup installers, the MSIX bundle,
+third-party notices, public certificate, signing instructions, checksum verifier,
+and MSIX uninstall helper. The `.txt.p7s` file authenticates the exact checksum
+manifest with the persistent project key. Put all assets in one directory and
+run an independently obtained verifier:
+
+```powershell
+pwsh -NoProfile -File .\Verify-MusicPlayer-ReleaseManifest.ps1 -ManifestPath .\MusicPlayer-1.0.0-SHA256SUMS.txt
+```
+
+The verifier checks the CMS signature, pinned certificate, validity, signing
+purpose, exact asset set and every hash. It does not establish public CA trust
+or online revocation. The detached manifest is not timestamped and requires
+the project certificate to remain valid.
+
+After build, installation and performance gates pass, the workflow uploads a
+**draft** release, downloads every asset, compares its bytes with the validated
+candidate and repeats manifest authentication. Only then does it publish the
+release. A verification failure leaves the draft unpublished. Published assets
+are immutable; corrections require a new version. Verify the final downloaded
+assets and workflow result after publication.
