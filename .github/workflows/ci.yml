@@ -55,10 +55,14 @@ jobs:
         run: dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj --configuration Release --no-restore
       - name: Build WinUI app
         run: dotnet build src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --no-restore -p:Platform=${{ matrix.arch }} -p:RuntimeIdentifier=${{ matrix.rid }} -p:AppxPackageSigningEnabled=false -p:GenerateAppxPackageOnBuild=false
-      - name: Test native playback and queue transitions
-        # Silent WAVs and dummy audio need no device; this harness targets x64.
-        if: matrix.arch == 'x64'
-        run: dotnet test tests/MusicPlayer.Playback.Tests/MusicPlayer.Playback.Tests.csproj --configuration Release
+      - name: Generate representative audio formats
+        shell: pwsh
+        run: |
+          if (!(Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg --yes --no-progress }
+          & tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1
+          "MUSICPLAYER_MEDIA_FIXTURES=$PWD/artifacts/media-fixtures" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Test native playback, queue transitions and supported formats
+        run: dotnet test tests/MusicPlayer.Playback.Tests/MusicPlayer.Playback.Tests.csproj --configuration Release --runtime ${{ matrix.rid }} --logger 'trx;LogFileName=native.trx' --results-directory artifacts/ui-evidence/native
       - name: Publish self-contained portable app
         shell: pwsh
         run: |
