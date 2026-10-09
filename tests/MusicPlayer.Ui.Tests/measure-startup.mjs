@@ -24,14 +24,16 @@ const measure=()=>JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfil
 const ready=measure();
 const call=(name)=>page.evaluate(async name=>(await import("/scripts/api.js")).command(name,{}),name);
 await call("cancelScan");
+const cancelStarted=performance.now();
 for(let attempt=0;attempt<120;attempt++){
   if(!(await call("getBootstrap")).scan.active)break;
   await new Promise(r=>setTimeout(r,500));
 }
-assert.equal((await call("getBootstrap")).scan.active,false,"Scan did not settle before idle measurement");
+const scanSettled=!(await call("getBootstrap")).scan.active;
+if(process.env.MUSICPLAYER_TEST_REVISION==="after")assert.equal(scanSettled,true,"Candidate scan did not settle before idle measurement");
 const settled=measure();
 await new Promise(r=>setTimeout(r,10000));
 const idle=measure();
 await page.screenshot({path:`${output}/library.png`,fullPage:true});
-await fs.writeFile(`${output}/measurement.json`,JSON.stringify({usableLibraryMs,ready,settled,idle,idleCpuSeconds:Math.max(0,idle.CpuSeconds-settled.CpuSeconds)},null,2));
+await fs.writeFile(`${output}/measurement.json`,JSON.stringify({usableLibraryMs,ready,settled,idle,scanSettled,scanCancellationMs:performance.now()-cancelStarted-10000,cpuMeasurementContext:scanSettled?"idle":"baseline scan cancellation still pending",idleCpuSeconds:scanSettled?Math.max(0,idle.CpuSeconds-settled.CpuSeconds):null,measuredCpuSeconds:Math.max(0,idle.CpuSeconds-settled.CpuSeconds)},null,2));
 await browser.close();

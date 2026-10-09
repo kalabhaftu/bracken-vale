@@ -58,17 +58,9 @@ Filename: "{app}\MusicPlayer.exe"; Description: "Launch Music Player"; Flags: po
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -ExecutionPolicy Bypass -File ""{app}\Register-MusicPlayer-FileActions.ps1"" -Unregister -Quiet"; Flags: runhidden waituntilterminated
 
-[UninstallDelete]
-Type: filesandordirs; Name: "{localappdata}\MusicPlayer"; Check: ShouldDeleteUserData
-
 [Code]
 var
   RemoveMusicPlayerData: Boolean;
-
-function ShouldDeleteUserData: Boolean;
-begin
-  Result := RemoveMusicPlayerData;
-end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
@@ -80,6 +72,12 @@ begin
       RemoveMusicPlayerData := MsgBox(
         'Also delete Music Player''s local library index, playlists, favorites, settings, artwork cache, and logs? This does not delete your music files. Choose No to keep your library data if you may reinstall.',
         mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+  end
+  else if (CurUninstallStep = usPostUninstall) and RemoveMusicPlayerData then
+  begin
+    { Check parameters are evaluated by Setup, not by the uninstaller. }
+    if not DelTree(ExpandConstant('{localappdata}\MusicPlayer'), True, True, True) then
+      MsgBox('Some saved Music Player data could not be removed. Close Music Player and remove its folder in Local AppData manually.', mbError, MB_OK);
   end;
 end;
 
