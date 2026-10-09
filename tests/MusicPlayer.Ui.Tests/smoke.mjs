@@ -133,6 +133,8 @@ nativeWindow("TaskbarToggle");
 await until(async()=>(await call("getCurrentTrack")).playing,"Taskbar thumbnail play did not control playback");
 nativeWindow("MediaKey");
 await until(async()=>!(await call("getCurrentTrack")).playing,"Windows media key did not control native playback");
+await new Promise(resolve=>setTimeout(resolve,500));
+assert.equal((await call("getCurrentTrack")).playing,false,"Media key toggled playback twice");
 await call("playQueueEntry",{index:0});
 await call("playPause");
 await until(async()=>!(await call("getCurrentTrack")).playing,"Final paused state did not settle");

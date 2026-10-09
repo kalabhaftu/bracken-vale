@@ -8,6 +8,7 @@ namespace MusicPlayer.App;
 internal sealed class TaskbarPeekControls : IDisposable
 {
     private const uint WmCommand = 0x0111;
+    private const uint WmAppCommand = 0x0319;
     private const uint ThbnClicked = 0x1800;
     private const uint ThbIcon = 0x0002;
     private const uint ThbTooltip = 0x0004;
@@ -115,6 +116,24 @@ internal sealed class TaskbarPeekControls : IDisposable
         return true;
     }
 
+    private bool HandleMediaKey(nint lParam)
+    {
+        // GET_APPCOMMAND_LPARAM: exclude the input-device bits in HIWORD.
+        var command = (unchecked((ulong)lParam.ToInt64()) >> 16) & 0x0fff;
+        Action? callback = command switch
+        {
+            11 => _next,
+            12 => _previous,
+            14 => _togglePlayback,
+            46 => () => { if (!_isPlaying) _togglePlayback(); },
+            47 => () => { if (_isPlaying) _togglePlayback(); },
+            _ => null
+        };
+        if (callback is null) return false;
+        _dispatcher.TryEnqueue(() => callback());
+        return true;
+    }
+
     private static nint SubclassWindow(nint hwnd, uint message, nint wParam, nint lParam, nuint subclassId, nint referenceData)
     {
         var handle = GCHandle.FromIntPtr(referenceData);
@@ -122,6 +141,9 @@ internal sealed class TaskbarPeekControls : IDisposable
         {
             if (message == TaskbarButtonCreatedMessage) owner.OnTaskbarButtonCreated();
             else if (message == WmCommand && owner.HandleCommand(wParam)) return 0;
+            // Returning TRUE prevents an already-handled key from also reaching
+            // the shell's global media controller and toggling playback twice.
+            else if (message == WmAppCommand && owner.HandleMediaKey(lParam)) return 1;
         }
         return DefSubclassProc(hwnd, message, wParam, lParam);
     }

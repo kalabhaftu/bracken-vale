@@ -16,6 +16,8 @@ function Verify-Signature([string] $File){
 Verify-Signature $setup
 Verify-Signature $PreviousSetupPath
 Run-Installer (Resolve-Path $PreviousSetupPath).Path @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$install`"")
+$registration='HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/{8B3371D0-13A1-4410-9E60-A49AD1A5F08C}_is1'
+if((Get-ItemProperty -LiteralPath $registration).DisplayVersion -ne '0.9.9'){throw 'The previous setup fixture has the wrong installed version.'}
 $exe=Join-Path $install 'MusicPlayer.exe'
 $uninstaller=Join-Path $install 'unins000.exe'
 foreach($file in @($exe,(Join-Path $install 'MusicPlayer.dll'),(Join-Path $install 'MusicPlayer.Core.dll'),$uninstaller)){Verify-Signature $file}
@@ -28,6 +30,10 @@ $sentinel=Join-Path $data 'retention-test.txt'
 # Replace the previous-version installation with the final signed installer.
 Run-Installer $setup @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$install`"")
 if(!(Test-Path -LiteralPath $sentinel)){throw 'Setup upgrade removed user data.'}
+if((Get-ItemProperty -LiteralPath $registration).DisplayVersion -ne '1.0.0'){throw 'Setup did not register the final upgraded version.'}
+$env:MUSICPLAYER_TEST_OUTPUT='artifacts/ui-evidence/upgraded-setup'
+try { & (Join-Path $PSScriptRoot 'Run-Smoke.ps1') -Executable $exe }
+finally {Remove-Item Env:/MUSICPLAYER_TEST_OUTPUT -ErrorAction SilentlyContinue}
 Run-Installer $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')
 if(!(Test-Path -LiteralPath $sentinel)){throw 'Default uninstall failed to retain user data.'}
 if(Test-Path -LiteralPath $exe){throw 'Uninstall left the application executable.'}

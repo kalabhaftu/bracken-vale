@@ -606,6 +606,7 @@ public sealed partial class MainWindow : Window
         PersistPendingVolumeSetting();
         CloseVideoPlaybackWindow(pauseVideo: true);
         SaveSession(); _clock.Stop(); _playback.Dispose(); _libraryScan.Cancel();
+        WebUi.Close();
         _libraryFileWatcher.Dispose();
         _tray?.Dispose();
         _taskbarPeekControls?.Dispose();

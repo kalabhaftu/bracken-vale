@@ -43,6 +43,6 @@ switch($Action){
     Restore {$null=[MusicPlayerWindowTest]::ShowWindow($window,9);$null=[MusicPlayerWindowTest]::SetForegroundWindow($window)}
     TrayRestore {$null=[MusicPlayerWindowTest]::SendMessage($window,0x8029,[IntPtr]::Zero,[IntPtr]0x400)}
     TaskbarToggle {$null=[MusicPlayerWindowTest]::SendMessage($window,0x111,[IntPtr]0x18000002,[IntPtr]::Zero)}
-    MediaKey {[MusicPlayerWindowTest]::MediaKey()}
+    MediaKey {$null=[MusicPlayerWindowTest]::SetForegroundWindow($window);[MusicPlayerWindowTest]::MediaKey()}
 }
 [pscustomobject]@{action=$Action;handle=$window.ToInt64().ToString();visible=[MusicPlayerWindowTest]::IsWindowVisible($window)} | ConvertTo-Json -Compress

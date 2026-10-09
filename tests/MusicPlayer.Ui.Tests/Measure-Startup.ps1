@@ -13,7 +13,15 @@ try {
         if($LASTEXITCODE -ne 0){throw 'Library fixture preparation failed.'}
         foreach($revision in @(@{name='before';exe=$BaselineExecutable},@{name='after';exe=$CandidateExecutable})){
             if(Get-Process MusicPlayer -ErrorAction SilentlyContinue){throw 'Measurement requires no running Music Player instance.'}
-            if(Test-Path -LiteralPath $profile){Remove-Item -LiteralPath $profile -Recurse -Force}
+            # The preserved baseline predates explicit WebView shutdown. Wait
+            # for its child browser to release profile files before replacement.
+            for($attempt=0;Test-Path -LiteralPath $profile;$attempt++){
+                try {Remove-Item -LiteralPath $profile -Recurse -Force}
+                catch {
+                    if($attempt -ge 59){throw}
+                    Start-Sleep -Milliseconds 500
+                }
+            }
             Copy-Item -LiteralPath $fixture -Destination $profile -Recurse
             $env:MUSICPLAYER_TEST_OUTPUT="artifacts/ui-evidence/performance/$count/$($revision.name)"
             $env:MUSICPLAYER_STARTED_MS=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()

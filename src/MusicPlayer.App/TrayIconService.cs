@@ -28,8 +28,9 @@ internal sealed class TrayIconService : IDisposable
         var data = MakeData();
         if (!Shell_NotifyIcon(NimAdd, ref data))
         {
+            var error = Marshal.GetLastWin32Error();
             RemoveWindowSubclass(_window, _procedure, (UIntPtr)0xB4A7); DestroyIcon(_icon);
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not register the tray icon.");
+            throw new Win32Exception(error, "Windows could not register the tray icon.");
         }
         _registered = true;
         data.uTimeoutOrVersion = 4;
@@ -73,6 +74,7 @@ internal sealed class TrayIconService : IDisposable
             var data = MakeData();
             _registered = Shell_NotifyIcon(NimAdd, ref data);
             if (_registered) { data.uTimeoutOrVersion = 4; Shell_NotifyIcon(NimSetVersion, ref data); }
+            else ShowWindow(window, SwRestore);
         }
         if (_registered && message == WmSize && wParam.ToUInt32() == SizeMinimized)
         {
