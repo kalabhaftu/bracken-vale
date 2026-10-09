@@ -25,10 +25,6 @@ if errorlevel 1 (
     if errorlevel 1 goto :restore_failed
 )
 
-echo Closing any running Music Player window so an older copy cannot receive this launch...
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; Get-Process -Name MusicPlayer -ErrorAction SilentlyContinue | ForEach-Object { $p = $_; if ($p.MainWindowHandle -ne 0 -and -not $p.CloseMainWindow()) { throw 'Could not close a running Music Player window.' }; if (-not $p.WaitForExit(20000)) { throw 'Music Player did not close within 20 seconds. Close it and run this file again.' } }; exit 0"
-if errorlevel 1 goto :failed
-
 echo Building the latest source for Windows x64...
 dotnet build "%PROJECT%" --configuration Release --runtime win-x64 --no-restore -p:Platform=x64 -p:BaseOutputPath="%~dp0artifacts/launcher/"
 if errorlevel 1 goto :build_failed
@@ -41,6 +37,9 @@ if not exist "%APP_EXE%" (
 
 echo Launching the executable from this checkout:
 echo "%APP_EXE%"
+echo An existing Music Player session must be closed manually before launching this build.
+powershell.exe -NoLogo -NoProfile -Command "if (Get-Process -Name MusicPlayer -ErrorAction SilentlyContinue) { Write-Output 'Build completed. Music Player is already running; close it and run this file again to launch the new build.'; exit 1 }; exit 0"
+if errorlevel 1 exit /b 1
 echo Waiting for the app window to appear so a startup crash is reported here...
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $p = Start-Process -FilePath '%APP_EXE%' -PassThru; $deadline = (Get-Date).AddSeconds(45); do { $p.Refresh(); if ($p.HasExited) { throw ('Music Player exited during startup with code ' + $p.ExitCode + '.') }; if ($p.MainWindowHandle -ne 0) { Write-Output 'Music Player window is ready.'; exit 0 }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); throw 'Music Player process is running but its window did not appear within 45 seconds.'"
 if errorlevel 1 goto :failed
