@@ -47,5 +47,8 @@
   </Target>
   <Target Name="SignFirstPartyOutput" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(SignFirstParty)' == 'true'">
     <Exec Command="pwsh -NoLogo -NoProfile -File &quot;$(MSBuildProjectDirectory)/../../packaging/windows/Sign-FirstPartyFiles.ps1&quot; -Directory &quot;$(TargetDir.Replace('\', '/'))&quot;" />
+    <!-- MSIX gathers both the intermediate and output assembly. Keep their
+         signed bytes identical so payload de-duplication selects one file. -->
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="@(IntermediateAssembly)" />
   </Target>
 </Project>
