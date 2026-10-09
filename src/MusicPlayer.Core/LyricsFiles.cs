@@ -62,7 +62,7 @@ public static class LyricsFiles
         { LocalAppLog.Shared.Warning("lyrics-reader", $"Could not read lyrics sidecar '{sidecar}'. Trying embedded lyrics instead.", ex); }
         try
         {
-            using var media = TagLib.File.Create(trackPath);
+            using var media = AudioTags.Open(trackPath);
             var embedded = ReadEmbeddedLyrics(media);
             if (Lyrics.HasUsableContent(embedded)) return new(embedded, "embedded");
         }
@@ -170,7 +170,7 @@ public static class TrackInformation
     public static TrackDetails Read(string path)
     {
         var info = new FileInfo(path);
-        using var media = TagLib.File.Create(path);
+        using var media = AudioTags.Open(path);
         return new(Path.GetFullPath(path), media.MimeType, media.Properties.Duration, media.Properties.AudioBitrate,
             media.Properties.AudioSampleRate, media.Properties.BitsPerSample, info.Length, info.LastWriteTimeUtc);
     }

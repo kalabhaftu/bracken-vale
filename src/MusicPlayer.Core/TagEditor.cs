@@ -61,13 +61,13 @@ public sealed class TagEditor(string backupDirectory)
 
     public static IReadOnlyDictionary<string, string> ReadCustomFields(string path)
     {
-        using var media = TagLib.File.Create(path);
+        using var media = AudioTags.Open(path);
         return ReadCustomFields(media, path);
     }
 
     public static IReadOnlyDictionary<string, string> ReadAdditionalStandardFields(string path)
     {
-        using var media = TagLib.File.Create(path);
+        using var media = AudioTags.Open(path);
         return AdditionalStandardFields.ToDictionary(field => field.Key, field => ReadAdditionalField(media.Tag, field.Key), StringComparer.OrdinalIgnoreCase);
     }
 
@@ -112,7 +112,7 @@ public sealed class TagEditor(string backupDirectory)
             CopyCancellable(path, staged, "Preparing edit", totalBytes, progress, cancellationToken);
             CopyCancellable(path, backupStage, "Preparing recovery copy", totalBytes, progress, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            using (var media = TagLib.File.Create(staged))
+            using (var media = AudioTags.Open(staged))
             {
                 var tag = media.Tag;
                 if (edit.Title is not null) tag.Title = edit.Title;

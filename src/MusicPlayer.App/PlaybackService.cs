@@ -537,6 +537,10 @@ public sealed class PlaybackService : IDisposable
     {
         media?.Dispose();
         media = new Media(_libVlc, new Uri(path));
+        // The native Ogg reader can report EOF immediately after a time seek.
+        // Use VLC's bundled FFmpeg reader, retaining the same VLC decoders.
+        if (Path.GetExtension(path).ToLowerInvariant() is ".ogg" or ".oga")
+            media.AddOption(":demux=avformat");
         if (ReferenceEquals(player, _active) && _videoTrack)
         {
             foreach (var subtitlePath in FindNearbySubtitleFiles(path))

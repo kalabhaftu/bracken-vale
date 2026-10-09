@@ -32,14 +32,14 @@ public sealed class FormatTagTests
             string? artist;
             string? album;
             TimeSpan duration;
-            using (var media = TagLib.File.Create(path))
+            using (var media = OpenFixture(path, extension))
             {
                 artist = media.Tag.FirstPerformer;
                 album = media.Tag.Album;
                 duration = media.Properties.Duration;
             }
             var backup = await editor.SaveAsync(path, new TagEdit(Title: "Stable release tag check"));
-            using (var edited = TagLib.File.Create(path))
+            using (var edited = OpenFixture(path, extension))
             {
                 Assert.Equal("Stable release tag check", edited.Tag.Title);
                 Assert.Equal(artist, edited.Tag.FirstPerformer);
@@ -52,4 +52,8 @@ public sealed class FormatTagTests
         }
         finally { Directory.Delete(folder, recursive: true); }
     }
+
+    private static TagLib.File OpenFixture(string path, string extension) => extension == ".wave"
+        ? TagLib.File.Create(path, "taglib/wav", TagLib.ReadStyle.Average)
+        : TagLib.File.Create(path);
 }

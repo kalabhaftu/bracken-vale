@@ -30,3 +30,19 @@ The first three native regression tests failed against the previous implementati
 `tests/MusicPlayer.Playback.Tests` links the actual app playback service and queue coordinators, loads the shipped LibVLC packages, and generates silent WAV fixtures. Its dummy audio output allows real native event/decoder tests without an audio device. Windows x64 CI runs this suite before packaging. Tests cover queue advancement and final stop, seeking after natural end and after queue stop, restored and paused seeking, repeat, crossfade promotion, failed crossfade recovery, and native file-open errors.
 
 All 9 native playback cases and the 62 existing core tests passed locally. The x64 WinUI build passed with zero warnings and zero errors. Native tests do not establish that every supported media format, physical output device, or WebView interaction works; those remain separate Windows validation tasks in the project status tracker.
+
+## Codec seek investigation (2026-10-10)
+
+The 19-format native suite at `0554caa` exposed default Ogg/OGA seeking that
+reported Ended immediately after assigning Time=3000. A direct LibVLC reproduction
+with the official FFmpeg Vorbis corpus reproduces the failure independently of
+PlaybackService. Selecting VLC's bundled `avformat` reader allows the same file
+to advance past 3100 ms and pass seek/pause/resume checks. SetMedia applies this
+selection to Ogg/OGA, including crossfade inputs. The DFF reader experiment did
+not pass and was removed; ARM64 DFF opening remains a release gate.
+
+The format suite also exposed TagLib's missing `.wave` extension mapping. The
+WAV type override is shared by indexing, tag editing, lyrics and track details.
+The core regression edits a genuine PCM `.WAVE`, reads its metadata and embedded
+lyrics, then verifies byte-for-byte recovery. Full format checks run on both
+architectures; no failing format is silently excluded.

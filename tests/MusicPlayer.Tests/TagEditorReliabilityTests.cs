@@ -8,6 +8,27 @@ public sealed class TagEditorReliabilityTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "music-player-tag-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Wave_filename_alias_can_be_indexed_edited_and_restored()
+    {
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(_root, "alias.WAVE");
+        WriteLargeWave(path, 44100 * 4);
+        var original = File.ReadAllBytes(path);
+        var editor = new TagEditor(Path.Combine(_root, "backups"));
+        var backup = await editor.SaveAsync(path, new TagEdit(Title: "Wave alias", Artist: "Artist", Lyrics: "Embedded lyric"));
+        var track = TrackReader.Read(path, Path.Combine(_root, "artwork"));
+        Assert.Equal("Wave alias", track.Title);
+        Assert.Equal("Artist", track.Artist);
+        Assert.True(track.HasLyrics);
+        Assert.Equal("Embedded lyric", LyricsFiles.ReadRaw(path));
+        Assert.Equal(TimeSpan.FromSeconds(1), track.Duration);
+        Assert.Equal(track.Duration, TrackInformation.Read(path).Duration);
+        Assert.NotNull(TagEditor.ReadAdditionalStandardFields(path));
+        await editor.RestoreAsync(backup);
+        Assert.Equal(original, File.ReadAllBytes(path));
+    }
+
+    [Fact]
     public async Task Save_async_keeps_only_five_recovery_copies_per_track()
     {
         var track = Path.Combine(_root, "retention.wav");

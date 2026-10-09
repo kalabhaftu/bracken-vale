@@ -9,7 +9,7 @@ public static class TrackReader
     {
         path = Path.GetFullPath(path);
         var info = new FileInfo(path);
-        using var media = TagLib.File.Create(path);
+        using var media = AudioTags.Open(path);
         var tag = media.Tag;
         var artwork = SaveArtwork(tag.Pictures.FirstOrDefault(), artworkCache);
         return new(
