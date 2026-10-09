@@ -30,11 +30,14 @@ if (-not (Test-Path -LiteralPath $verifierSource -PathType Leaf)) {
     throw "Manifest verifier was not found: $verifierSource"
 }
 Copy-Item -LiteralPath $verifierSource -Destination $verifierDestination -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Uninstall-MusicPlayer-MSIX.ps1') -Destination $artifactRoot
 # Sign the shipped verifier before computing its manifest hash.
 $publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $PSScriptRoot 'MusicPlayer-Signing.cer'))
 $signingCertificate = Get-Item "Cert:/CurrentUser/My/$($publicCertificate.Thumbprint)"
 $signature = Set-AuthenticodeSignature -FilePath $verifierDestination -Certificate $signingCertificate -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
 if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw 'Release verifier signing or timestamp verification failed.' }
+$signature = Set-AuthenticodeSignature -FilePath (Join-Path $artifactRoot 'Uninstall-MusicPlayer-MSIX.ps1') -Certificate $signingCertificate -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
+if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw 'MSIX uninstall helper signing or timestamp verification failed.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'MusicPlayer-Signing.cer') -Destination $artifactRoot
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'SIGNING.md') -Destination $artifactRoot
 
@@ -47,6 +50,7 @@ $assetNames = @(
     'ThirdPartyNotices.md',
     'MusicPlayer-Signing.cer',
     'SIGNING.md',
+    'Uninstall-MusicPlayer-MSIX.ps1',
     $verifierName
 )
 

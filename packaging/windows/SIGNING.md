@@ -31,3 +31,16 @@ https://learn.microsoft.com/en-us/windows/msix/package/sign-msix-package-guide
 To revoke that local choice, remove the matching certificate from Trusted People.
 Keep the same certificate for upgrades. The private key and password are never
 distributed; only the `.cer` is public.
+# MSIX uninstall and saved data
+
+Windows' normal MSIX uninstall removes the package's private data. To retain your
+library, close Music Player and run the downloaded, signed
+`Uninstall-MusicPlayer-MSIX.ps1` helper without arguments. It copies the saved
+profile to `%LOCALAPPDATA%\MusicPlayer` before removing the package, so reinstall
+can read it. If an unpackaged profile already exists, it first preserves a copy
+under `%LOCALAPPDATA%\MusicPlayerUninstallBackups`.
+
+Use `-RemoveUserData` to remove the saved profile along with MSIX. Source music and
+existing recovery backups are preserved. This helper never installs certificate
+trust. Authenticate it with the release checksum manifest before running it.
+

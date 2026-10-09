@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string] $Executable)
+param([Parameter(Mandatory=$true)][string] $Executable,[string] $ApplicationId)
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This smoke check must run on an isolated GitHub runner.' }
 $music=Join-Path ([Environment]::GetFolderPath('MyMusic')) 'MusicPlayerSmoke'
@@ -34,7 +34,11 @@ function Save-Diagnostics {
     if(Test-Path -LiteralPath $logs){Copy-Item -LiteralPath $logs -Destination $out -Recurse -Force}
     Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=(Get-Date).AddMinutes(-10)} -ErrorAction SilentlyContinue | Where-Object {$_.ProviderName -in @('Application Error','.NET Runtime')} | Select-Object TimeCreated,ProviderName,Message | ConvertTo-Json | Set-Content (Join-Path $out 'startup-errors.json')
 }
-$process=Start-Process -FilePath $exe -PassThru
+function Start-App {
+    if($ApplicationId){return & (Join-Path $PSScriptRoot 'Start-PackagedApp.ps1') -ApplicationId $ApplicationId}
+    Start-Process -FilePath $exe -PassThru
+}
+$process=Start-App
 $env:MUSICPLAYER_TEST_APP_PID=[string]$process.Id
 try {
     node (Join-Path $PSScriptRoot 'smoke.mjs')
@@ -44,7 +48,7 @@ try {
     $process.Refresh()
     if(!$process.HasExited){$null=$process.CloseMainWindow();if(!$process.WaitForExit(20000)){Stop-Process -Id $process.Id -Force}}
 }
-$process=Start-Process -FilePath $exe -PassThru
+$process=Start-App
 $env:MUSICPLAYER_TEST_APP_PID=[string]$process.Id
 try {
     node (Join-Path $PSScriptRoot 'smoke.mjs') --restart
