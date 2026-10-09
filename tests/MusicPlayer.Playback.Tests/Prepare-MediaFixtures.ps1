@@ -55,3 +55,9 @@ foreach($fixture in Get-ChildItem $root -Filter 'fixture.*'){
     if($LASTEXITCODE -ne 0){throw "Fixture container/codec validation failed: $($fixture.Name)"}
 }
 [pscustomobject]@{generator='FFmpeg encoder and DSD silence';downloadSources=$sources} | ConvertTo-Json | Set-Content (Join-Path $root 'sources.json')
+# A genuine video with an embedded subtitle stream exercises the same shipped
+# video/codec modules as the opted-in native video window.
+$subtitle=Join-Path $root 'fixture.srt'
+"1`n00:00:00,000 --> 00:00:11,000`nMusic Player subtitle smoke" | Set-Content $subtitle
+& ffmpeg -hide_banner -loglevel error -y -f lavfi -i 'testsrc2=size=640x360:rate=24:duration=12' -f lavfi -i 'sine=frequency=440:duration=12' -i $subtitle -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -c:s srt -metadata:s:s:0 title='Release subtitle' -metadata:s:s:0 language=eng (Join-Path $root 'fixture.mkv')
+if($LASTEXITCODE -ne 0){throw 'Video/subtitle fixture generation failed.'}
