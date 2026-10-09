@@ -530,42 +530,58 @@ document.addEventListener("click",async e=>{
 });
 
 document.addEventListener("contextmenu",e=>{const row=e.target.closest("[data-context=track]");if(row){e.preventDefault();contextMenu(e.clientX,e.clientY,row.dataset.contextId||row.dataset.track);}});
-let queueDragIndex = -1;
+let queuePointer = null;
 function clearQueueDropTargets() { $$(".queue-table tr.queue-drop-before,.queue-table tr.queue-drop-after").forEach(row => row.classList.remove("queue-drop-before", "queue-drop-after")); }
-document.addEventListener("dragstart", event => {
-  const handle = event.target instanceof Element ? event.target.closest("[data-queue-drag]") : null;
-  if (!handle || handle.disabled) { event.preventDefault(); return; }
-  queueDragIndex = Number(handle.dataset.queueDrag);
-  handle.closest("tr[data-queue-index]")?.classList.add("queue-dragging");
-  if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(queueDragIndex)); }
-});
-document.addEventListener("dragover", event => {
-  const row = event.target instanceof Element ? event.target.closest(".queue-table tr[data-queue-index]") : null;
-  if (!row || queueDragIndex < 0) return;
-  const targetIndex = Number(row.dataset.queueIndex), currentIndex = Number(state.queueIndex), rect = row.getBoundingClientRect();
-  const after = event.clientY >= rect.top + rect.height / 2;
-  if (targetIndex < currentIndex || (targetIndex === currentIndex && !after)) return;
-  event.preventDefault(); clearQueueDropTargets();
-  row.classList.add(after ? "queue-drop-after" : "queue-drop-before");
-  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-});
-document.addEventListener("drop", async event => {
-  const row = event.target instanceof Element ? event.target.closest(".queue-table tr[data-queue-index]") : null;
-  if (!row || queueDragIndex < 0) return;
+function clearQueueDrag() {
+  const active = queuePointer;
+  queuePointer = null;
+  document.body.classList.remove("queue-pointer-dragging");
+  $$(".queue-table tr.queue-dragging").forEach(row => row.classList.remove("queue-dragging"));
+  clearQueueDropTargets();
+  if (active?.handle.hasPointerCapture(active.pointerId)) active.handle.releasePointerCapture(active.pointerId);
+}
+$("#routeView").addEventListener("pointerdown", event => {
+  const handle = event.target.closest("[data-queue-drag]");
+  if (!handle || handle.disabled || event.button !== 0 || !event.isPrimary || queuePointer) return;
+  const index = Number(handle.dataset.queueDrag);
+  if (!Number.isInteger(index) || index <= Number(state.queueIndex)) return;
   event.preventDefault();
-  const fromIndex = queueDragIndex, targetIndex = Number(row.dataset.queueIndex), rect = row.getBoundingClientRect();
-  const boundary = targetIndex + (event.clientY >= rect.top + rect.height / 2 ? 1 : 0);
-  const toIndex = boundary - (fromIndex < boundary ? 1 : 0);
-  queueDragIndex = -1; clearQueueDropTargets();
-  if (toIndex !== fromIndex) {
+  queuePointer = { index, handle, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, dragging: false, targetIndex: -1, after: false };
+  try { handle.setPointerCapture(event.pointerId); } catch { }
+});
+$("#routeView").addEventListener("pointermove", event => {
+  const active = queuePointer;
+  if (!active || active.pointerId !== event.pointerId) return;
+  if (!active.dragging && Math.hypot(event.clientX - active.startX, event.clientY - active.startY) < 4) return;
+  active.dragging = true;
+  event.preventDefault();
+  document.body.classList.add("queue-pointer-dragging");
+  active.handle.closest("tr[data-queue-index]")?.classList.add("queue-dragging");
+  clearQueueDropTargets();
+  const row = document.elementFromPoint(event.clientX, event.clientY)?.closest(".queue-table tr[data-queue-index]");
+  const targetIndex = Number(row?.dataset.queueIndex);
+  if (!row || !Number.isInteger(targetIndex) || targetIndex < Number(state.queueIndex)) { active.targetIndex = -1; return; }
+  active.targetIndex = targetIndex;
+  active.after = event.clientY >= row.getBoundingClientRect().top + row.offsetHeight / 2;
+  if (targetIndex === Number(state.queueIndex) && !active.after) { active.targetIndex = -1; return; }
+  row.classList.add(active.after ? "queue-drop-after" : "queue-drop-before");
+});
+$("#routeView").addEventListener("pointerup", async event => {
+  const active = queuePointer;
+  if (!active || active.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  const boundary = active.targetIndex + (active.after ? 1 : 0);
+  const toIndex = boundary - (active.index < boundary ? 1 : 0);
+  const shouldMove = active.dragging && active.targetIndex >= Number(state.queueIndex) && toIndex !== active.index;
+  const fromIndex = active.index;
+  clearQueueDrag();
+  if (shouldMove) {
     try { await call("moveQueue", { index: fromIndex, toIndex }); }
     catch (error) { toast(error.message || "That queue entry could not be moved."); }
   }
 });
-document.addEventListener("dragend", event => {
-  if (event.target instanceof Element) event.target.closest("tr.queue-dragging")?.classList.remove("queue-dragging");
-  queueDragIndex = -1; clearQueueDropTargets();
-});
+$("#routeView").addEventListener("pointercancel", event => { if (queuePointer?.pointerId === event.pointerId) clearQueueDrag(); });
+$("#routeView").addEventListener("lostpointercapture", event => { if (queuePointer?.pointerId === event.pointerId) clearQueueDrag(); });
 document.addEventListener("keydown",async e=>{
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();if(state.view!=="Search"&&state.view!=="Settings")void navigate("Search").catch(error=>toast(error.message||"Search could not be opened."));$("#globalSearch").focus();return;}
   if ((e.key === "Enter" || e.key === " ") && e.target.matches(".queue-table tr[data-queue-index]")) { e.preventDefault(); await action("play-queue", { dataset: { index: e.target.dataset.queueIndex } }); return; }

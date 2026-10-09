@@ -191,18 +191,18 @@
 .immersive-art-column { width:min(100%,780px); min-width:0; max-height:100%; margin:0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:clamp(10px,1.6vh,18px); transition:width .38s cubic-bezier(.2,.75,.25,1),transform .38s cubic-bezier(.2,.75,.25,1); }
 .immersive-player.lyrics-open .immersive-stage { grid-template-columns:minmax(0,1fr) minmax(240px,.92fr); gap:clamp(14px,2.5vw,38px); }
 .immersive-player.lyrics-open .immersive-art-column { width:100%; transform:none; }
-.immersive-lyrics { width:100%; min-width:0; height:min(70vh,720px); max-height:100%; display:flex; flex-direction:column; overflow:hidden; border:0; border-radius:18px; background:rgba(10,11,12,.54); -webkit-backdrop-filter:blur(22px) saturate(1.12); backdrop-filter:blur(22px) saturate(1.12); box-shadow:0 18px 60px rgba(0,0,0,.2); visibility:hidden; opacity:0; transform:translateX(18px); pointer-events:none; transition:visibility 0s linear .38s,opacity .28s ease,transform .38s cubic-bezier(.2,.75,.25,1); }
+.immersive-lyrics { width:100%; min-width:0; height:min(70vh,720px); max-height:100%; display:flex; flex-direction:column; overflow:hidden; border:0; border-radius:0; background:transparent; -webkit-backdrop-filter:none; backdrop-filter:none; box-shadow:none; visibility:hidden; opacity:0; transform:translateX(18px); pointer-events:none; transition:visibility 0s linear .38s,opacity .28s ease,transform .38s cubic-bezier(.2,.75,.25,1); }
 .immersive-player.lyrics-open .immersive-lyrics { visibility:visible; opacity:1; transform:none; pointer-events:auto; transition:visibility 0s,opacity .28s ease,transform .38s cubic-bezier(.2,.75,.25,1); }
-.immersive-lyrics>header { min-height:48px; flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 12px 7px 16px; border-bottom:1px solid rgba(255,255,255,.07); }
+.immersive-lyrics>header { min-height:40px; flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 2px 8px; border:0; }
 .immersive-lyrics-heading { min-width:0; display:flex; align-items:baseline; gap:7px; color:rgba(255,255,255,.96); font-size:13px; font-weight:750; letter-spacing:.1px; }
 .immersive-lyric-source { overflow:hidden; color:rgba(255,255,255,.66); font-size:10px; font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
 .immersive-lyrics .action { flex:0 0 auto; background:rgba(255,255,255,.11); color:#fff; }
 .immersive-lyrics-scroll { min-height:0; flex:1 1 auto; overflow:auto; overscroll-behavior:contain; scrollbar-color:rgba(255,255,255,.3) transparent; scroll-behavior:smooth; }
 .immersive-lyrics .lyrics-lines { width:100%; max-width:none; box-sizing:border-box; padding:16px 22px 30px; text-align:center; }
 .immersive-lyrics .lyrics-plain { color:rgba(255,255,255,.88); }
-.immersive-lyrics .lyric-line { padding:11px 4px; color:rgba(255,255,255,.88); opacity:.78; text-align:center; }
+.immersive-lyrics .lyric-line { padding:11px 4px; color:rgba(255,255,255,.88); opacity:.78; text-align:center; text-shadow:0 1px 9px rgba(0,0,0,.9); }
 .immersive-lyrics .lyric-line.past,.immersive-lyrics .lyric-line.upcoming { color:rgba(255,255,255,.7); opacity:.56; }
-.immersive-lyrics .lyric-line.active { color:#fff; opacity:1; text-shadow:0 1px 18px rgba(255,255,255,.16); }
+.immersive-lyrics .lyric-line.active { color:#fff; opacity:1; text-shadow:0 1px 18px rgba(0,0,0,.8),0 1px 18px rgba(255,255,255,.16); }
 .immersive-lyrics .empty-state { min-height:100%; box-sizing:border-box; display:grid; align-content:center; justify-items:center; gap:8px; padding:22px; color:rgba(255,255,255,.7); text-align:center; }
 .immersive-lyrics-close { width:36px; height:36px; flex:0 0 36px; color:rgba(255,255,255,.8); background:rgba(255,255,255,.08); }
 .immersive-lyrics-close:hover { color:#fff; background:rgba(255,255,255,.16); }
