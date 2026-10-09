@@ -33,7 +33,7 @@ Copy-Item -LiteralPath $verifierSource -Destination $verifierDestination -Force
 # Sign the shipped verifier before computing its manifest hash.
 $publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $PSScriptRoot 'MusicPlayer-Signing.cer'))
 $signingCertificate = Get-Item "Cert:/CurrentUser/My/$($publicCertificate.Thumbprint)"
-$signature = Set-AuthenticodeSignature -FilePath $verifierDestination -Certificate $signingCertificate -HashAlgorithm SHA256 -TimestampServer 'https://timestamp.digicert.com'
+$signature = Set-AuthenticodeSignature -FilePath $verifierDestination -Certificate $signingCertificate -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
 if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw 'Release verifier signing or timestamp verification failed.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'MusicPlayer-Signing.cer') -Destination $artifactRoot
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'SIGNING.md') -Destination $artifactRoot

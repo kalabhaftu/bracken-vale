@@ -130,7 +130,7 @@ jobs:
               Copy-Item -LiteralPath $probeSource -Destination $probePath
               $preflightStage = 'sign the disposable executable probe'
               Write-Host 'Signing the disposable executable probe with a timestamp.'
-              & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /sha1 $certificate.Thumbprint /s My $probePath
+              & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 $certificate.Thumbprint /s My $probePath
               if ($LASTEXITCODE -ne 0) { throw 'Disposable signing probe failed.' }
               $preflightStage = 'verify the disposable executable signature'
               Write-Host 'Verifying the project signature and timestamp.'
@@ -236,7 +236,7 @@ jobs:
                   if ($bootstrapperSignature.Status -ne 'Valid' -or $bootstrapperSignature.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation') {
                     throw 'The WebView2 Evergreen bootstrapper did not have a valid Microsoft signature.'
                   }
-                  $signCommand = '"' + $signtool + '" sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /sha1 ' + $publicCertificate.Thumbprint + ' /s My $f'
+                  $signCommand = '"' + $signtool + '" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 ' + $publicCertificate.Thumbprint + ' /s My $f'
                   & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" '/DSignedBuild' "/Smusicplayer=$signCommand" packaging/windows/MusicPlayer.iss
                   if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $($arch.name)." }
                 } finally {
@@ -262,7 +262,7 @@ jobs:
           $manifestVersion = "$($version.Split('-')[0]).0"
           if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { $version = '1.0.0'; $manifestVersion = '1.0.0.0' }
           $publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $PWD 'packaging/windows/MusicPlayer-Signing.cer'))
-          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release -p:Platform=x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:SignFirstParty=true -p:PackageCertificateThumbprint=$($publicCertificate.Thumbprint) -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
+          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release -p:Platform=x64 -p:Version=$version -p:AppxPackageVersion=$manifestVersion -p:AppxPackageSigningEnabled=true -p:SignFirstParty=true -p:PackageCertificateThumbprint=$($publicCertificate.Thumbprint) -p:AppxPackageSigningTimestampServerUrl=http://timestamp.digicert.com -p:AppxPackageSigningTimestampDigestAlgorithm=SHA256 -p:AppxBundle=Always -p:AppxBundlePlatforms="x64|ARM64" -p:GenerateAppxPackageOnBuild=true
           if ($LASTEXITCODE -ne 0) { throw 'MSIX bundle packaging/signing failed.' }
           $bundle = Get-ChildItem src/MusicPlayer.App -Recurse -Filter *.msixbundle | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $bundle) { throw 'Windows packaging completed without producing an MSIX bundle.' }

@@ -10,7 +10,7 @@ if (-not $signtool) { throw 'Windows SDK signing tool is missing.' }
 $root = (Resolve-Path -LiteralPath $Directory).Path
 $files = @(Get-ChildItem -LiteralPath $root -File | Where-Object { $_.Name -like 'MusicPlayer*.exe' -or $_.Name -like 'MusicPlayer*.dll' })
 foreach ($file in $files) {
-    & $signtool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /sha1 $certificate.Thumbprint /s My $file.FullName
+    & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 $certificate.Thumbprint /s My $file.FullName
     if ($LASTEXITCODE -ne 0) { throw "Signing failed: $($file.Name)" }
     & $signtool verify /pa /all $file.FullName
     if ($LASTEXITCODE -ne 0) { throw "Signature verification failed: $($file.Name)" }
@@ -18,6 +18,6 @@ foreach ($file in $files) {
     if ($signature.SignerCertificate.Thumbprint -ne $public.Thumbprint -or -not $signature.TimeStamperCertificate) { throw "Wrong signer or absent timestamp: $($file.Name)" }
 }
 foreach ($script in Get-ChildItem -LiteralPath $root -File -Filter '*.ps1') {
-    $signature = Set-AuthenticodeSignature -FilePath $script.FullName -Certificate $certificate -HashAlgorithm SHA256 -TimestampServer 'https://timestamp.digicert.com'
+    $signature = Set-AuthenticodeSignature -FilePath $script.FullName -Certificate $certificate -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
     if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw "Helper signing or timestamp failed: $($script.Name)" }
 }
