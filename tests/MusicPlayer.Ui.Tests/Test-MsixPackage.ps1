@@ -16,7 +16,9 @@ $package=Get-AppxPackage 'Kalabhaftu.MusicPlayer'
 if($package.Version -ne [version]'1.0.0.0' -or !(Test-Path $sentinel)){throw 'MSIX upgrade failed to retain prior data.'}
 $exe=Join-Path $package.InstallLocation 'MusicPlayer.exe'
 $env:MUSICPLAYER_TEST_OUTPUT='artifacts/ui-evidence/msix'
-& (Join-Path $PSScriptRoot 'Run-Smoke.ps1') -Executable $exe -ApplicationId "$($package.PackageFamilyName)!App"
+$interactionError=$null
+try { & (Join-Path $PSScriptRoot 'Run-Smoke.ps1') -Executable $exe -ApplicationId "$($package.PackageFamilyName)!App" }
+catch { $interactionError=$_.Exception.Message; Write-Warning "MSIX interaction check failed; independent install/uninstall checks will continue: $interactionError" }
 $manifest=Get-AppxPackageManifest $package
 $association=$manifest.Package.Applications.Application.Extensions.Extension | Where-Object Category -eq 'windows.fileTypeAssociation'
 if(!$association -or '.wav' -notin $association.FileTypeAssociation.SupportedFileTypes.FileType){throw 'MSIX audio file association is missing.'}
@@ -29,4 +31,5 @@ Add-AppxPackage -Path $bundle
 if((Get-AppxPackage 'Kalabhaftu.MusicPlayer') -or (Test-Path $data)){throw 'MSIX explicit data removal did not complete.'}
 if(!(Test-Path (Join-Path ([Environment]::GetFolderPath('MyMusic')) 'MusicPlayerSmoke/MusicPlayerSmoke-A.wav'))){throw 'MSIX uninstall removed a source music file.'}
 Remove-Item Env:/MUSICPLAYER_TEST_OUTPUT -ErrorAction SilentlyContinue
-[pscustomobject]@{architecture=$Architecture;installedActivation=$true;upgradeFrom='0.9.9.0';fileAssociation=$true;retainData=$true;removeData=$true;sourceMusicPreserved=$true} | ConvertTo-Json | Set-Content 'artifacts/ui-evidence/msix-results.json'
+[pscustomobject]@{architecture=$Architecture;installedActivation=(!$interactionError);upgradeFrom='0.9.9.0';fileAssociation=$true;retainData=$true;removeData=$true;sourceMusicPreserved=$true;interactionError=$interactionError} | ConvertTo-Json | Set-Content 'artifacts/ui-evidence/msix-results.json'
+if($interactionError){throw "Installed MSIX interaction checks failed: $interactionError"}

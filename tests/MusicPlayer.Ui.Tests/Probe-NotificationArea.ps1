@@ -14,6 +14,7 @@ public static class NotificationAreaProbe {
         public uint infoFlags; public Guid guid; public IntPtr balloon;
     }
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string name,string title);
+    [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint extended,string name,string title,uint style,int x,int y,int w,int h,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr data);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr LoadIcon(IntPtr instance,IntPtr id);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr window);
@@ -66,3 +67,13 @@ Write-Host "Independent Windows notification probe: $probe"
 Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" | Select-Object ProcessId,SessionId,ExecutablePath | ConvertTo-Json | Set-Content (Join-Path $output 'explorer-session.json')
 Get-Process -Id $PID | Select-Object Id,SessionId,Path | ConvertTo-Json | Set-Content (Join-Path $output 'probe-session.json')
 Get-Service WpnService,WpnUserService*,UserManager,StateRepository,ProfSvc,AppXSvc,CDPUserSvc*,UnistoreSvc*,UserDataSvc* -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json | Set-Content (Join-Path $output 'shell-services.json')
+Get-Process ShellHost,ShellExperienceHost,StartMenuExperienceHost,RuntimeBroker,dwm -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,SessionId | ConvertTo-Json | Set-Content (Join-Path $output 'desktop-hosts.json')
+try {
+    Add-Type -AssemblyName System.Drawing
+    $bitmap=[Drawing.Bitmap]::new([NotificationAreaProbe]::GetSystemMetrics(0),[NotificationAreaProbe]::GetSystemMetrics(1))
+    $graphics=[Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen(0,0,0,0,$bitmap.Size)
+        $bitmap.Save((Join-Path $output 'disposable-desktop.png'),[Drawing.Imaging.ImageFormat]::Png)
+    } finally {$graphics.Dispose();$bitmap.Dispose()}
+} catch {Write-Warning "Disposable desktop capture unavailable: $($_.Exception.Message)"}

@@ -381,6 +381,7 @@ jobs:
         run: |
           & tests/MusicPlayer.Ui.Tests/Test-SetupPackage.ps1 -SetupPath artifacts/MusicPlayer-Setup-${{ matrix.arch }}.exe -PreviousSetupPath artifacts/upgrade-fixtures/MusicPlayer-Setup-${{ matrix.arch }}.exe -Architecture '${{ matrix.arch }}'
       - name: Verify signed MSIX installation, upgrade and both uninstall choices
+        if: success() || failure()
         shell: pwsh
         run: |
           $bundle = @(Get-ChildItem artifacts -Filter '*.msixbundle')

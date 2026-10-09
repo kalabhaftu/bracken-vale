@@ -4,6 +4,11 @@ if($env:GITHUB_ACTIONS -ne 'true'){throw 'Install tests require an isolated GitH
 $setup=(Resolve-Path -LiteralPath $SetupPath).Path
 $install=Join-Path $env:RUNNER_TEMP "installed-music-player-$Architecture"
 $data=Join-Path $env:LOCALAPPDATA 'MusicPlayer'
+$interactionErrors=[Collections.Generic.List[string]]::new()
+function Test-Interaction([string] $Executable){
+    try { & (Join-Path $PSScriptRoot 'Run-Smoke.ps1') -Executable $Executable }
+    catch { $interactionErrors.Add($_.Exception.Message); Write-Warning "UI check failed; independent installer lifecycle checks will continue: $($_.Exception.Message)" }
+}
 function Run-Installer([string] $File,[string[]] $Arguments){
     $process=Start-Process -FilePath $File -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru
     if($process.ExitCode -notin @(0,3010)){throw "Installer exited with $($process.ExitCode)."}
@@ -23,7 +28,7 @@ $uninstaller=Join-Path $install 'unins000.exe'
 foreach($file in @($exe,(Join-Path $install 'MusicPlayer.dll'),(Join-Path $install 'MusicPlayer.Core.dll'),$uninstaller)){Verify-Signature $file}
 foreach($script in Get-ChildItem -LiteralPath $install -Filter '*.ps1'){Verify-Signature $script.FullName}
 if(!(Test-Path 'HKCU:/Software/Classes/MusicPlayer.MusicPlayer.wav/shell/open/command')){throw 'Setup file association was not registered.'}
-& (Join-Path $PSScriptRoot 'Run-Smoke.ps1') -Executable $exe
+Test-Interaction $exe
 if(!(Test-Path (Join-Path $data 'library.db'))){throw 'Installed library was not persisted.'}
 $sentinel=Join-Path $data 'retention-test.txt'
 'Retain installed user data' | Set-Content -LiteralPath $sentinel
@@ -37,7 +42,7 @@ if(!(Test-Path -LiteralPath $sentinel)){throw 'Setup upgrade removed user data.'
 if(!(Test-Path -LiteralPath $ownedMusic) -or (Get-FileHash -LiteralPath $ownedMusic -Algorithm SHA256).Hash -ne $ownedHash){throw 'Setup upgrade removed or changed a user-owned file in the install folder.'}
 if((Get-ItemProperty -LiteralPath $registration).DisplayVersion -ne '1.0.0'){throw 'Setup did not register the final upgraded version.'}
 $env:MUSICPLAYER_TEST_OUTPUT='artifacts/ui-evidence/upgraded-setup'
-try { & (Join-Path $PSScriptRoot 'Run-Smoke.ps1') -Executable $exe }
+try { Test-Interaction $exe }
 finally {Remove-Item Env:/MUSICPLAYER_TEST_OUTPUT -ErrorAction SilentlyContinue}
 Run-Installer $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')
 if(!(Test-Path -LiteralPath $sentinel)){throw 'Default uninstall failed to retain user data.'}
@@ -49,4 +54,5 @@ Run-Installer $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/RE
 if(Test-Path -LiteralPath $data){throw 'Explicit data-removal uninstall retained user data.'}
 $music=Join-Path ([Environment]::GetFolderPath('MyMusic')) 'MusicPlayerSmoke/MusicPlayerSmoke-A.wav'
 if(!(Test-Path -LiteralPath $music)){throw 'Uninstall removed a source music file.'}
-[pscustomobject]@{architecture=$Architecture;setupInstall=$true;upgradeFrom='0.9.9';signedEmbeddedUninstaller=$true;retainData=$true;removeData=$true;sourceMusicPreserved=$true} | ConvertTo-Json | Set-Content 'artifacts/ui-evidence/setup-results.json'
+[pscustomobject]@{architecture=$Architecture;setupInstall=$true;upgradeFrom='0.9.9';signedEmbeddedUninstaller=$true;retainData=$true;removeData=$true;sourceMusicPreserved=$true;userOwnedInstallFilePreserved=(Test-Path $ownedMusic);interactionPassed=($interactionErrors.Count -eq 0);interactionErrors=$interactionErrors.ToArray()} | ConvertTo-Json | Set-Content 'artifacts/ui-evidence/setup-results.json'
+if($interactionErrors.Count){throw "Installed setup interaction checks failed: $($interactionErrors -join '; ')"}
