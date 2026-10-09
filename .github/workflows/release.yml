@@ -371,8 +371,61 @@ jobs:
           path: artifacts/ui-evidence/
           if-no-files-found: warn
 
+  validate-performance:
+    needs: build
+    if: needs.build.outputs.preflight_only != 'true' && needs.build.outputs.signed == 'true'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: music-player-release-assets
+          path: artifacts
+      - name: Build the preserved pre-optimization baseline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git archive 9759726 --format=zip --output=artifacts/baseline-source.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create the preserved baseline source.' }
+          Expand-Archive artifacts/baseline-source.zip artifacts/baseline-source
+          dotnet publish artifacts/baseline-source/src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --runtime win-x64 --self-contained true --output artifacts/baseline-publish -p:Platform=x64 -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
+          if ($LASTEXITCODE -ne 0) { throw 'Baseline publish failed.' }
+      - name: Authenticate and prepare the measured candidate
+        shell: pwsh
+        run: |
+          $manifest = @(Get-ChildItem artifacts -Filter 'MusicPlayer-*-SHA256SUMS.txt')
+          & packaging/windows/Verify-MusicPlayer-ReleaseManifest.ps1 -ManifestPath $manifest[0].FullName
+          $candidate = @(Get-ChildItem artifacts -Filter '*-x64-portable.zip')
+          Expand-Archive $candidate[0].FullName artifacts/measured-candidate
+      - name: Install UI driver
+        working-directory: tests/MusicPlayer.Ui.Tests
+        run: npm install --ignore-scripts
+      - name: Measure small and 100000-track library startup, CPU and combined memory
+        shell: pwsh
+        run: |
+          $candidate = @(Get-ChildItem artifacts/measured-candidate -Recurse -Filter MusicPlayer.exe)
+          if ($candidate.Count -ne 1) { throw 'Expected one candidate executable.' }
+          & tests/MusicPlayer.Ui.Tests/Measure-Startup.ps1 -BaselineExecutable artifacts/baseline-publish/MusicPlayer.exe -CandidateExecutable $candidate[0].FullName
+          $before = (Get-ChildItem artifacts/baseline-publish -Recurse -File | Measure-Object Length -Sum).Sum
+          $after = (Get-ChildItem artifacts/measured-candidate -Recurse -File | Measure-Object Length -Sum).Sum
+          $saved = 1 - $after / $before
+          [pscustomobject]@{baseline='9759726';candidate=$env:GITHUB_SHA;beforeBytes=$before;afterBytes=$after;reduction=$saved} | ConvertTo-Json | Set-Content artifacts/ui-evidence/performance/package-size.json
+          if ($saved -lt 0.10) { throw 'The final candidate did not meet the 10% unpacked package-size target.' }
+      - name: Upload comparative resource evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: performance-evidence
+          path: artifacts/ui-evidence/performance/
+          if-no-files-found: warn
+
   publish:
-    needs: [build, validate-installed]
+    needs: [build, validate-installed, validate-performance]
     if: github.event_name == 'push' && needs.build.outputs.preflight_only != 'true' && needs.build.outputs.signed == 'true'
     runs-on: windows-2022
     permissions:
