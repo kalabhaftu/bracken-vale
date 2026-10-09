@@ -46,6 +46,6 @@
     <RemoveDir Directories="$(OutDir)WebUI" />
   </Target>
   <Target Name="SignFirstPartyOutput" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(SignFirstParty)' == 'true'">
-    <Exec Command="pwsh -NoLogo -NoProfile -File &quot;$(MSBuildProjectDirectory)/../../packaging/windows/Sign-FirstPartyFiles.ps1&quot; -Directory &quot;$(TargetDir)&quot;" />
+    <Exec Command="pwsh -NoLogo -NoProfile -File &quot;$(MSBuildProjectDirectory)/../../packaging/windows/Sign-FirstPartyFiles.ps1&quot; -Directory &quot;$(TargetDir.Replace('\', '/'))&quot;" />
   </Target>
 </Project>

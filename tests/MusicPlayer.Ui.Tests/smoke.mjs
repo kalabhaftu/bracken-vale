@@ -67,6 +67,7 @@ await until(async()=>await page.locator('#routeView tr[data-track]').count()>=4,
 await call("playTrack",{id:fixtures[0].id,view:"Songs"});
 await until(async()=>(await call("getCurrentTrack")).playing,"Native playback did not start");
 await call("playPause");
+await until(async()=>!(await call("getCurrentTrack")).playing,"Playback did not pause before queue editing");
 await call("clearQueue");
 for(const track of [fixtures[1],fixtures[1],fixtures[2],fixtures[3]])await call("addToQueue",{id:track.id});
 const queueBefore=await call("getQueue",{pageSize:100});
@@ -74,13 +75,23 @@ assert.equal(queueBefore.totalCount,5);
 assert.equal(queueBefore.entries[1].id,queueBefore.entries[2].id);
 await navigate("Queue");
 await until(async()=>await page.locator("[data-queue-drag='1']").count()===1,"Queue did not render");
+assert.equal(await page.locator("[data-queue-drag='1']").isEnabled(),true,"Upcoming queue entry cannot be dragged");
+await page.locator("[data-queue-index='4']").scrollIntoViewIfNeeded();
+const pointerEvents=[];
+await page.exposeFunction("recordQueuePointer",event=>pointerEvents.push(event));
+await page.evaluate(()=>{
+  for(const type of ["pointerdown","pointermove","pointerup","pointercancel","lostpointercapture"])
+    document.querySelector("#routeView").addEventListener(type,event=>window.recordQueuePointer({type:event.type,x:event.clientX,y:event.clientY,target:event.target.outerHTML?.slice(0,300),hit:document.elementFromPoint(event.clientX,event.clientY)?.outerHTML?.slice(0,300),dragging:document.body.classList.contains("queue-pointer-dragging"),drop:document.querySelector(".queue-drop-after,.queue-drop-before")?.dataset.queueIndex}),true);
+});
 const grip=await page.locator("[data-queue-drag='1']").boundingBox();
 const target=await page.locator("[data-queue-index='4']").boundingBox();
 assert(grip&&target);
 await page.mouse.move(grip.x+grip.width/2,grip.y+grip.height/2);
 await page.mouse.down();
-await page.mouse.move(target.x+target.width/2,target.y+target.height-3,{steps:15});
+await page.mouse.move(target.x+target.width/2,target.y+target.height*.75,{steps:15});
+await page.screenshot({path:`${output}/queue-drag.png`,fullPage:true});
 await page.mouse.up();
+await fs.writeFile(`${output}/queue-pointer.json`,JSON.stringify({queueBefore,grip,target,pointerEvents,queueAfter:await call("getQueue",{pageSize:100})},null,2));
 await until(async()=> (await call("getQueue",{pageSize:100})).entries[4].id===fixtures[1].id,"Pointer queue reorder did not persist");
 await page.locator("#immersiveToggle").click();
 await page.locator("#immersiveLyricsToggle").click();

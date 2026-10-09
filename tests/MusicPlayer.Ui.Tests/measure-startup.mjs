@@ -28,6 +28,7 @@ for(let attempt=0;attempt<120;attempt++){
   if(!(await call("getBootstrap")).scan.active)break;
   await new Promise(r=>setTimeout(r,500));
 }
+assert.equal((await call("getBootstrap")).scan.active,false,"Scan did not settle before idle measurement");
 const settled=measure();
 await new Promise(r=>setTimeout(r,10000));
 const idle=measure();

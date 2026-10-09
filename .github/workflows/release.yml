@@ -395,6 +395,8 @@ jobs:
           Expand-Archive artifacts/baseline-source.zip artifacts/baseline-source
           dotnet publish artifacts/baseline-source/src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --runtime win-x64 --self-contained true --output artifacts/baseline-publish -p:Platform=x64 -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
           if ($LASTEXITCODE -ne 0) { throw 'Baseline publish failed.' }
+          & packaging/windows/Prepare-PortablePackage.ps1 -PublishDirectory artifacts/baseline-publish -DestinationDirectory artifacts/baseline-package -Version baseline -Architecture x64
+          Compress-Archive -LiteralPath artifacts/baseline-package -DestinationPath artifacts/baseline-portable.zip -CompressionLevel Optimal
       - name: Authenticate and prepare the measured candidate
         shell: pwsh
         run: |
@@ -410,12 +412,16 @@ jobs:
         run: |
           $candidate = @(Get-ChildItem artifacts/measured-candidate -Recurse -Filter MusicPlayer.exe)
           if ($candidate.Count -ne 1) { throw 'Expected one candidate executable.' }
-          & tests/MusicPlayer.Ui.Tests/Measure-Startup.ps1 -BaselineExecutable artifacts/baseline-publish/MusicPlayer.exe -CandidateExecutable $candidate[0].FullName
-          $before = (Get-ChildItem artifacts/baseline-publish -Recurse -File | Measure-Object Length -Sum).Sum
+          & tests/MusicPlayer.Ui.Tests/Measure-Startup.ps1 -BaselineExecutable artifacts/baseline-package/MusicPlayer.exe -CandidateExecutable $candidate[0].FullName
+          $before = (Get-ChildItem artifacts/baseline-package -Recurse -File | Measure-Object Length -Sum).Sum
           $after = (Get-ChildItem artifacts/measured-candidate -Recurse -File | Measure-Object Length -Sum).Sum
           $saved = 1 - $after / $before
-          [pscustomobject]@{baseline='9759726';candidate=$env:GITHUB_SHA;beforeBytes=$before;afterBytes=$after;reduction=$saved} | ConvertTo-Json | Set-Content artifacts/ui-evidence/performance/package-size.json
+          $beforeZip = (Get-Item artifacts/baseline-portable.zip).Length
+          $afterZip = (@(Get-ChildItem artifacts -Filter '*-x64-portable.zip')[0]).Length
+          $zipSaved = 1 - $afterZip / $beforeZip
+          [pscustomobject]@{baseline='9759726';candidate=$env:GITHUB_SHA;beforeBytes=$before;afterBytes=$after;reduction=$saved;beforeZipBytes=$beforeZip;afterZipBytes=$afterZip;zipReduction=$zipSaved} | ConvertTo-Json | Set-Content artifacts/ui-evidence/performance/package-size.json
           if ($saved -lt 0.10) { throw 'The final candidate did not meet the 10% unpacked package-size target.' }
+          if ($zipSaved -lt 0.10) { throw 'The final candidate did not meet the 10% downloadable package-size target.' }
       - name: Upload comparative resource evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
