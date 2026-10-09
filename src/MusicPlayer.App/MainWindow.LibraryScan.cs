@@ -190,7 +190,9 @@ public sealed partial class MainWindow : Window
             var indexedBefore = _store.GetLibraryStats().TotalTracks;
             LocalAppLog.Shared.Info("scanner", $"Starting {(forceRefresh ? "index rebuild" : "library scan")}: roots={scanRoots.Length}, indexedTracksBefore={indexedBefore}, roots=[{string.Join(", ", scanRoots.Select(DescribeRoot))}].");
             var ignored = _libraryLocations.GetScanExclusions();
-            var nextLibraryRefresh = 256;
+            var publishedIndexed = 0;
+            var committedIndexed = 0;
+            var nextLibraryRefreshUtc = DateTimeOffset.MinValue;
             var progress = new Progress<ScanProgress>(value =>
             {
                 if (_windowClosed) return;
@@ -199,10 +201,12 @@ public sealed partial class MainWindow : Window
                 if (!string.IsNullOrWhiteSpace(value.CurrentPath)) _scanCurrentPath = value.CurrentPath;
                 if (DateTimeOffset.UtcNow - _lastWebScanUpdateUtc >= TimeSpan.FromMilliseconds(350))
                 { _lastWebScanUpdateUtc = DateTimeOffset.UtcNow; PublishScanState(); }
-                if (value.FilesFound >= nextLibraryRefresh)
+                committedIndexed = Math.Max(committedIndexed, value.IndexedTracks);
+                if (committedIndexed > publishedIndexed && DateTimeOffset.UtcNow >= nextLibraryRefreshUtc)
                 {
                     PublishLibraryChanged();
-                    nextLibraryRefresh = value.FilesFound + 256;
+                    publishedIndexed = committedIndexed;
+                    nextLibraryRefreshUtc = DateTimeOffset.UtcNow.AddSeconds(1);
                 }
             });
             var scanTask = _libraryScan.StartAsync(scanRoots, ignored, progress, forceRefresh, _libraryLocations.GetEnabledExtensions());

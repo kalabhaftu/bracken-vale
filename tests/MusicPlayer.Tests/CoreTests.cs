@@ -187,6 +187,31 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Indexer_exposes_a_small_library_before_drive_scan_finishes()
+    {
+        var firstRoot = Directory.CreateDirectory(Path.Combine(_root, "first-library")).FullName;
+        var secondRoot = Directory.CreateDirectory(Path.Combine(_root, "second-library")).FullName;
+        var firstTrack = Path.Combine(firstRoot, "first.wav");
+        WriteWave(firstTrack);
+        WriteWave(Path.Combine(secondRoot, "second.wav"));
+        using var control = new ScanControl();
+        var progress = new InlineProgress<ScanProgress>(value =>
+        {
+            if (value.IndexedTracks == 1) control.Pause();
+        });
+        var scan = new LibraryIndexer(_store, Path.Combine(_root, "artwork"), new LocalAppLog(Path.Combine(_root, "Logs")))
+            .ScanAsync([firstRoot, secondRoot], [], control, progress);
+        try
+        {
+            Assert.False(scan.IsCompleted);
+            Assert.NotNull(_store.GetTrack(firstTrack));
+        }
+        finally { control.Cancel(); }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scan);
+        Assert.Single(_store.GetTracks());
+    }
+
+    [Fact]
     public async Task Indexer_cancellation_saves_tracks_from_the_incomplete_batch()
     {
         var root = Path.Combine(_root, "partial-scan"); Directory.CreateDirectory(root);

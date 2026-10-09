@@ -40,7 +40,7 @@ public sealed record Track(
 public sealed record LibraryGroup(string Name, int TrackCount, string? ArtworkPath, string? Artist, uint Year = 0);
 public sealed record LibraryStats(int TotalTracks, long TotalBytes);
 
-public sealed record ScanProgress(int FilesFound, int DirectoriesVisited, string CurrentPath);
+public sealed record ScanProgress(int FilesFound, int DirectoriesVisited, string CurrentPath, int IndexedTracks = -1);
 public sealed record LyricsLine(TimeSpan Time, string Text);
 public sealed record LyricsDocument(IReadOnlyList<LyricsLine> Lines, TimeSpan Offset, IReadOnlyDictionary<string, string>? Metadata = null)
 {

@@ -1,4 +1,5 @@
 using System.Security;
+using System.Diagnostics;
 
 namespace MusicPlayer.Core;
 
@@ -26,6 +27,8 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
         var indexed = 0;
         var skipped = 0;
         var filesFound = 0;
+        var directoriesVisited = 0;
+        var sinceFlush = Stopwatch.StartNew();
         var unavailableRoots = new List<string>();
         var incompletePaths = new List<string>();
         void FlushPending()
@@ -33,7 +36,10 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
             if (pending.Count == 0) return;
             store.UpsertTracks(pending);
             indexed += pending.Count;
+            var lastPath = pending[^1].Path;
             pending.Clear();
+            sinceFlush.Restart();
+            progress?.Report(new(filesFound, directoriesVisited, lastPath, indexed));
         }
         var scanner = new LibraryScanner(_log);
         try
@@ -87,7 +93,14 @@ public sealed class LibraryIndexer(LibraryStore store, string artworkCache, Loca
                     _log.Warning("indexer", $"Could not read media tags for '{fullPath}'.", ex);
                 }
                 return ValueTask.CompletedTask;
-            }, progress, rootCompleted: scan.MarkRootCompleted,
+            }, progress, directoryVisited: _ =>
+                {
+                    directoriesVisited++;
+                    // Make a small newly discovered library usable immediately, then
+                    // bound tail writes to once per second while drive discovery continues.
+                    if (indexed == 0 || sinceFlush.Elapsed >= TimeSpan.FromSeconds(1)) FlushPending();
+                },
+                rootCompleted: (root, complete) => { FlushPending(); scan.MarkRootCompleted(root, complete); },
                 rootUnavailable: root => unavailableRoots.Add(root),
                 pathExcludedWithReason: scan.MarkExcludedPath,
                 pathIncomplete: path => { scan.MarkPathIncomplete(path); incompletePaths.Add(path); },
