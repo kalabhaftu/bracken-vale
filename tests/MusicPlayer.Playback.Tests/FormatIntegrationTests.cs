@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Reflection;
+using System.Collections.Concurrent;
+using LibVLCSharp.Shared;
 using MusicPlayer.App;
 using MusicPlayer.Core;
 using Xunit;
@@ -36,17 +39,29 @@ public sealed class FormatIntegrationTests
         Assert.True(LibraryScanner.IsSupportedAudioFile(file.FullName));
         var track = new Track(file.FullName, extension, "", "", "", "", 0, 0,
             TimeSpan.Zero, file.Length, file.LastWriteTimeUtc, DateTime.UtcNow);
-        using var playback = new PlaybackService("--aout=dummy", "--no-video-title-show");
+        using var playback = new PlaybackService("--aout=dummy", "--no-video-title-show", "--verbose=2");
+        var native = (MediaPlayer)typeof(PlaybackService).GetField("_active", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(playback)!;
+        var engine = (LibVLC)typeof(PlaybackService).GetField("_libVlc", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(playback)!;
+        var logs = new ConcurrentQueue<string>();
+        engine.Log += (_, args) => { logs.Enqueue(args.FormattedLog); if (logs.Count > 80) logs.TryDequeue(out _); };
+        var stage = "start";
         var failed = false;
         playback.PlaybackFailed += _ => failed = true;
         playback.Play(track);
-        string State() => $"playing={playback.IsPlaying}, position={playback.Position}, duration={playback.Duration}, ended={playback.HasEnded}";
+        string State() => $"stage={stage}, playing={playback.IsPlaying}, position={playback.Position}, duration={playback.Duration}, ended={playback.HasEnded}, nativeState={native.State}, canPause={native.CanPause}, seekable={native.IsSeekable}\n" + string.Join("\n", logs);
         await WaitFor(() => playback.IsPlaying && playback.Position > 300, () => failed, State);
         Assert.True(playback.Duration > 1000, "The decoder did not report a media duration.");
+        stage = "seek";
         playback.Seek(3000);
         await WaitFor(() => playback.Position > 3100 && playback.IsPlaying, () => failed, State);
+        stage = "pause";
         playback.Pause();
-        await WaitFor(() => !playback.IsPlaying, () => failed, State);
+        await WaitFor(() => !playback.IsPlaying && native.State == VLCState.Paused, () => failed, State);
+        var pausedAt = playback.Position;
+        await Task.Delay(200);
+        Assert.False(playback.IsPlaying);
+        Assert.InRange(playback.Position, pausedAt - 100, pausedAt + 100);
+        stage = "resume";
         playback.PlayLoaded();
         await WaitFor(() => playback.IsPlaying, () => failed, State);
     }
