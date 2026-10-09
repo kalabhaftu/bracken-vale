@@ -70,11 +70,19 @@ public sealed partial class MainWindow
                 return null;
             }
             case "seek":
+            {
                 CancelCrossfadeAndRestoreQueue();
+                var resumeAfterEnd = _playback.HasEnded;
                 _playback.Seek((long)(Double(payload, "seconds") * 1000));
+                if (resumeAfterEnd && _playback.CurrentTrack is { } resumed)
+                {
+                    _playbackListening.MarkResumed(_playback.Position);
+                    UpdateSystemMediaControls(resumed, true);
+                }
                 PublishQueueStateIfChanged();
                 PublishPlaybackState();
                 return null;
+            }
             case "setVolume": SetPlaybackVolume(Int(payload, "volume", 75)); return null;
             case "toggleFavorite":
             {

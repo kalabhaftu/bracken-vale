@@ -15,6 +15,14 @@ public sealed class PlaybackService : IDisposable
     private readonly MediaPlayer _first;
     private MediaPlayer _active;
     private MediaPlayer? _spare;
+    private sealed class PlayerSubscription
+    {
+        public long Generation;
+        public EventHandler<EventArgs> End = null!;
+        public EventHandler<EventArgs> Error = null!;
+    }
+
+    private readonly Dictionary<MediaPlayer, PlayerSubscription> _subscriptions = [];
     private Media? _activeMedia;
     private Media? _spareMedia;
     private Track? _currentTrack;
@@ -33,12 +41,14 @@ public sealed class PlaybackService : IDisposable
     private bool _videoTrack;
     private bool _disposed;
 
-    public PlaybackService()
+    public PlaybackService() : this("--aout=mmdevice", "--no-video-title-show") { }
+
+    internal PlaybackService(params string[] options)
     {
         LibVLCSharp.Shared.Core.Initialize();
         // Video is rendered into the app's own child HWND when an enabled video
         // extension is played. Never let LibVLC create its standalone video window.
-        _libVlc = new LibVLC("--aout=mmdevice", "--no-video-title-show");
+        _libVlc = new LibVLC(options);
         _libVlc.Log += (_, args) =>
         {
             if (args.Level is LogLevel.Warning or LogLevel.Error)
@@ -243,11 +253,14 @@ public sealed class PlaybackService : IDisposable
     public void PlayLoaded()
     {
         Track? resumeVideoTrack;
+        Track? endedTrack;
         lock (_gate)
         {
             if (_disposed) return;
             resumeVideoTrack = _videoTrack ? _currentTrack : null;
+            endedTrack = _trackEnded || _active.State == VLCState.Ended ? _currentTrack : null;
         }
+        if (endedTrack is not null) LoadPaused(endedTrack, 0);
         var requestedSurface = resumeVideoTrack is null ? 0 : RequestVideoSurface(resumeVideoTrack);
         MediaPlayer player;
         long generation;
@@ -301,25 +314,33 @@ public sealed class PlaybackService : IDisposable
 
     public void Seek(long positionMilliseconds)
     {
-        Track? endedTrack = null;
+        Track? reloadTrack = null;
+        bool resume = false;
         lock (_gate)
         {
             if (_disposed) return;
             CancelCrossfadeCore();
-            if (_trackEnded || _active.State == VLCState.Ended)
-                endedTrack = _currentTrack;
-            if (endedTrack is null)
+            var state = _active.State;
+            resume = _trackEnded || state == VLCState.Ended;
+            var duration = Duration;
+            positionMilliseconds = Math.Clamp(positionMilliseconds, 0, duration > 0 ? duration : long.MaxValue);
+            if (resume || state is VLCState.NothingSpecial or VLCState.Stopped)
+                reloadTrack = _currentTrack;
+            if (reloadTrack is null)
             {
                 _mediaGeneration++;
+                Interlocked.Exchange(ref _subscriptions[_active].Generation, _mediaGeneration);
                 _trackEnded = false;
                 _restorePosition = 0;
-                var duration = _active.Length;
-                _active.Time = Math.Clamp(positionMilliseconds, 0, duration > 0 ? duration : long.MaxValue);
+                _active.Time = positionMilliseconds;
             }
         }
 
-        if (endedTrack is not null)
-            LoadPaused(endedTrack, positionMilliseconds);
+        if (reloadTrack is not null)
+        {
+            LoadPaused(reloadTrack, positionMilliseconds);
+            if (resume) PlayLoaded();
+        }
     }
 
     private async Task SeekAfterStartAsync(MediaPlayer player, long generation, long position)
@@ -332,9 +353,9 @@ public sealed class PlaybackService : IDisposable
                 lock (_gate)
                 {
                     if (_disposed || generation != _mediaGeneration || !ReferenceEquals(player, _active)) return;
-                    if (player.Length > 0)
+                    if (player.IsSeekable && player.State is VLCState.Playing or VLCState.Paused)
                     {
-                        player.Time = Math.Min(position, player.Length);
+                        player.Time = player.Length > 0 ? Math.Min(position, player.Length) : position;
                         _restorePosition = 0;
                         return;
                     }
@@ -429,6 +450,7 @@ public sealed class PlaybackService : IDisposable
                         _spare = old;
                         (_activeMedia, _spareMedia) = (_spareMedia, _activeMedia);
                         _currentTrack = nextTrack;
+                        _trackEnded = false;
                         _restorePosition = 0;
                         _active.Volume = (int)_volume;
                         _spare.Volume = (int)_volume;
@@ -529,6 +551,9 @@ public sealed class PlaybackService : IDisposable
             }
         }
         var requestedRate = ReferenceEquals(player, _active) && _videoTrack ? _videoPlaybackRate : 1f;
+        // Stop has released callbacks for the previous media. Bind subsequent
+        // native events to this media, including events from the spare player.
+        Interlocked.Exchange(ref _subscriptions[player].Generation, _mediaGeneration);
         player.Media = media;
         if (player.SetRate(requestedRate) != 0 && requestedRate != 1f)
             LocalAppLog.Shared.Warning("video-playback", "The media engine rejected the requested video playback speed.");
@@ -572,23 +597,48 @@ public sealed class PlaybackService : IDisposable
 
     private void Subscribe(MediaPlayer player)
     {
-        player.EndReached += EndReached;
-        player.EncounteredError += EncounteredError;
+        // LibVLCSharp sends its MediaPlayerEventManager as sender, not the player.
+        // Capture the owner explicitly and leave native callbacks immediately:
+        // Stop/Dispose can wait for them while another thread holds _gate.
+        var handlers = new PlayerSubscription();
+        handlers.End = (_, _) => QueuePlayerEvent(player, Interlocked.Read(ref handlers.Generation), endReached: true);
+        handlers.Error = (_, _) => QueuePlayerEvent(player, Interlocked.Read(ref handlers.Generation), endReached: false);
+        _subscriptions.Add(player, handlers);
+        player.EndReached += handlers.End;
+        player.EncounteredError += handlers.Error;
     }
 
-    private void EndReached(object? sender, EventArgs e)
+    private void Unsubscribe(MediaPlayer player)
+    {
+        if (!_subscriptions.Remove(player, out var handlers)) return;
+        player.EndReached -= handlers.End;
+        player.EncounteredError -= handlers.Error;
+    }
+
+    private void QueuePlayerEvent(MediaPlayer player, long generation, bool endReached)
+    {
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            if (endReached) EndReached(player, generation);
+            else EncounteredError(player, generation);
+        });
+    }
+
+    private void EndReached(MediaPlayer player, long generation)
     {
         bool ended;
         string reason;
         lock (_gate)
         {
-            var senderIsActive = ReferenceEquals(sender, _active);
+            var senderIsActive = ReferenceEquals(player, _active);
             var hasCurrentTrack = _currentTrack is not null;
             var crossfadePending = _crossfadeCancellation is not null;
             var duplicate = _handledEndReachedGeneration == _mediaGeneration;
-            ended = !_disposed && !duplicate && PlaybackEventPolicy.ShouldHandleEndReached(
+            var stale = generation != _mediaGeneration;
+            ended = !_disposed && !stale && !duplicate && PlaybackEventPolicy.ShouldHandleEndReached(
                 senderIsActive, hasCurrentTrack, currentStateIsEnded: true, crossfadePending);
             reason = _disposed ? "service disposed"
+                : stale ? "media changed before event was handled"
                 : duplicate ? "duplicate event for current media"
                 : !senderIsActive ? "event came from inactive player"
                 : !hasCurrentTrack ? "no current track"
@@ -603,22 +653,23 @@ public sealed class PlaybackService : IDisposable
         }
 
         LocalAppLog.Shared.Info("playback", $"LibVLC end event {(ended ? "accepted" : "ignored")}: {reason}.");
-        // The subscriber only posts work to the UI dispatcher. Queue advancement
-        // and all subsequent LibVLC calls therefore run after this native callback.
+        // Native callback has been released; the shell posts queue work to its dispatcher.
         if (ended) TrackEnded?.Invoke(this, EventArgs.Empty);
     }
 
-    private void EncounteredError(object? sender, EventArgs e)
+    private void EncounteredError(MediaPlayer player, long generation)
     {
         Track? activeFailure = null;
         Track? fadeFailure = null;
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed || generation != _mediaGeneration) return;
+            // The native error event is authoritative. LibVLC may already be
+            // Stopped by the time this worker runs; querying State loses errors.
             if (PlaybackEventPolicy.ShouldHandleActiveError(
-                    ReferenceEquals(sender, _active),
+                    ReferenceEquals(player, _active),
                     _currentTrack is not null,
-                    _active.State == VLCState.Error))
+                    currentStateIsError: true))
             {
                 if (_currentTrack is { } current && !string.Equals(_reportedFailurePath, current.Path, StringComparison.OrdinalIgnoreCase))
                 {
@@ -627,9 +678,9 @@ public sealed class PlaybackService : IDisposable
                 }
             }
             else if (PlaybackEventPolicy.ShouldHandleCrossfadeError(
-                         ReferenceEquals(sender, _spare),
+                         ReferenceEquals(player, _spare),
                          _crossfadeTarget is not null,
-                         _spare?.State == VLCState.Error))
+                         currentStateIsError: true))
             {
                 fadeFailure = _crossfadeTarget;
                 CancelCrossfadeCore();
@@ -674,6 +725,10 @@ public sealed class PlaybackService : IDisposable
             _spare.Stop();
             _spare.Volume = (int)_volume;
         }
+        // A canceled/failed fade keeps the outgoing media alive. Its eventual
+        // end/error belongs to the current generation again.
+        if (fade is not null)
+            Interlocked.Exchange(ref _subscriptions[_active].Generation, _mediaGeneration);
         _active.Volume = (int)_volume;
     }
 
@@ -685,15 +740,13 @@ public sealed class PlaybackService : IDisposable
             CancelCrossfadeCore();
             _disposed = true;
             _active.Stop();
-            _active.EndReached -= EndReached;
-            _active.EncounteredError -= EncounteredError;
+            Unsubscribe(_active);
             _activeMedia?.Dispose();
             _spareMedia?.Dispose();
             _active.Dispose();
             if (_spare is not null)
             {
-                _spare.EndReached -= EndReached;
-                _spare.EncounteredError -= EncounteredError;
+                Unsubscribe(_spare);
                 _spare.Dispose();
             }
             _libVlc.Dispose();

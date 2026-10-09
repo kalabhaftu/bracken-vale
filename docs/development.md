@@ -13,6 +13,7 @@
 ```powershell
 dotnet restore MusicPlayer.sln
 dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj -c Release
+dotnet test tests/MusicPlayer.Playback.Tests/MusicPlayer.Playback.Tests.csproj -c Release
 dotnet build src/MusicPlayer.App/MusicPlayer.App.csproj -c Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64
 dotnet run --project src/MusicPlayer.App/MusicPlayer.App.csproj
 ```
@@ -26,6 +27,8 @@ The WinUI window is the native shell for the local WebView2 UI. Frontend sources
 For ARM64, replace `x64`/`win-x64` with `ARM64`/`win-arm64`. The automated Windows workflow builds both architectures and uploads per-architecture artifacts.
 
 The core and its tests target .NET 10 without WinUI and can be tested on macOS or Linux. The Windows workflow builds and uploads a self-contained portable ZIP for x64 and ARM64. WebView2 rendering, audio devices, media keys, tray integration, installer behavior, MSIX installation and Windows 10/11 visual behavior must be checked on Windows hardware.
+
+The separate native playback tests require Windows x64. They compile the app's playback service and queue coordinators directly, use the shipped LibVLC packages, and generate silent WAV fixtures with dummy audio output. They cover actual native end/error callbacks, queue advancement, repeat, crossfade promotion, and seeking in ended and paused sessions. Windows x64 CI runs them without requiring an audio device. See [the playback investigation](playback-investigation.md) for the regression these tests reproduce.
 
 ## Configuration and data
 
