@@ -171,7 +171,7 @@ function settingsMatch(query,text){
 }
 function highlightSettingText(element,query){
   const original=element.dataset.searchOriginalText??element.textContent??"";element.dataset.searchOriginalText=original;
-  const terms=[...new Set(normalizeSettingWords(query).flatMap(word=>[word,...Object.entries(settingsAliases).filter(([,aliases])=>aliases.some(alias=>normalizeSettingWords(alias).includes(word))).map(([key])=>key),...(settingsAliases[word]||[]).flatMap(normalizeSettingWords)))].sort((a,b)=>b.length-a.length).map(word=>word.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+  const terms=[...new Set(normalizeSettingWords(query).flatMap(word=>[word,...Object.entries(settingsAliases).filter(([,aliases])=>aliases.some(alias=>normalizeSettingWords(alias).includes(word))).map(([key])=>key),...(settingsAliases[word]||[]).flatMap(normalizeSettingWords)]))].sort((a,b)=>b.length-a.length).map(word=>word.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
   if(!terms.length){element.textContent=original;return;}
   const pattern=new RegExp(`(${terms.join("|")})`,"ig"),parts=original.split(pattern);element.replaceChildren(...parts.map(part=>{if(terms.some(term=>part.toLowerCase()===term.toLowerCase())){const mark=document.createElement("mark");mark.className="settings-search-highlight";mark.textContent=part;return mark;}return document.createTextNode(part);}));
 }
