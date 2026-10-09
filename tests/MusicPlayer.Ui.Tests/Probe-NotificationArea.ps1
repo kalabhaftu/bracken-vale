@@ -20,7 +20,6 @@ public static class NotificationAreaProbe {
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr LoadIcon(IntPtr instance,IntPtr id);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr window);
     [DllImport("shell32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool Shell_NotifyIcon(uint message,ref Data data);
-    [DllImport("shell32.dll",CharSet=CharSet.Unicode,ExactSpelling=true)] static extern int SetCurrentProcessExplicitAppUserModelID(string id);
     public static string Run() {
         var window=CreateWindowEx(0,"STATIC","Music Player CI notification probe",0x80000000,0,0,1,1,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero);
         if(window==IntPtr.Zero) throw new InvalidOperationException("Could not create the notification probe window.");
@@ -28,14 +27,7 @@ public static class NotificationAreaProbe {
         try {
             var added=Shell_NotifyIcon(0,ref data);var error=Marshal.GetLastWin32Error();
             if(added) Shell_NotifyIcon(2,ref data);
-            data.flags|=0x20;data.guid=Guid.NewGuid();
-            var guidAdded=Shell_NotifyIcon(0,ref data);var guidError=Marshal.GetLastWin32Error();
-            if(guidAdded) Shell_NotifyIcon(2,ref data);
-            var identityResult=SetCurrentProcessExplicitAppUserModelID("Kalabhaftu.MusicPlayer.CIProbe");
-            data.flags=7;
-            var identityAdded=Shell_NotifyIcon(0,ref data);var identityError=Marshal.GetLastWin32Error();
-            if(identityAdded) Shell_NotifyIcon(2,ref data);
-            return "{\"registered\":"+added.ToString().ToLowerInvariant()+",\"guidRegistered\":"+guidAdded.ToString().ToLowerInvariant()+",\"identityRegistered\":"+identityAdded.ToString().ToLowerInvariant()+",\"identityResult\":"+identityResult+",\"identityError\":"+identityError+",\"guidError\":"+guidError+",\"nativeError\":"+error+",\"dataSize\":"+data.cbSize+",\"pointerSize\":"+IntPtr.Size+"}";
+            return "{\"registered\":"+added.ToString().ToLowerInvariant()+",\"nativeError\":"+error+",\"dataSize\":"+data.cbSize+",\"pointerSize\":"+IntPtr.Size+"}";
         } finally {DestroyWindow(window);}
     }
 }
@@ -65,10 +57,7 @@ if(!(ConvertFrom-Json $probe).registered){
 }
 $probe | Set-Content (Join-Path $output 'notification-area-probe.json')
 Write-Host "Independent Windows notification probe: $probe"
-Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" | Select-Object ProcessId,SessionId,ExecutablePath | ConvertTo-Json | Set-Content (Join-Path $output 'explorer-session.json')
-Get-Process -Id $PID | Select-Object Id,SessionId,Path | ConvertTo-Json | Set-Content (Join-Path $output 'probe-session.json')
-Get-Service WpnService,WpnUserService*,UserManager,StateRepository,ProfSvc,AppXSvc,CDPUserSvc*,UnistoreSvc*,UserDataSvc* -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json | Set-Content (Join-Path $output 'shell-services.json')
-Get-Process ShellHost,ShellExperienceHost,StartMenuExperienceHost,RuntimeBroker,dwm -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,SessionId | ConvertTo-Json | Set-Content (Join-Path $output 'desktop-hosts.json')
+if(!(ConvertFrom-Json $probe).registered){
 try {
     Add-Type -AssemblyName System.Drawing
     $bitmap=[Drawing.Bitmap]::new([NotificationAreaProbe]::GetSystemMetrics(0),[NotificationAreaProbe]::GetSystemMetrics(1))
@@ -78,3 +67,5 @@ try {
         $bitmap.Save((Join-Path $output 'disposable-desktop.png'),[Drawing.Imaging.ImageFormat]::Png)
     } finally {$graphics.Dispose();$bitmap.Dispose()}
 } catch {Write-Warning "Disposable desktop capture unavailable: $($_.Exception.Message)"}
+throw 'The disposable Windows desktop cannot register notification icons; UI checks require a working desktop.'
+}
