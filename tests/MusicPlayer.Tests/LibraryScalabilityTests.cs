@@ -59,7 +59,7 @@ public sealed class LibraryScalabilityTests : IDisposable
         Assert.Equal("Dark", migrated.GetSetting("theme"));
         Assert.Equal(new[] { trackPath, trackPath }, migrated.GetPlaylists().Single().Paths);
         Assert.Equal(trackPath, migrated.GetTracksPage("gacy", pageSize: 1).Single().Path);
-        Assert.Single(Directory.GetFiles(_root, "legacy.db.migration-*.bak"));
+        Assert.Equal(2, Directory.GetFiles(_root, "legacy.db.migration-*.bak").Length);
     }
 
     [Fact]

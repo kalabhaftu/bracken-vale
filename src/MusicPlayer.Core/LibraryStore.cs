@@ -12,7 +12,7 @@ public sealed record IndexedFileState(long Length, DateTime ModifiedUtc);
 
 public sealed partial class LibraryStore
 {
-    private const int SchemaVersion = 8;
+    private const int SchemaVersion = 9;
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly LocalAppLog _log;
@@ -23,6 +23,7 @@ public sealed partial class LibraryStore
         List<(string Id, string Name, string CreatedUtc)> Playlists,
         List<(string PlaylistId, int Position, string TrackPath)> PlaylistTracks,
         List<(int Id, string Payload)> PlaybackSession,
+        List<(int Position, string TrackPath)> PlaybackQueue,
         List<(int Id, string OriginalPath, string BackupPath, string CreatedUtc)> TagBackups,
         List<(string Path, string AddedUtc, int Favorite, int Rating, int PlayCount, string? LastPlayedUtc)> Interactions);
 
@@ -181,6 +182,7 @@ public sealed partial class LibraryStore
             ReadRows("playlists", "SELECT id,name,created_utc FROM playlists", r => (r.GetString(0), r.GetString(1), r.GetString(2))),
             ReadRows("playlist_tracks", "SELECT playlist_id,position,track_path FROM playlist_tracks ORDER BY playlist_id,position", r => (r.GetString(0), r.GetInt32(1), r.GetString(2))),
             ReadRows("playback_session", "SELECT id,payload FROM playback_session", r => (r.GetInt32(0), r.GetString(1))),
+            ReadRows("playback_queue", "SELECT position,track_path FROM playback_queue ORDER BY position", r => (r.GetInt32(0), r.GetString(1))),
             ReadRows("tag_backups", "SELECT id,original_path,backup_path,created_utc FROM tag_backups", r => (r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3))),
             ReadRows("track_interaction_state", "SELECT path,added_utc,favorite,rating,play_count,last_played_utc FROM track_interaction_state", r => (r.GetString(0), r.GetString(1), r.GetInt32(2), r.GetInt32(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetString(5)))
                 .Concat(ReadRows("tracks interactions", "SELECT path,added_utc,favorite,rating,play_count,last_played_utc FROM tracks", r => (r.GetString(0), r.GetString(1), r.GetInt32(2), r.GetInt32(3), r.GetInt32(4), r.IsDBNull(5) ? null : r.GetString(5))))
@@ -208,6 +210,10 @@ public sealed partial class LibraryStore
             Import("INSERT OR IGNORE INTO playlist_tracks(playlist_id,position,track_path) SELECT $playlist,$position,$path WHERE EXISTS(SELECT 1 FROM playlists WHERE id=$playlist)", c => { Add(c, "$playlist", row.PlaylistId); Add(c, "$position", row.Position); Add(c, "$path", row.TrackPath); });
         foreach (var row in state.PlaybackSession)
             Import("INSERT OR REPLACE INTO playback_session(id,payload) VALUES($id,$payload)", c => { Add(c, "$id", row.Id); Add(c, "$payload", row.Payload); });
+        foreach (var row in state.PlaybackQueue)
+            Import("INSERT OR REPLACE INTO playback_queue(position,track_path) VALUES($position,$path)", c => { Add(c, "$position", row.Position); Add(c, "$path", row.TrackPath); });
+        // Recovery can read a pre-v9 database whose queue still lives in JSON.
+        NormalizeLegacySession(connection, transaction);
         foreach (var row in state.TagBackups)
             Import("INSERT OR IGNORE INTO tag_backups(id,original_path,backup_path,created_utc) VALUES($id,$original,$backup,$created)", c => { Add(c, "$id", row.Id); Add(c, "$original", row.OriginalPath); Add(c, "$backup", row.BackupPath); Add(c, "$created", row.CreatedUtc); });
         foreach (var row in state.Interactions)
@@ -704,7 +710,7 @@ public sealed partial class LibraryStore
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO settings(key,value) VALUES($key,$value) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
+        command.CommandText = "INSERT INTO settings(key,value) VALUES($key,$value) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value<>excluded.value";
         Add(command, "$key", key); Add(command, "$value", value); command.ExecuteNonQuery();
     }
 
@@ -730,18 +736,32 @@ public sealed partial class LibraryStore
     public void SaveSession(PlaybackSession session)
     {
         using var connection = Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO playback_session(id,payload) VALUES(1,$payload) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload";
-        Add(command, "$payload", JsonSerializer.Serialize(session)); command.ExecuteNonQuery();
+        using var transaction = connection.BeginTransaction();
+        ReplaceSessionQueue(connection, transaction, session.Queue);
+        WriteSessionState(connection, transaction, session, create: true);
+        transaction.Commit();
     }
 
     public PlaybackSession? LoadSession()
     {
         using var connection = Open();
+        using var transaction = connection.BeginTransaction(deferred: true);
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT payload FROM playback_session WHERE id=1";
         if (command.ExecuteScalar() is not string payload) return null;
-        try { return JsonSerializer.Deserialize<PlaybackSession>(payload); }
+        try
+        {
+            var session = JsonSerializer.Deserialize<PlaybackSession>(payload);
+            if (session is null) return null;
+            using var readQueue = connection.CreateCommand();
+            readQueue.Transaction = transaction;
+            readQueue.CommandText = "SELECT track_path FROM playback_queue ORDER BY position";
+            using var reader = readQueue.ExecuteReader();
+            var queue = new List<string>();
+            while (reader.Read()) queue.Add(reader.GetString(0));
+            return session with { Queue = queue.ToArray() };
+        }
         catch (JsonException ex)
         {
             _log.Warning("session", "Saved playback session was invalid and could not be restored.", ex);
@@ -1021,6 +1041,7 @@ public sealed partial class LibraryStore
         using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version";
         var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
+        var originalVersion = version;
         if (version > SchemaVersion) throw new InvalidDataException($"Database version {version} is newer than this app supports.");
         if (version == 0)
         {
@@ -1210,6 +1231,26 @@ public sealed partial class LibraryStore
                 foreach (var path in paths) RememberTrackPath(connection, transaction, path);
                 if (paths.Count < 512) break;
             }
+            transaction.Commit();
+            version = 8;
+        }
+        if (version == 8)
+        {
+            if (hadDatabaseFile && originalVersion > 0)
+            {
+                using var destination = new SqliteConnection(new SqliteConnectionStringBuilder
+                    { DataSource = _databasePath + $".migration-v9-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.bak" }.ToString());
+                destination.Open();
+                connection.BackupDatabase(destination);
+            }
+            using var transaction = connection.BeginTransaction();
+            using var migrate = connection.CreateCommand();
+            migrate.Transaction = transaction;
+            migrate.CommandText = "CREATE TABLE IF NOT EXISTS playback_session(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL); CREATE TABLE playback_queue(position INTEGER PRIMARY KEY,track_path TEXT NOT NULL);";
+            migrate.ExecuteNonQuery();
+            NormalizeLegacySession(connection, transaction);
+            migrate.CommandText = "PRAGMA user_version=9";
+            migrate.ExecuteNonQuery();
             transaction.Commit();
         }
     }
