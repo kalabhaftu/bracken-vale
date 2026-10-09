@@ -8,7 +8,7 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SatelliteResourceLanguages>en;en-US</SatelliteResourceLanguages>
-    <AppxPackageVersion>0.1.0.0</AppxPackageVersion>
+    <AppxPackageVersion>1.0.0.0</AppxPackageVersion>
     <WindowsPackageType>MSIX</WindowsPackageType>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <Nullable>enable</Nullable>
@@ -18,13 +18,13 @@
     <ApplicationIcon>Assets\MusicPlayer.ico</ApplicationIcon>
     <RootNamespace>MusicPlayer.App</RootNamespace>
     <AssemblyName>MusicPlayer</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>1.0.0</Version>
     <AppxPackageSigningEnabled Condition="'$(AppxPackageSigningEnabled)' == ''">false</AppxPackageSigningEnabled>
     <AppxBundle>Always</AppxBundle>
     <AppxBundlePlatforms>x64|ARM64</AppxBundlePlatforms>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools.WinApp" />
     <PackageReference Include="LibVLCSharp" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" />
@@ -44,5 +44,8 @@
   </ItemGroup>
   <Target Name="RemoveLegacyLooseWebUI" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(OutDir)WebUI')">
     <RemoveDir Directories="$(OutDir)WebUI" />
+  </Target>
+  <Target Name="SignFirstPartyOutput" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(SignFirstParty)' == 'true'">
+    <Exec Command="pwsh -NoLogo -NoProfile -File &quot;$(MSBuildProjectDirectory)/../../packaging/windows/Sign-FirstPartyFiles.ps1&quot; -Directory &quot;$(TargetDir)&quot;" />
   </Target>
 </Project>
