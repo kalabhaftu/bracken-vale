@@ -482,13 +482,24 @@ public sealed partial class MainWindow : Window
 
     private void ApplyTraySetting()
     {
-        if (_store.GetSetting("minimize-to-tray") == "true")
+        try
         {
-            if (_tray is not null) { _tray.UpdateIcon(ActiveProductIconPath()); return; }
-            _tray = new TrayIconService(WindowNative.GetWindowHandle(this), ActiveProductIconPath(),
-                () => DispatcherQueue.TryEnqueue(() => { var hwnd = WindowNative.GetWindowHandle(this); TrayIconService.RestoreWindow(hwnd); Activate(); }));
+            if (_store.GetSetting("minimize-to-tray") == "true")
+            {
+                if (_tray is not null) { _tray.UpdateIcon(ActiveProductIconPath()); return; }
+                _tray = new TrayIconService(WindowNative.GetWindowHandle(this), ActiveProductIconPath(),
+                    () => DispatcherQueue.TryEnqueue(() => { var hwnd = WindowNative.GetWindowHandle(this); TrayIconService.RestoreWindow(hwnd); Activate(); }));
+            }
+            else { _tray?.Dispose(); _tray = null; }
         }
-        else { _tray?.Dispose(); _tray = null; }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            // A saved tray preference must not prevent startup when the Windows
+            // notification area is unavailable. Keep normal window minimization.
+            _tray?.Dispose(); _tray = null;
+            LocalAppLog.Shared.Warning("tray", "The Windows notification area is unavailable; the player window remains accessible.", ex);
+            _ = ShowNoticeAsync("The Windows tray is unavailable. Music Player will minimize to the taskbar.", InfoBarSeverity.Warning);
+        }
     }
 
     private string ActiveProductIconPath()

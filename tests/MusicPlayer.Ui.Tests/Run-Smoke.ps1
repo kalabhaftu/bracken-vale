@@ -1,6 +1,19 @@
 param([Parameter(Mandatory=$true)][string] $Executable,[string] $ApplicationId)
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This smoke check must run on an isolated GitHub runner.' }
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class MusicPlayerShellTest {
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string name, string title);
+}
+'@
+# Tray and thumbnail tests need Explorer in this disposable runner session.
+if([MusicPlayerShellTest]::FindWindow('Shell_TrayWnd',$null) -eq [IntPtr]::Zero){
+    Start-Process explorer.exe -WindowStyle Hidden
+    for($attempt=0;$attempt -lt 60 -and [MusicPlayerShellTest]::FindWindow('Shell_TrayWnd',$null) -eq [IntPtr]::Zero;$attempt++){Start-Sleep -Milliseconds 500}
+    if([MusicPlayerShellTest]::FindWindow('Shell_TrayWnd',$null) -eq [IntPtr]::Zero){throw 'The isolated Windows session has no Explorer notification area; tray validation cannot run.'}
+}
 $music=Join-Path ([Environment]::GetFolderPath('MyMusic')) 'MusicPlayerSmoke'
 New-Item -ItemType Directory -Path $music -Force | Out-Null
 foreach($name in @('A','B','C','D')) {
@@ -38,25 +51,20 @@ function Start-App {
     if($ApplicationId){return & (Join-Path $PSScriptRoot 'Start-PackagedApp.ps1') -ApplicationId $ApplicationId}
     Start-Process -FilePath $exe -PassThru
 }
-$process=Start-App
-$env:MUSICPLAYER_TEST_APP_PID=[string]$process.Id
 try {
-    node (Join-Path $PSScriptRoot 'smoke.mjs')
-    if($LASTEXITCODE -ne 0){throw 'Windows UI smoke failed.'}
+    foreach($arguments in @(@(),@('--restart'))){
+        $process=Start-App
+        $env:MUSICPLAYER_TEST_APP_PID=[string]$process.Id
+        try {
+            node (Join-Path $PSScriptRoot 'smoke.mjs') @arguments
+            if($LASTEXITCODE -ne 0){throw 'Windows UI smoke failed.'}
+        } finally {
+            Save-Diagnostics
+            $process.Refresh()
+            if(!$process.HasExited){$null=$process.CloseMainWindow();if(!$process.WaitForExit(20000)){Stop-Process -Id $process.Id -Force}}
+        }
+    }
 } finally {
-    Save-Diagnostics
-    $process.Refresh()
-    if(!$process.HasExited){$null=$process.CloseMainWindow();if(!$process.WaitForExit(20000)){Stop-Process -Id $process.Id -Force}}
-}
-$process=Start-App
-$env:MUSICPLAYER_TEST_APP_PID=[string]$process.Id
-try {
-    node (Join-Path $PSScriptRoot 'smoke.mjs') --restart
-    if($LASTEXITCODE -ne 0){throw 'Windows UI restart smoke failed.'}
-} finally {
-    Save-Diagnostics
-    $process.Refresh()
-    if(!$process.HasExited){$null=$process.CloseMainWindow();if(!$process.WaitForExit(20000)){Stop-Process -Id $process.Id -Force}}
     Remove-ItemProperty -Path $policy -Name 'MusicPlayer.exe' -ErrorAction SilentlyContinue
     Remove-Item Env:/MUSICPLAYER_TEST_APP_PID -ErrorAction SilentlyContinue
 }

@@ -10,11 +10,13 @@ internal sealed class TrayIconService : IDisposable
     private const uint SizeMinimized = 1, SwHide = 0, SwRestore = 9, ImageIcon = 1, LoadFromFile = 0x10;
     private const uint NimAdd = 0, NimModify = 1, NimDelete = 2, NimSetVersion = 4, NifMessage = 1, NifIcon = 2, NifTip = 4;
     private const uint CallbackMessage = WmApp + 41;
+    private static readonly uint TaskbarCreatedMessage = RegisterWindowMessage("TaskbarCreated");
     private readonly IntPtr _window;
     private IntPtr _icon;
     private readonly Action _restore;
     private readonly SubclassProcedure _procedure;
     private bool _disposed;
+    private bool _registered;
 
     public TrayIconService(IntPtr window, string iconPath, Action restore)
     {
@@ -29,6 +31,7 @@ internal sealed class TrayIconService : IDisposable
             RemoveWindowSubclass(_window, _procedure, (UIntPtr)0xB4A7); DestroyIcon(_icon);
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not register the tray icon.");
         }
+        _registered = true;
         data.uTimeoutOrVersion = 4;
         Shell_NotifyIcon(NimSetVersion, ref data);
     }
@@ -64,7 +67,14 @@ internal sealed class TrayIconService : IDisposable
 
     private IntPtr WindowProcedure(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam, UIntPtr subclassId, UIntPtr referenceData)
     {
-        if (message == WmSize && wParam.ToUInt32() == SizeMinimized)
+        if (message == TaskbarCreatedMessage)
+        {
+            // Explorer restart and primary-display DPI changes remove tray icons.
+            var data = MakeData();
+            _registered = Shell_NotifyIcon(NimAdd, ref data);
+            if (_registered) { data.uTimeoutOrVersion = 4; Shell_NotifyIcon(NimSetVersion, ref data); }
+        }
+        if (_registered && message == WmSize && wParam.ToUInt32() == SizeMinimized)
         {
             ShowWindow(window, SwHide);
             return IntPtr.Zero;
@@ -114,6 +124,7 @@ internal sealed class TrayIconService : IDisposable
     [DllImport("user32.dll", SetLastError = true)] private static extern bool DestroyIcon(IntPtr icon);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr window, uint command);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string message);
     [DllImport("comctl32.dll", SetLastError = true)] private static extern bool SetWindowSubclass(IntPtr window, SubclassProcedure procedure, UIntPtr subclassId, UIntPtr referenceData);
     [DllImport("comctl32.dll", SetLastError = true)] private static extern bool RemoveWindowSubclass(IntPtr window, SubclassProcedure procedure, UIntPtr subclassId);
     [DllImport("comctl32.dll")] private static extern IntPtr DefSubclassProc(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
