@@ -9,6 +9,10 @@ public static class TrackReader
     {
         path = Path.GetFullPath(path);
         var info = new FileInfo(path);
+        if (Path.GetExtension(path).Equals(".dff", StringComparison.OrdinalIgnoreCase))
+            return new(path, Path.GetFileNameWithoutExtension(path), "", "", "", "", 0, 0,
+                DffAudio.ReadDuration(path), info.Length, info.LastWriteTimeUtc, DateTime.UtcNow,
+                HasLyrics: LyricsFiles.HasUsableSidecar(path));
         using var media = AudioTags.Open(path);
         var tag = media.Tag;
         var artwork = SaveArtwork(tag.Pictures.FirstOrDefault(), artworkCache);

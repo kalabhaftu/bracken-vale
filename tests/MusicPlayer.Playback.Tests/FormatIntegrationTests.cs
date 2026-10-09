@@ -64,6 +64,18 @@ public sealed class FormatIntegrationTests
         stage = "resume";
         playback.PlayLoaded();
         await WaitFor(() => playback.IsPlaying, () => failed, State);
+        if (extension == "dff")
+        {
+            Assert.Equal(TimeSpan.FromSeconds(12), TrackReader.Read(file.FullName, Path.Combine(root, "artwork")).Duration);
+            stage = "end and restart";
+            playback.Seek(playback.Duration - 500);
+            await WaitFor(() => playback.HasEnded, () => failed, State);
+            playback.Seek(3000);
+            await WaitFor(() => playback.IsPlaying && playback.Position > 3100, () => failed, State);
+            playback.Dispose();
+            using var released = File.Open(file.FullName, FileMode.Open, FileAccess.Read, FileShare.None);
+            Assert.Equal(file.Length, released.Length);
+        }
     }
 
     private static async Task WaitFor(Func<bool> ready, Func<bool> failed, Func<string> state)

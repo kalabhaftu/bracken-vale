@@ -25,6 +25,25 @@ public sealed class PlaybackService : IDisposable
     private readonly Dictionary<MediaPlayer, PlayerSubscription> _subscriptions = [];
     private Media? _activeMedia;
     private Media? _spareMedia;
+    private readonly Dictionary<MediaPlayer, DffStreamInput> _fileInputs = [];
+
+    private sealed class DffStreamInput(FileStream stream, long duration) : StreamMediaInput(stream)
+    {
+        public long Duration { get; } = duration;
+        public override bool Open(out ulong size)
+        {
+            var opened = base.Open(out size);
+            // LibVLC's file reader rejects seeking exactly to EOF while FFmpeg
+            // parses DFF. Its documented unknown-size stream mode accepts it.
+            size = ulong.MaxValue;
+            return opened;
+        }
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing) stream.Dispose();
+        }
+    }
     private Track? _currentTrack;
     private Track? _crossfadeTarget;
     private CancellationTokenSource? _crossfadeCancellation;
@@ -79,6 +98,7 @@ public sealed class PlaybackService : IDisposable
                 if (_disposed) return 0;
                 var engineDuration = _active.Length;
                 if (engineDuration > 0) return engineDuration;
+                if (_fileInputs.TryGetValue(_active, out var input)) return input.Duration;
                 return Math.Max(0, (long)(_currentTrack?.Duration.TotalMilliseconds ?? 0));
             }
         }
@@ -536,7 +556,16 @@ public sealed class PlaybackService : IDisposable
     private void SetMedia(MediaPlayer player, ref Media? media, string path)
     {
         media?.Dispose();
-        media = new Media(_libVlc, new Uri(path));
+        if (_fileInputs.Remove(player, out var previousInput)) previousInput.Dispose();
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        var dffDuration = extension == ".dff" ? (long)DffAudio.ReadDuration(path).TotalMilliseconds : 0;
+        if (dffDuration > 0)
+        {
+            var input = new DffStreamInput(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete), dffDuration);
+            try { media = new Media(_libVlc, input); _fileInputs.Add(player, input); }
+            catch { input.Dispose(); throw; }
+        }
+        else media = new Media(_libVlc, new Uri(path));
         // The native Ogg reader can report EOF immediately after a time seek.
         // Use VLC's bundled FFmpeg reader, retaining the same VLC decoders.
         if (Path.GetExtension(path).ToLowerInvariant() is ".ogg" or ".oga")
@@ -756,6 +785,8 @@ public sealed class PlaybackService : IDisposable
                 _spare.Dispose();
             }
             _libVlc.Dispose();
+            foreach (var input in _fileInputs.Values) input.Dispose();
+            _fileInputs.Clear();
         }
     }
 }
