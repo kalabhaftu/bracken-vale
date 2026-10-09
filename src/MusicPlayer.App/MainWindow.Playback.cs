@@ -391,6 +391,7 @@ public sealed partial class MainWindow : Window
     private void Clock_Tick(object? sender, object e)
     {
         UpdateWebViewBackgroundState();
+        if (_libraryWatcherRescanPending && !_libraryScan.IsRunning) RunPendingLibraryWatcherRescan();
         var position = Math.Max(0, _playback.Position); var duration = Math.Max(0, _playback.Duration);
         if (_playback.IsPlaying && _repeatA is not null && _repeatB is not null && position >= _repeatB.Value.TotalMilliseconds)
         {
