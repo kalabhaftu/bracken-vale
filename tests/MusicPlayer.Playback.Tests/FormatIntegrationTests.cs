@@ -43,7 +43,7 @@ public sealed class FormatIntegrationTests
         var native = (MediaPlayer)typeof(PlaybackService).GetField("_active", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(playback)!;
         var engine = (LibVLC)typeof(PlaybackService).GetField("_libVlc", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(playback)!;
         var logs = new ConcurrentQueue<string>();
-        engine.Log += (_, args) => { logs.Enqueue(args.FormattedLog); if (logs.Count > 80) logs.TryDequeue(out _); };
+        engine.Log += (sender, args) => { logs.Enqueue(args.FormattedLog); if (logs.Count > 80) logs.TryDequeue(out _); };
         var stage = "start";
         var failed = false;
         playback.PlaybackFailed += _ => failed = true;
