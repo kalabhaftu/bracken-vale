@@ -62,6 +62,8 @@ jobs:
           & tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1
           "MUSICPLAYER_MEDIA_FIXTURES=$PWD/artifacts/media-fixtures" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - name: Test native playback, queue transitions and supported formats
+        id: native
+        continue-on-error: true
         run: dotnet test tests/MusicPlayer.Playback.Tests/MusicPlayer.Playback.Tests.csproj --configuration Release --runtime ${{ matrix.rid }} --logger 'trx;LogFileName=native.trx' --results-directory artifacts/ui-evidence/native
       - name: Publish self-contained portable app
         shell: pwsh
@@ -95,6 +97,10 @@ jobs:
           name: music-player-${{ matrix.rid }}-runtime-evidence
           path: artifacts/ui-evidence/
           if-no-files-found: warn
+      - name: Require successful native playback validation
+        if: always() && steps.native.outcome != 'success'
+        shell: pwsh
+        run: throw 'Native playback or format validation failed; this required architecture check cannot pass.'
       - name: Upload portable build
         # actions/upload-artifact v7, pinned to the verified tag commit.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
