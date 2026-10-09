@@ -37,6 +37,22 @@ if([NotificationAreaProbe]::FindWindow('Shell_TrayWnd',$null) -eq [IntPtr]::Zero
 $output=Join-Path $PWD 'artifacts/ui-evidence'
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $probe=[NotificationAreaProbe]::Run()
+if(!(ConvertFrom-Json $probe).registered){
+    if(Get-Process MusicPlayer -ErrorAction SilentlyContinue){throw 'Shell recovery must precede the disposable player launch.'}
+    # A shell window alone does not prove that Explorer's notification area is
+    # operational. Restart only this disposable runner's Explorer session.
+    $session=(Get-Process -Id $PID).SessionId
+    Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -eq $session | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
+    Start-Process explorer.exe -WindowStyle Hidden
+    for($attempt=0;$attempt -lt 30;$attempt++){
+        Start-Sleep -Milliseconds 500
+        if([NotificationAreaProbe]::FindWindow('Shell_TrayWnd',$null) -ne [IntPtr]::Zero){
+            $probe=[NotificationAreaProbe]::Run()
+            if((ConvertFrom-Json $probe).registered){break}
+        }
+    }
+}
 $probe | Set-Content (Join-Path $output 'notification-area-probe.json')
 Write-Host "Independent Windows notification probe: $probe"
 Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" | Select-Object ProcessId,SessionId,ExecutablePath | ConvertTo-Json | Set-Content (Join-Path $output 'explorer-session.json')

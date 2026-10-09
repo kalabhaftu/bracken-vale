@@ -337,7 +337,7 @@ jobs:
           - arch: x64
             os: windows-2022
           - arch: arm64
-            os: windows-11-arm
+            os: windows-11-vs2026-arm
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

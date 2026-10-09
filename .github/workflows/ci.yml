@@ -45,7 +45,7 @@ jobs:
             os: windows-2022
           - arch: ARM64
             rid: win-arm64
-            os: windows-11-arm
+            os: windows-11-vs2026-arm
     steps:
       # actions/checkout v7, pinned to the verified tag commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
