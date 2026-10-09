@@ -72,7 +72,7 @@ await until(async()=>{
 },"Enabled video fixture was not discovered",240000);
 await call("cancelScan");
 await call("playTrack",{id:video.id,view:"Songs"});
-await until(async()=>{const state=await call("getCurrentTrack");return state.playing&&state.isVideo;},"Installed video playback did not start");
+await until(async()=>{const state=await call("getCurrentTrack");return state.playing&&state.isVideo&&state.positionSeconds>=1;},"Installed video playback did not advance");
 videoControl("Invoke","Pause");
 await until(async()=>!(await call("getCurrentTrack")).playing,"Video pause button failed");
 videoControl("Seek","",3);
