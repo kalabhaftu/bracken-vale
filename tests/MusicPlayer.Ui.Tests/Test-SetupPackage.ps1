@@ -27,9 +27,14 @@ if(!(Test-Path 'HKCU:/Software/Classes/MusicPlayer.MusicPlayer.wav/shell/open/co
 if(!(Test-Path (Join-Path $data 'library.db'))){throw 'Installed library was not persisted.'}
 $sentinel=Join-Path $data 'retention-test.txt'
 'Retain installed user data' | Set-Content -LiteralPath $sentinel
+$ownedMusic=Join-Path $install 'user-owned.wav'
+$sourceMusic=Join-Path ([Environment]::GetFolderPath('MyMusic')) 'MusicPlayerSmoke/MusicPlayerSmoke-A.wav'
+Copy-Item -LiteralPath $sourceMusic -Destination $ownedMusic
+$ownedHash=(Get-FileHash -LiteralPath $ownedMusic -Algorithm SHA256).Hash
 # Replace the previous-version installation with the final signed installer.
 Run-Installer $setup @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$install`"")
 if(!(Test-Path -LiteralPath $sentinel)){throw 'Setup upgrade removed user data.'}
+if(!(Test-Path -LiteralPath $ownedMusic) -or (Get-FileHash -LiteralPath $ownedMusic -Algorithm SHA256).Hash -ne $ownedHash){throw 'Setup upgrade removed or changed a user-owned file in the install folder.'}
 if((Get-ItemProperty -LiteralPath $registration).DisplayVersion -ne '1.0.0'){throw 'Setup did not register the final upgraded version.'}
 $env:MUSICPLAYER_TEST_OUTPUT='artifacts/ui-evidence/upgraded-setup'
 try { & (Join-Path $PSScriptRoot 'Run-Smoke.ps1') -Executable $exe }
@@ -37,6 +42,7 @@ finally {Remove-Item Env:/MUSICPLAYER_TEST_OUTPUT -ErrorAction SilentlyContinue}
 Run-Installer $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')
 if(!(Test-Path -LiteralPath $sentinel)){throw 'Default uninstall failed to retain user data.'}
 if(Test-Path -LiteralPath $exe){throw 'Uninstall left the application executable.'}
+if(!(Test-Path -LiteralPath $ownedMusic)){throw 'Uninstall removed a user-owned file in the install folder.'}
 if(Test-Path 'HKCU:/Software/Classes/MusicPlayer.MusicPlayer.wav'){throw 'Uninstall left the registered file association.'}
 Run-Installer $setup @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$install`"")
 Run-Installer $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/REMOVEUSERDATA=1')

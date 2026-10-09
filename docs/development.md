@@ -13,12 +13,15 @@
 ```powershell
 dotnet restore MusicPlayer.sln
 dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj -c Release
+# Install FFmpeg for representative-format fixture generation.
+& tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1
+$env:MUSICPLAYER_MEDIA_FIXTURES="$PWD/artifacts/media-fixtures"
 dotnet test tests/MusicPlayer.Playback.Tests/MusicPlayer.Playback.Tests.csproj -c Release
 dotnet build src/MusicPlayer.App/MusicPlayer.App.csproj -c Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64
 dotnet run --project src/MusicPlayer.App/MusicPlayer.App.csproj
 ```
 
-`dotnet run` restores packages as needed, builds the app, and starts that build from the checkout. It does not produce the release ZIP, setup installer, or MSIX bundle. The first launch uses the Windows Music folder when no library roots have been configured; use **Folders** to choose locations explicitly.
+`dotnet run` restores packages as needed, builds the app, and starts that build from the checkout. It does not produce the release ZIP, setup installer, or MSIX bundle. The first launch discovers mounted local drives automatically; use **Folders** to choose locations explicitly. Do not launch another checkout while your existing Music Player instance is running.
 
 ## UI and application services
 
@@ -28,7 +31,7 @@ For ARM64, replace `x64`/`win-x64` with `ARM64`/`win-arm64`. The automated Windo
 
 The core and its tests target .NET 10 without WinUI and can be tested on macOS or Linux. The Windows workflow builds and uploads a self-contained portable ZIP for x64 and ARM64. WebView2 rendering, audio devices, media keys, tray integration, installer behavior, MSIX installation and Windows 10/11 visual behavior must be checked on Windows hardware.
 
-The separate native playback tests run on Windows x64 and native ARM64. They compile the app's playback service and queue coordinators directly, use the shipped LibVLC packages, and generate silent WAV fixtures with dummy audio output. They cover actual native end/error callbacks, queue advancement, repeat, crossfade promotion, and seeking in ended and paused sessions. Windows x64 CI runs them without requiring an audio device. See [the playback investigation](playback-investigation.md) for the regression these tests reproduce.
+The separate native playback tests run on Windows x64 and native ARM64. They compile the app's playback service and queue coordinators directly and use the shipped LibVLC packages. Genuine fixtures cover all 19 supported audio extensions, metadata preservation, video rendering and subtitles, alongside silent WAV/dummy-output end/error, repeat, crossfade and seeking regressions. Both Windows architectures run these checks without an audio device. FFmpeg is required to prepare the format fixtures; their official sample downloads are cached in CI. See [the playback investigation](playback-investigation.md) for the regressions these tests reproduce.
 
 ## Configuration and data
 

@@ -40,10 +40,6 @@ SignTool=musicplayer
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "MicrosoftEdgeWebView2Setup.exe,Portable-README.txt,Uninstall-MusicPlayer.ps1"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\MicrosoftEdgeWebView2Setup.exe"; Flags: dontcopy
 
-; Remove obsolete app binaries/resources on upgrade. User data lives outside {app}.
-[InstallDelete]
-Type: filesandordirs; Name: "{app}\*"
-
 [Icons]
 Name: "{autoprograms}\Music Player"; Filename: "{app}\MusicPlayer.exe"
 Name: "{autodesktop}\Music Player"; Filename: "{app}\MusicPlayer.exe"; Tasks: desktopicon
