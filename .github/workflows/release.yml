@@ -382,7 +382,8 @@ jobs:
           & tests/MusicPlayer.Ui.Tests/Test-SetupPackage.ps1 -SetupPath artifacts/MusicPlayer-Setup-${{ matrix.arch }}.exe -PreviousSetupPath artifacts/upgrade-fixtures/MusicPlayer-Setup-${{ matrix.arch }}.exe -Architecture '${{ matrix.arch }}'
       - name: Verify signed MSIX installation, upgrade and both uninstall choices
         if: success() || failure()
-        shell: pwsh
+        # The Windows Appx module targets Windows PowerShell/.NET Framework.
+        shell: powershell
         run: |
           $bundle = @(Get-ChildItem artifacts -Filter '*.msixbundle')
           if ($bundle.Count -ne 1) { throw 'Expected one final MSIX bundle.' }

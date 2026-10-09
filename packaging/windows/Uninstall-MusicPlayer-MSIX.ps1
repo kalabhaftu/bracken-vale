@@ -1,5 +1,6 @@
 param([switch] $RemoveUserData,[switch] $Quiet)
 $ErrorActionPreference='Stop'
+if($PSEdition -eq 'Core'){Import-Module Appx -UseWindowsPowerShell -ErrorAction Stop}
 $package=Get-AppxPackage -Name 'Kalabhaftu.MusicPlayer'
 if(!$package){throw 'Music Player MSIX is not installed for this account.'}
 $packageDirectory=[IO.Path]::GetFullPath($package.InstallLocation)
