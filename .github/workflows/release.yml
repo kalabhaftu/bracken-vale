@@ -245,7 +245,7 @@ jobs:
                   if ($bootstrapperSignature.Status -ne 'Valid' -or $bootstrapperSignature.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation') {
                     throw 'The WebView2 Evergreen bootstrapper did not have a valid Microsoft signature.'
                   }
-                  $signCommand = '"' + $signtool + '" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 ' + $publicCertificate.Thumbprint + ' /s My $f'
+                  $signCommand = '$q' + $signtool + '$q sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 ' + $publicCertificate.Thumbprint + ' /s My $f'
                   & $iscc "/DAppVersion=$version" "/DArchitecture=$($arch.name)" "/DSourceDir=$out" "/DOutputDir=$PWD\artifacts" '/DSignedBuild' "/Smusicplayer=$signCommand" packaging/windows/MusicPlayer.iss
                   if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $($arch.name)." }
                   # Private previous-version fixture exercises a real installer upgrade.

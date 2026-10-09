@@ -40,23 +40,24 @@ public sealed class FormatIntegrationTests
         var failed = false;
         playback.PlaybackFailed += _ => failed = true;
         playback.Play(track);
-        await WaitFor(() => playback.IsPlaying && playback.Position > 300, () => failed);
+        string State() => $"playing={playback.IsPlaying}, position={playback.Position}, duration={playback.Duration}, ended={playback.HasEnded}";
+        await WaitFor(() => playback.IsPlaying && playback.Position > 300, () => failed, State);
         Assert.True(playback.Duration > 1000, "The decoder did not report a media duration.");
         playback.Seek(3000);
-        await WaitFor(() => playback.Position > 3100 && playback.IsPlaying, () => failed);
+        await WaitFor(() => playback.Position > 3100 && playback.IsPlaying, () => failed, State);
         playback.Pause();
-        await WaitFor(() => !playback.IsPlaying, () => failed);
+        await WaitFor(() => !playback.IsPlaying, () => failed, State);
         playback.PlayLoaded();
-        await WaitFor(() => playback.IsPlaying, () => failed);
+        await WaitFor(() => playback.IsPlaying, () => failed, State);
     }
 
-    private static async Task WaitFor(Func<bool> ready, Func<bool> failed)
+    private static async Task WaitFor(Func<bool> ready, Func<bool> failed, Func<string> state)
     {
         var timer = Stopwatch.StartNew();
         while (!ready())
         {
             Assert.False(failed(), "The shipped LibVLC build rejected this format.");
-            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(12), "Native decoder state did not become ready.");
+            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(12), "Native decoder state did not become ready: " + state());
             await Task.Delay(25);
         }
     }

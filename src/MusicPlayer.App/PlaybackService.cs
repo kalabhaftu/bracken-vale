@@ -290,7 +290,9 @@ public sealed class PlaybackService : IDisposable
         {
             if (_disposed) return;
             CancelCrossfadeCore();
-            _active.Pause();
+            // Pause() toggles based on native playing state. A seek can briefly
+            // enter buffering, so a pause request must set the desired state.
+            _active.SetPause(true);
         }
     }
 
