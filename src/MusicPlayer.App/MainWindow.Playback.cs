@@ -411,19 +411,27 @@ public sealed partial class MainWindow : Window
         PublishPlaybackState();
     }
 
-    private void Playback_TrackEnded(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+    private void Playback_TrackEnded(object? sender, EventArgs e)
     {
-        if (!_playback.HasEnded) return;
-        if (_playback.IsVideoMode && _videoWindow?.RepeatCurrent == true && _playback.CurrentTrack is { } videoTrack)
+        if (!DispatcherQueue.TryEnqueue(() =>
         {
-            _playback.Seek(0);
-            _playback.PlayLoaded();
-            UpdateSystemMediaControls(videoTrack, true);
-            PublishPlaybackState();
-            return;
-        }
-        AdvanceQueue(true);
-    });
+            if (!_playback.HasEnded)
+            {
+                LocalAppLog.Shared.Info("playback", "End notification canceled because playback changed before the UI handled it.");
+                return;
+            }
+            if (_playback.IsVideoMode && _videoWindow?.RepeatCurrent == true && _playback.CurrentTrack is { } videoTrack)
+            {
+                _playback.Seek(0);
+                _playback.PlayLoaded();
+                UpdateSystemMediaControls(videoTrack, true);
+                PublishPlaybackState();
+                return;
+            }
+            AdvanceQueue(true);
+        }))
+            LocalAppLog.Shared.Warning("playback", "Could not dispatch the end-of-track notification to the UI thread.");
+    }
     private void Playback_CrossfadeCompleted(Track track) => DispatcherQueue.TryEnqueue(() =>
     {
         _crossfadeInProgress = false; _crossfadeFailureSource = null; _crossfadeSourceQueueIndex = null; _playbackListening.ResetForTrack();

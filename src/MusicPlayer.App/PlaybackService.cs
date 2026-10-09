@@ -301,16 +301,25 @@ public sealed class PlaybackService : IDisposable
 
     public void Seek(long positionMilliseconds)
     {
+        Track? endedTrack = null;
         lock (_gate)
         {
             if (_disposed) return;
             CancelCrossfadeCore();
-            _mediaGeneration++;
-            _trackEnded = false;
-            _restorePosition = 0;
-            var duration = _active.Length;
-            _active.Time = Math.Clamp(positionMilliseconds, 0, duration > 0 ? duration : long.MaxValue);
+            if (_trackEnded || _active.State == VLCState.Ended)
+                endedTrack = _currentTrack;
+            if (endedTrack is null)
+            {
+                _mediaGeneration++;
+                _trackEnded = false;
+                _restorePosition = 0;
+                var duration = _active.Length;
+                _active.Time = Math.Clamp(positionMilliseconds, 0, duration > 0 ? duration : long.MaxValue);
+            }
         }
+
+        if (endedTrack is not null)
+            LoadPaused(endedTrack, positionMilliseconds);
     }
 
     private async Task SeekAfterStartAsync(MediaPlayer player, long generation, long position)
@@ -569,36 +578,34 @@ public sealed class PlaybackService : IDisposable
 
     private void EndReached(object? sender, EventArgs e)
     {
-        bool ended = false;
-        long generation;
+        bool ended;
+        string reason;
         lock (_gate)
         {
-            generation = _mediaGeneration;
-            if (!_disposed && _handledEndReachedGeneration != generation && PlaybackEventPolicy.ShouldHandleEndReached(
-                    ReferenceEquals(sender, _active), _currentTrack is not null, currentStateIsEnded: true,
-                    crossfadePending: _crossfadeCancellation is not null))
+            var senderIsActive = ReferenceEquals(sender, _active);
+            var hasCurrentTrack = _currentTrack is not null;
+            var crossfadePending = _crossfadeCancellation is not null;
+            var duplicate = _handledEndReachedGeneration == _mediaGeneration;
+            ended = !_disposed && !duplicate && PlaybackEventPolicy.ShouldHandleEndReached(
+                senderIsActive, hasCurrentTrack, currentStateIsEnded: true, crossfadePending);
+            reason = _disposed ? "service disposed"
+                : duplicate ? "duplicate event for current media"
+                : !senderIsActive ? "event came from inactive player"
+                : !hasCurrentTrack ? "no current track"
+                : crossfadePending ? "crossfade is already advancing the queue"
+                : "accepted";
+
+            if (ended)
             {
-                _handledEndReachedGeneration = generation;
+                _handledEndReachedGeneration = _mediaGeneration;
                 _trackEnded = true;
-                ended = true;
             }
         }
 
-        // LibVLCSharp raises this on a native event thread. Do not query the
-        // player or run playback commands from that callback; EndReached itself
-        // is the authoritative signal that this media reached its end.
-        if (!ended) return;
-        var queued = ThreadPool.QueueUserWorkItem(_ =>
-        {
-            lock (_gate)
-                if (_disposed || _mediaGeneration != generation || _handledEndReachedGeneration != generation)
-                    return;
-
-            LocalAppLog.Shared.Info("playback", "LibVLC reported the current track ended; requesting the next queue item.");
-            TrackEnded?.Invoke(this, EventArgs.Empty);
-        });
-        if (!queued)
-            LocalAppLog.Shared.Warning("playback", "Could not queue the end-of-track notification from the LibVLC callback.");
+        LocalAppLog.Shared.Info("playback", $"LibVLC end event {(ended ? "accepted" : "ignored")}: {reason}.");
+        // The subscriber only posts work to the UI dispatcher. Queue advancement
+        // and all subsequent LibVLC calls therefore run after this native callback.
+        if (ended) TrackEnded?.Invoke(this, EventArgs.Empty);
     }
 
     private void EncounteredError(object? sender, EventArgs e)
