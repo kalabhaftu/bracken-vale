@@ -221,9 +221,10 @@ public sealed partial class MainWindow : Window
         finally { _externalFileActionGate.Release(); }
     }
 
-    private static async Task<IReadOnlyList<Track>> ReadExternalTracksAsync(IReadOnlyList<string> paths)
+    private async Task<IReadOnlyList<Track>> ReadExternalTracksAsync(IReadOnlyList<string> paths)
     {
-        var validPaths = paths.Where(path => LibraryScanner.IsSupportedAudioFile(path) && File.Exists(path)).ToArray();
+        var validPaths = paths.Where(path => (LibraryScanner.IsSupportedAudioFile(path) ||
+            _libraryLocations.IsVideoExtensionEnabled(path)) && File.Exists(path)).ToArray();
         if (validPaths.Length == 0) return [];
         var artworkDirectory = Path.Combine(MusicPlayer.Core.AppDataPaths.Root, "Artwork");
         return await Task.Run(() =>

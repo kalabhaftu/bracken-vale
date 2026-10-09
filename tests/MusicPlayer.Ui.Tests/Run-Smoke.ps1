@@ -16,6 +16,9 @@ if([MusicPlayerShellTest]::FindWindow('Shell_TrayWnd',$null) -eq [IntPtr]::Zero)
 }
 $music=Join-Path ([Environment]::GetFolderPath('MyMusic')) 'MusicPlayerSmoke'
 New-Item -ItemType Directory -Path $music -Force | Out-Null
+$videoFixture=Join-Path $env:MUSICPLAYER_MEDIA_FIXTURES 'fixture.mkv'
+if(!(Test-Path -LiteralPath $videoFixture)){throw 'The genuine video/subtitle fixture is required for UI validation.'}
+Copy-Item -LiteralPath $videoFixture -Destination (Join-Path $music 'MusicPlayerVideoSmoke.mkv') -Force
 foreach($name in @('A','B','C','D')) {
     $path=Join-Path $music "MusicPlayerSmoke-$name.wav"
     $writer=[IO.BinaryWriter]::new([IO.File]::Create($path))

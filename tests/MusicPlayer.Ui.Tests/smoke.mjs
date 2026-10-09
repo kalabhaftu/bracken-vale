@@ -34,6 +34,9 @@ function nativeWindow(action){
   const result=JSON.parse(execFileSync("powershell.exe",args,{encoding:"utf8"}));
   mainWindowHandle=result.handle;return result;
 }
+function videoControl(action,name="",value=0){
+  return JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Control-Video.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID,"-Action",action,"-Name",name,"-Value",String(value)],{encoding:"utf8"}));
+}
 async function navigate(view){
   if(view==="Settings"){await page.locator("#topMenuToggle").click();await page.locator('#topMenu [data-view="Settings"]').click();}
   else if(view==="Queue")await page.locator('.player [data-view="Queue"]').click();
@@ -61,6 +64,28 @@ await call("cancelScan");
 await until(async()=>!(await call("getBootstrap")).scan.active,"Scan cancellation did not complete");
 await call("updateSettings",{settings:{autoLoadLyrics:false,motionStyle:"Off"}});
 await call("setVolume",{volume:0});
+await call("setExtensionEnabled",{extension:".mkv",enabled:true,kind:"Video"});
+let video;
+await until(async()=>{
+  video=(await call("getTracks",{view:"Songs",pageSize:200})).tracks.find(track=>track.title==="MusicPlayerVideoSmoke");
+  return !!video;
+},"Enabled video fixture was not discovered",240000);
+await call("cancelScan");
+await call("playTrack",{id:video.id,view:"Songs"});
+await until(async()=>{const state=await call("getCurrentTrack");return state.playing&&state.isVideo;},"Installed video playback did not start");
+videoControl("Invoke","Pause");
+await until(async()=>!(await call("getCurrentTrack")).playing,"Video pause button failed");
+videoControl("Seek","",3);
+await until(async()=>Math.abs((await call("getCurrentTrack")).positionSeconds-3)<1,"Video seek slider failed");
+videoControl("Speed","1.5×");
+videoControl("Subtitle");
+videoControl("Invoke","Enter full screen (F11)");
+videoControl("Invoke","Exit full screen (Esc)");
+videoControl("Invoke","Play");
+await until(async()=>(await call("getCurrentTrack")).playing,"Video play button failed");
+videoControl("Invoke","Save a screenshot of the current frame");
+videoControl("Close");
+await until(async()=>!(await call("getCurrentTrack")).playing,"Closing video did not pause playback");
 await page.locator('#navigation [data-view="Songs"]').click();
 await until(async()=>await page.locator('#routeView tr[data-track]').count()>=4,"Saved songs did not render");
 const fixtureRows=await call("getTracks",{view:"Songs",pageSize:200});
@@ -114,6 +139,10 @@ for(let index=0;index<15;index++){
   }
   if(index%5===4)memorySamples.push(metrics());
 }
+// Compare the last two batches after route caches have warmed up. The bound
+// tolerates browser housekeeping while rejecting sustained per-navigation growth.
+const navigationMemoryGrowth=memorySamples.at(-1).PrivateBytes-memorySamples.at(-2).PrivateBytes;
+assert(navigationMemoryGrowth<32*1024*1024,"Combined native/WebView memory grew more than 32 MiB over the final 20 navigations");
 // Exercise native controls while the renderer is suspended. Only the disposable
 // runner receives window messages and a real Windows media-key input.
 await call("updateSettings",{settings:{minimizeToTray:true}});
@@ -142,7 +171,7 @@ const idleBefore=metrics();
 await new Promise(resolve=>setTimeout(resolve,5000));
 const idleAfter=metrics();
 await page.screenshot({path:`${output}/final-ui.png`,fullPage:true});
-await fs.writeFile(`${output}/results${process.argv.includes("--restart")?"-restart":""}.json`,JSON.stringify({usableViewMs,discoveredFixtures:fixtures.length,queueDragging:true,duplicateQueue:true,immersiveLyrics:true,repeatedNavigation:60,memorySamples,minimizedPlayback:{beforeMinimize,minimized,nativeAdvancement:true,tray:true,taskbar:true,mediaKey:true},pausedIdle:{before:idleBefore,after:idleAfter},errors},null,2));
+await fs.writeFile(`${output}/results${process.argv.includes("--restart")?"-restart":""}.json`,JSON.stringify({usableViewMs,discoveredFixtures:fixtures.length,installedVideo:{play:true,pause:true,seek:true,speed:true,embeddedSubtitle:true,fullscreen:true,screenshotCommand:true,closePauses:true},queueDragging:true,duplicateQueue:true,immersiveLyrics:true,repeatedNavigation:60,memorySamples,minimizedPlayback:{beforeMinimize,minimized,nativeAdvancement:true,tray:true,taskbar:true,mediaKey:true},pausedIdle:{before:idleBefore,after:idleAfter},errors},null,2));
 assert.deepEqual(errors,[],"WebUI raised JavaScript errors");
 console.log("Windows WebView UI smoke passed");
 await browser.close();

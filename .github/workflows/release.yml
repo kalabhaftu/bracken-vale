@@ -51,7 +51,7 @@ jobs:
           if ($preflightOnly -or $env:GITHUB_EVENT_NAME -eq 'push') {
             $commit = gh api "repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA" | ConvertFrom-Json
             if ($LASTEXITCODE -ne 0) { throw 'Could not obtain the release commit signature status.' }
-            if (-not $commit.commit.verification.verified -or $commit.commit.verification.reason -ne 'valid') {
+            if (-not $commit.commit.verification.verified -or $commit.commit.verification.reason -ne 'valid' -or $commit.committer.login -ne 'web-flow') {
               throw 'The final release revision must have a valid GitHub-verified commit signature. Merge the protected PR using GitHub squash merge.'
             }
             Write-Host "GitHub verified commit signature confirmed for $($commit.sha)."
@@ -358,6 +358,20 @@ jobs:
       - name: Install UI driver
         working-directory: tests/MusicPlayer.Ui.Tests
         run: npm install --ignore-scripts
+      - name: Restore validated media fixtures
+        id: media-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/media-fixtures
+          key: windows-media-${{ hashFiles('tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1') }}
+      - name: Prepare installed video fixture
+        shell: pwsh
+        run: |
+          if ('${{ steps.media-cache.outputs.cache-hit }}' -ne 'true') {
+            if (!(Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg --yes --no-progress }
+            & tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1
+          }
+          "MUSICPLAYER_MEDIA_FIXTURES=$PWD/artifacts/media-fixtures" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: music-player-upgrade-fixtures

@@ -229,7 +229,7 @@ internal static class Program
             try
             {
                 var fullPath = Path.GetFullPath(path);
-                if (File.Exists(fullPath) && LibraryScanner.IsSupportedAudioFile(fullPath) && seen.Add(fullPath)) result.Add(fullPath);
+                if (File.Exists(fullPath) && (LibraryScanner.IsSupportedAudioFile(fullPath) || LibraryScanner.IsVideoFile(fullPath)) && seen.Add(fullPath)) result.Add(fullPath);
             }
             catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or PathTooLongException)
             {

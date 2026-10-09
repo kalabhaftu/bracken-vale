@@ -98,6 +98,9 @@ internal sealed class VideoPlaybackWindow : Window
         timeline.Children.Add(_positionText);
         timeline.Children.Add(_position);
         timeline.Children.Add(_durationText);
+        AutomationProperties.SetName(_position, "Video position");
+        AutomationProperties.SetName(_volume, "Video volume");
+        AutomationProperties.SetName(_speed, "Playback speed");
         _details.Children.Add(timeline);
 
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center };
