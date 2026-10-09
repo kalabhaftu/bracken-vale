@@ -27,6 +27,7 @@ const call=(name,payload={})=>page.evaluate(async({name,payload})=>{
   const api=await import("/scripts/api.js");return api.command(name,payload);
 },{name,payload});
 function metrics(){return JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Measure-Processes.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID],{encoding:"utf8"}));}
+function nativeWindow(action){return JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Control-Window.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID,"-Action",action],{encoding:"utf8"}));}
 async function navigate(view){
   if(view==="Settings"){await page.locator("#topMenuToggle").click();await page.locator('#topMenu [data-view="Settings"]').click();}
   else if(view==="Queue")await page.locator('.player [data-view="Queue"]').click();
@@ -96,8 +97,32 @@ for(let index=0;index<15;index++){
   }
   if(index%5===4)memorySamples.push(metrics());
 }
+// Exercise native controls while the renderer is suspended. Only the disposable
+// runner receives window messages and a real Windows media-key input.
+await call("updateSettings",{settings:{minimizeToTray:true}});
+await call("playQueueEntry",{index:0});
+await until(async()=>(await call("getCurrentTrack")).playing,"Playback did not resume before minimize");
+await call("seek",{seconds:88});
+const beforeMinimize=metrics();
+assert.equal(nativeWindow("Minimize").visible,false,"Tray minimize did not hide the native window");
+await new Promise(resolve=>setTimeout(resolve,5000));
+const minimized=metrics();
+assert.equal(nativeWindow("TrayRestore").visible,true,"Tray activation did not restore the window");
+await until(async()=>(await call("getCurrentTrack")).queueIndex===1,"Native end-of-song advancement stopped while WebView was minimized");
+nativeWindow("TaskbarToggle");
+await until(async()=>!(await call("getCurrentTrack")).playing,"Taskbar thumbnail pause did not control playback");
+nativeWindow("TaskbarToggle");
+await until(async()=>(await call("getCurrentTrack")).playing,"Taskbar thumbnail play did not control playback");
+nativeWindow("MediaKey");
+await until(async()=>!(await call("getCurrentTrack")).playing,"Windows media key did not control native playback");
+await call("playQueueEntry",{index:0});
+await call("playPause");
+await until(async()=>!(await call("getCurrentTrack")).playing,"Final paused state did not settle");
+const idleBefore=metrics();
+await new Promise(resolve=>setTimeout(resolve,5000));
+const idleAfter=metrics();
 await page.screenshot({path:`${output}/final-ui.png`,fullPage:true});
-await fs.writeFile(`${output}/results${process.argv.includes("--restart")?"-restart":""}.json`,JSON.stringify({usableViewMs,discoveredFixtures:fixtures.length,queueDragging:true,duplicateQueue:true,immersiveLyrics:true,repeatedNavigation:60,memorySamples,errors},null,2));
+await fs.writeFile(`${output}/results${process.argv.includes("--restart")?"-restart":""}.json`,JSON.stringify({usableViewMs,discoveredFixtures:fixtures.length,queueDragging:true,duplicateQueue:true,immersiveLyrics:true,repeatedNavigation:60,memorySamples,minimizedPlayback:{beforeMinimize,minimized,nativeAdvancement:true,tray:true,taskbar:true,mediaKey:true},pausedIdle:{before:idleBefore,after:idleAfter},errors},null,2));
 assert.deepEqual(errors,[],"WebUI raised JavaScript errors");
 console.log("Windows WebView UI smoke passed");
 await browser.close();
