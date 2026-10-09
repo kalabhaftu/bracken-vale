@@ -420,6 +420,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Baseline publish failed.' }
           & packaging/windows/Prepare-PortablePackage.ps1 -PublishDirectory artifacts/baseline-publish -DestinationDirectory artifacts/baseline-package -Version baseline -Architecture x64
           Compress-Archive -LiteralPath artifacts/baseline-package -DestinationPath artifacts/baseline-portable.zip -CompressionLevel Optimal
+          dotnet publish artifacts/baseline-source/src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --runtime win-arm64 --self-contained true --output artifacts/baseline-arm64-publish -p:Platform=ARM64 -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 baseline publish failed.' }
+          & packaging/windows/Prepare-PortablePackage.ps1 -PublishDirectory artifacts/baseline-arm64-publish -DestinationDirectory artifacts/baseline-arm64-package -Version baseline -Architecture arm64
+          Compress-Archive -LiteralPath artifacts/baseline-arm64-package -DestinationPath artifacts/baseline-arm64-portable.zip -CompressionLevel Optimal
       - name: Authenticate and prepare the measured candidate
         shell: pwsh
         run: |
@@ -427,6 +431,9 @@ jobs:
           & packaging/windows/Verify-MusicPlayer-ReleaseManifest.ps1 -ManifestPath $manifest[0].FullName
           $candidate = @(Get-ChildItem artifacts -Filter '*-x64-portable.zip')
           Expand-Archive $candidate[0].FullName artifacts/measured-candidate
+          $arm = @(Get-ChildItem artifacts -Filter '*-arm64-portable.zip')
+          if ($arm.Count -ne 1) { throw 'Expected one ARM64 candidate archive.' }
+          Expand-Archive $arm[0].FullName artifacts/measured-arm64-candidate
       - name: Install UI driver
         working-directory: tests/MusicPlayer.Ui.Tests
         run: npm install --ignore-scripts
@@ -445,6 +452,14 @@ jobs:
           [pscustomobject]@{baseline='9759726';candidate=$env:GITHUB_SHA;beforeBytes=$before;afterBytes=$after;reduction=$saved;beforeZipBytes=$beforeZip;afterZipBytes=$afterZip;zipReduction=$zipSaved} | ConvertTo-Json | Set-Content artifacts/ui-evidence/performance/package-size.json
           if ($saved -lt 0.10) { throw 'The final candidate did not meet the 10% unpacked package-size target.' }
           if ($zipSaved -lt 0.10) { throw 'The final candidate did not meet the 10% downloadable package-size target.' }
+          $beforeArm = (Get-ChildItem artifacts/baseline-arm64-package -Recurse -File | Measure-Object Length -Sum).Sum
+          $afterArm = (Get-ChildItem artifacts/measured-arm64-candidate -Recurse -File | Measure-Object Length -Sum).Sum
+          $beforeArmZip = (Get-Item artifacts/baseline-arm64-portable.zip).Length
+          $afterArmZip = (@(Get-ChildItem artifacts -Filter '*-arm64-portable.zip')[0]).Length
+          $armSaved = 1 - $afterArm / $beforeArm
+          $armZipSaved = 1 - $afterArmZip / $beforeArmZip
+          [pscustomobject]@{baseline='9759726';candidate=$env:GITHUB_SHA;beforeBytes=$beforeArm;afterBytes=$afterArm;reduction=$armSaved;beforeZipBytes=$beforeArmZip;afterZipBytes=$afterArmZip;zipReduction=$armZipSaved} | ConvertTo-Json | Set-Content artifacts/ui-evidence/performance/package-size-arm64.json
+          if ($armSaved -lt 0.10 -or $armZipSaved -lt 0.10) { throw 'The ARM64 package did not meet both 10% size-reduction targets.' }
       - name: Upload comparative resource evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

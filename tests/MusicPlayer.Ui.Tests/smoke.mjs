@@ -80,7 +80,9 @@ await until(async()=>Math.abs((await call("getCurrentTrack")).positionSeconds-3)
 videoControl("Speed","1.5×");
 videoControl("Subtitle");
 videoControl("Invoke","Enter full screen (F11)");
-videoControl("Invoke","Exit full screen (Esc)");
+// Fullscreen deliberately hides the transport panel; exercise its documented
+// Escape accelerator rather than looking for the collapsed exit button.
+videoControl("Escape");
 videoControl("Invoke","Play");
 await until(async()=>(await call("getCurrentTrack")).playing,"Video play button failed");
 videoControl("Invoke","Save a screenshot of the current frame");

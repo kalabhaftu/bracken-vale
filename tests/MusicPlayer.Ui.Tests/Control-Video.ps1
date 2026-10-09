@@ -1,5 +1,5 @@
 param([Parameter(Mandatory=$true)][int] $AppProcessId,
-    [Parameter(Mandatory=$true)][ValidateSet('Inspect','Invoke','Subtitle','Seek','Speed','Close')][string] $Action,
+    [Parameter(Mandatory=$true)][ValidateSet('Inspect','Invoke','Subtitle','Seek','Speed','Escape','Close')][string] $Action,
     [string] $Name,[double] $Value)
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Video interaction tests require an isolated Windows runner.'}
@@ -13,6 +13,16 @@ public static class VideoWindowBounds {
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window,out Rect rect);
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr window,uint flags);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr monitor,ref MonitorInfo info);
+    [StructLayout(LayoutKind.Explicit,Size=40)] public struct Input {
+        [FieldOffset(0)] public uint Type;[FieldOffset(8)] public ushort Key;[FieldOffset(12)] public uint Flags;
+    }
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern uint SendInput(uint count,Input[] inputs,int size);
+    public static void Escape(IntPtr window) {
+        SetForegroundWindow(window);
+        var inputs=new[] {new Input {Type=1,Key=0x1B},new Input {Type=1,Key=0x1B,Flags=2}};
+        if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the video Escape key input.");
+    }
     public static bool Fullscreen(IntPtr window) {
         Rect rect;var info=new MonitorInfo {Size=Marshal.SizeOf(typeof(MonitorInfo))};
         if(!GetWindowRect(window,out rect)||!GetMonitorInfo(MonitorFromWindow(window,2),ref info))throw new InvalidOperationException("Could not inspect the video window bounds.");
@@ -85,6 +95,12 @@ switch($Action){
         }
         if($items.Count -eq 0){throw 'The embedded subtitle did not appear in the video menu.'}
         $items[0].GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+    }
+    Escape {
+        $handle=[IntPtr]$window.Current.NativeWindowHandle
+        [VideoWindowBounds]::Escape($handle)
+        for($attempt=0;$attempt -lt 30 -and [VideoWindowBounds]::Fullscreen($handle);$attempt++){Start-Sleep -Milliseconds 200}
+        if([VideoWindowBounds]::Fullscreen($handle)){throw 'Escape did not exit video fullscreen.'}
     }
     Close { $window.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close() }
 }

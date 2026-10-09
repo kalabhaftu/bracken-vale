@@ -49,6 +49,19 @@ The complete x64 UI run at `19577d5` recorded combined private memory of
 batches. The final 20 navigations grew by 757,760 bytes. Current UI checks enforce
 a 32 MiB limit over the final warmed batch and retain the raw samples.
 
+Private run [38000118310](https://github.com/kalabhaftu/music-player/actions/runs/38000118310)
+completed the x64 performance gate at `9c2f75c`. Unpacked size fell from
+336,530,333 to 289,367,981 bytes (14.0%); signed portable ZIP size fell from
+142,351,909 to 123,622,304 bytes (13.2%). Both exceed the 10% target.
+Visible library rows took 15,502 ms before / 4,744 ms after with 100 tracks,
+and 12,740 ms before / 7,961 ms after with 100,000 tracks. At the ten-second
+resource sample, combined private memory was 211,988,480 / 199,462,912 bytes
+for 100 tracks and 471,498,752 / 320,045,056 bytes for 100,000 tracks. The larger
+baseline was still scanning after cancellation, so its 7.234375 CPU-seconds
+must not be called idle CPU. The candidate scan had settled and consumed
+0.296875 CPU-seconds; the small settled samples consumed 0.53125 / 0.046875.
+Final main validation and the added ARM64 size comparison remain required.
+
 ## Remaining stable-release gates
 
 - [ ] Required `Core tests · Linux`, `x64`, and `ARM64` checks on the final candidate.
