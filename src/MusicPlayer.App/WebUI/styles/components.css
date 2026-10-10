@@ -196,7 +196,7 @@ button.lyric-line { cursor:pointer; }
 /* UI controls and column choices */
 .heart.on svg path { fill:currentColor; stroke:currentColor; }
 #repeatBtn { position:relative; }
-#repeatBtn .repeat-one { position:absolute; right:5px; bottom:3px; min-width:9px; height:9px; display:grid; place-items:center; border-radius:50%; background:currentColor; color:var(--bg); font-size:7px; line-height:1; font-weight:900; }
+#repeatBtn .repeat-one { position:absolute; z-index:1; right:1px; bottom:1px; width:12px; height:12px; display:grid; place-items:center; border:1px solid var(--player-surface); border-radius:50%; background:var(--accent); color:var(--accent-ink); font-size:8px; line-height:1; font-weight:900; }
 .song-table .play-count-col { width:76px; color:var(--muted); text-align:right; }
 .song-table.no-artwork .song-thumb { display:none; }
 .song-table.no-artists .song-info span { display:none; }
@@ -217,7 +217,6 @@ button.lyric-line { cursor:pointer; }
 .reset-choice small { margin-top:4px; color:var(--muted); font-size:10px; }
 .settings-panel #settings-library strong { color:var(--text); font-size:12px; }
 
-[data-theme="light"] #repeatBtn .repeat-one { color:#fff; }
 [data-theme="light"] .heart.on svg path { fill:currentColor; }
 .smart-playlist-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
 .smart-playlist { min-width:0; min-height:62px; display:flex; align-items:center; gap:11px; padding:8px 10px; border:0; border-radius:6px; background:#171917; color:var(--text); text-align:left; }

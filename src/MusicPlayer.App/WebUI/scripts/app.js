@@ -234,9 +234,6 @@ function setTheme(settings) {
     for(const [key,value] of Object.entries(colors))if(/^#[0-9a-f]{6}$/i.test(String(value||"")))root.style.setProperty(key,value);
   }
   document.documentElement.dataset.motion=String(settings?.motionStyle||"Subtle").toLowerCase();
-  const iconVariant=resolvedTheme==="light"?"light":settings?.accentMode==="Artwork"?"accent":"dark";
-  const brandLogo=$("#brandLogo");
-  if(brandLogo) brandLogo.src=`https://assets.musicplayer.local/MusicPlayer-${iconVariant}.png`;
   const nativeAccent=resolvedTheme==="light"?"#548c00":"#b7ff2d";
   const color=settings?.accentManual&&settings?.accentColor?settings.accentColor:settings?.accentMode==="Artwork"&&settings?.artworkAccent?settings.artworkAccent:nativeAccent;
   if(/^#[0-9a-f]{6}$/i.test(color)){
