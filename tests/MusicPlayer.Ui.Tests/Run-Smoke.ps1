@@ -28,6 +28,7 @@ if($startMenu -and $startMenu.ProcessName -eq 'StartMenuExperienceHost'){
     for($attempt=0;$attempt -lt 30 -and [MusicPlayerShellTest]::GetForegroundWindow() -eq $foreground;$attempt++){Start-Sleep -Milliseconds 100}
     if([MusicPlayerShellTest]::GetForegroundWindow() -eq $foreground){throw 'The disposable Start-menu overlay did not clear.'}
 }
+& (Join-Path $PSScriptRoot 'Close-DisposableWelcomeWindows.ps1')
 # Tray and thumbnail tests need Explorer in this disposable runner session.
 if([MusicPlayerShellTest]::FindWindow('Shell_TrayWnd',$null) -eq [IntPtr]::Zero){
     Start-Process explorer.exe -WindowStyle Hidden
