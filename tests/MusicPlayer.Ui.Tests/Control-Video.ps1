@@ -27,11 +27,17 @@ public static class VideoWindowBounds {
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window,uint flags);
+    public static IntPtr CoveringWindow(IntPtr window) {
+        Rect rect;
+        if(!GetWindowRect(window,out rect))throw new InvalidOperationException("Could not locate the video title bar.");
+        var point=new Point {X=rect.Left+(rect.Right-rect.Left)/2,Y=rect.Top+16};
+        return GetAncestor(WindowFromPoint(point),2);
+    }
     public static void Activate(IntPtr window) {
         Rect rect;
         if(!GetWindowRect(window,out rect))throw new InvalidOperationException("Could not locate the video title bar.");
         var point=new Point {X=rect.Left+(rect.Right-rect.Left)/2,Y=rect.Top+16};
-        var coveringWindow=GetAncestor(WindowFromPoint(point),2);
+        var coveringWindow=CoveringWindow(window);
         if(coveringWindow!=window) {
             var coveringTitle=new System.Text.StringBuilder(256);GetWindowText(coveringWindow,coveringTitle,coveringTitle.Capacity);
             throw new InvalidOperationException("The video title bar is covered by another window: "+coveringTitle+"; real input cannot activate it.");
@@ -101,8 +107,10 @@ switch($Action){
     Activate {
         # Windows first-login welcome UI can arrive after startup. Close only
         # that verified system dialog before testing a real title-bar click.
-        & (Join-Path $PSScriptRoot 'Close-DisposableWelcomeWindows.ps1') -AppProcessId $AppProcessId
-        [VideoWindowBounds]::Activate([IntPtr]$window.Current.NativeWindowHandle)
+        $handle=[IntPtr]$window.Current.NativeWindowHandle
+        $covering=[VideoWindowBounds]::CoveringWindow($handle)
+        & (Join-Path $PSScriptRoot 'Close-DisposableWelcomeWindows.ps1') -AppProcessId $AppProcessId -ObservedWindowHandle $covering.ToInt64()
+        [VideoWindowBounds]::Activate($handle)
     }
     Invoke {
         $invokedAt=[DateTime]::UtcNow

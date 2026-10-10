@@ -1,4 +1,4 @@
-param([int] $AppProcessId)
+param([int] $AppProcessId,[long] $ObservedWindowHandle)
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Welcome-window cleanup requires a disposable runner.'}
 $players=@(Get-Process MusicPlayer -ErrorAction SilentlyContinue)
@@ -16,24 +16,32 @@ using System.Runtime.InteropServices;
 using System.Text;
 public static class DisposableWelcomeWindow {
     delegate bool Callback(IntPtr window,IntPtr data);
-    [DllImport("user32.dll")] static extern bool EnumWindows(Callback callback,IntPtr data);
+    [DllImport("user32.dll")] static extern bool EnumDesktopWindows(IntPtr desktop,Callback callback,IntPtr data);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window,StringBuilder title,int count);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint id);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window,uint message,IntPtr wParam,IntPtr lParam);
-    public static IntPtr[] Find() {
-        var result=new List<IntPtr>();
-        EnumWindows((window,data)=>{
+    public static IntPtr[] Find(long observedWindow) {
+        var result=new HashSet<IntPtr>();
+        Action<IntPtr> consider=window=>{
             var title=new StringBuilder(256);GetWindowText(window,title,title.Capacity);
             if(IsWindowVisible(window)&&title.ToString()=="Microsoft account")result.Add(window);
+        };
+        // EnumWindows omits packaged Windows UI. Include the HWND observed at
+        // the blocked input location, still requiring the exact welcome title.
+        consider(new IntPtr(observedWindow));
+        consider(GetForegroundWindow());
+        EnumDesktopWindows(IntPtr.Zero,(window,data)=>{
+            consider(window);
             return true;
         },IntPtr.Zero);
-        return result.ToArray();
+        var handles=new IntPtr[result.Count];result.CopyTo(handles);return handles;
     }
 }
 '@
 for($attempt=0;$attempt -lt 12;$attempt++){
-    $visible=@([DisposableWelcomeWindow]::Find())
+    $visible=@([DisposableWelcomeWindow]::Find($ObservedWindowHandle))
     if($visible.Count -eq 0){return}
     foreach($handle in $visible){
         $ownerId=[uint32]0
