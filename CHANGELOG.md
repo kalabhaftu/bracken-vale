@@ -6,6 +6,7 @@ Changes to Music Player are documented here. The app name, executable, package i
 
 ## [1.0.0]
 
+- Use album artwork as the default accent for new profiles and appearance resets, preserving existing saved theme choices.
 - Fix Load more across library views, preserve complete album/artist/genre contents, and retain duplicate queue identities while paging.
 - Use independent music output buffers for crossfade, wait for incoming playback, and restore correctly on failure, pause or seek.
 - Prefer confident timed lyrics for display while preserving local lyrics and offline fallback; improve artwork contrast in both themes.
