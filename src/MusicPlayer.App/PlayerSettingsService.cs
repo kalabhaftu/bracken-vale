@@ -33,7 +33,7 @@ internal sealed class PlayerSettingsService(LibraryStore store)
         bool? Collapsed() => stored.TryGetValue("sidebar-collapsed", out var value) ? value switch { "true" => true, "false" => false, _ => null } : null;
         return new
         {
-            theme = Value("theme", "System"), accentMode = Value("accent-mode", "Native"), accentManual = On("accent-manual"),
+            theme = Value("theme", "System"), accentMode = Value("accent-mode", "Artwork"), accentManual = On("accent-manual"),
             resolvedTheme, accentColor = Value("accent-color", "#b7ff2d"), artworkAccent, artworkPalette,
             selectionColorMode = Value("selection-color-mode", "Theme"), selectionColor = Value("selection-color", "#b7ff2d"),
             transparentWindow = On("transparent-window"), windowTransparency = Value("window-transparency", "0"),
@@ -98,7 +98,7 @@ internal sealed class PlayerSettingsService(LibraryStore store)
         if (appearanceChanged)
         {
             store.SetSetting("theme", "System");
-            store.SetSetting("accent-mode", "Native");
+            store.SetSetting("accent-mode", "Artwork");
             store.SetSetting("accent-manual", "false");
             store.SetSetting("accent-color", "#b7ff2d");
             store.SetSetting("selection-color-mode", "Theme");

@@ -39,7 +39,7 @@ authenticates the checksum manifest. This is not publicly trusted signing:
 publisher/SmartScreen warnings and intentional MSIX certificate trust are
 documented in [SIGNING.md](../packaging/windows/SIGNING.md).
 
-## Verified candidate
+## Verified candidate before the final theme addition
 
 Tested code: `b1316ef0fa7d8063e32d4f81806cd23ffd2d5bc5`.
 
@@ -112,15 +112,26 @@ The separate backup bundle is also verified; its fingerprint is in
 [optimization-validation.md](optimization-validation.md). The local backup branch
 was removed after the complete candidate gates passed.
 
+## Final theme addition and merge checkpoint
+
+PR #2 was protected-squash-merged as `d12de43bc4c4c8df6223f611d01ab6b2575b87a5`.
+Its tree exactly matches the verified documentation candidate `5b5e830`.
+The completed shared commit `98c5460` subsequently makes Artwork the accent
+default only when a profile has no saved accent mode, and for explicit appearance
+resets. Existing Native/manual choices remain. The follow-up PR contains this
+small change and updated notes; its protected checks and final merged-revision
+signing/package gates are required before release.
+
 ## Remaining steps at this checkpoint
 
 - [x] Final code's required CI, core/native formats and complete portable UI.
 - [x] Complete signed setup/MSIX UI, upgrades, associations and both uninstall choices on x64/ARM64.
 - [x] Complete final before/after resource and package-size gates.
-- [ ] Protected squash merge PR #2; verify GitHub-created `web-flow` source signature.
+- [x] Protected squash merge PR #2; its validated files match the merged tree.
+- [ ] Pass final theme follow-up CI and protected merge; verify final `web-flow` signature.
 - [ ] Synchronize main; pass main signing preflight and full merged-revision package validation.
 - [x] Remove archived local backup branch after verified candidate gates.
 - [ ] Create `v1.0.0`; authenticate uploaded assets on CI before public release.
 
-At this checkpoint PR #2 is open and no stable tag or public release exists.
+At this checkpoint PR #2 is merged and no stable tag or public release exists.
 The [release process](release.md) requires every remaining gate before publication.
