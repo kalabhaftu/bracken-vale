@@ -591,7 +591,7 @@ public sealed partial class LibraryStore
         var safeColumn = column switch { "album" => "album", "artist" => "artist", "genre" => "genre", _ => throw new ArgumentOutOfRangeException(nameof(column)) };
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT DISTINCT {safeColumn} FROM tracks WHERE {safeColumn} <> '' ORDER BY {safeColumn} COLLATE NOCASE";
+        command.CommandText = $"SELECT DISTINCT {safeColumn} FROM tracks WHERE {VisibleGroupPredicate(safeColumn)} ORDER BY {safeColumn} COLLATE NOCASE,{safeColumn}";
         using var reader = command.ExecuteReader();
         var values = new List<string>();
         while (reader.Read()) values.Add(reader.GetString(0));
@@ -610,7 +610,7 @@ public sealed partial class LibraryStore
         var match = BuildColumnSearchPredicate(safeColumn, terms, "$groupSearch");
         using var connection = Open(); using var command = connection.CreateCommand();
         using var cancellation = cancellationToken.Register(command.Cancel);
-        command.CommandText = $"SELECT {safeColumn},COUNT(*),MIN(artwork_path),MIN(artist),MIN(year) FROM tracks WHERE {safeColumn}<>'' AND {match} GROUP BY {safeColumn} ORDER BY {safeColumn} COLLATE NOCASE LIMIT $limit OFFSET $offset";
+        command.CommandText = $"SELECT {safeColumn},COUNT(*),MIN(artwork_path),MIN(artist),MIN(year) FROM tracks WHERE {VisibleGroupPredicate(safeColumn)} AND {match} GROUP BY {safeColumn} ORDER BY {safeColumn} COLLATE NOCASE,{safeColumn} LIMIT $limit OFFSET $offset";
         BindColumnSearch(command, terms, "$groupSearch");
         Add(command, "$limit", pageSize); Add(command, "$offset", offset);
         using var reader = command.ExecuteReader();
@@ -632,19 +632,22 @@ public sealed partial class LibraryStore
         var match = BuildColumnSearchPredicate(safeColumn, terms, "$groupSearch");
         using var connection = Open(); using var command = connection.CreateCommand();
         using var cancellation = cancellationToken.Register(command.Cancel);
-        command.CommandText = $"SELECT COUNT(DISTINCT {safeColumn}) FROM tracks WHERE {safeColumn}<>'' AND {match}";
+        command.CommandText = $"SELECT COUNT(DISTINCT {safeColumn}) FROM tracks WHERE {VisibleGroupPredicate(safeColumn)} AND {match}";
         BindColumnSearch(command, terms, "$groupSearch");
         var count = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
         cancellationToken.ThrowIfCancellationRequested();
         return count;
     }
 
+    private static string VisibleGroupPredicate(string column) =>
+        $"trim({column})<>'' AND lower(trim({column})) NOT IN ('undefined','null')";
+
     public IReadOnlyList<LibraryGroup> GetArtistAlbumsPage(string artist, int offset = 0, int pageSize = 50)
     {
         if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
         if (pageSize is < 1 or > 200) throw new ArgumentOutOfRangeException(nameof(pageSize));
         using var connection = Open(); using var command = connection.CreateCommand();
-        command.CommandText = "SELECT album,COUNT(*),MIN(artwork_path),MIN(album_artist),MIN(year) FROM tracks WHERE album<>'' AND artist=$artist GROUP BY album ORDER BY album COLLATE NOCASE LIMIT $limit OFFSET $offset";
+        command.CommandText = $"SELECT album,COUNT(*),MIN(artwork_path),MIN(album_artist),MIN(year) FROM tracks WHERE {VisibleGroupPredicate("album")} AND artist=$artist GROUP BY album ORDER BY album COLLATE NOCASE,album LIMIT $limit OFFSET $offset";
         Add(command, "$artist", artist); Add(command, "$limit", pageSize); Add(command, "$offset", offset);
         using var reader = command.ExecuteReader(); var groups = new List<LibraryGroup>(pageSize);
         while (reader.Read()) groups.Add(new(reader.GetString(0), reader.GetInt32(1), reader.IsDBNull(2) ? null : reader.GetString(2),

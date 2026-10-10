@@ -252,7 +252,7 @@ function applyNavigationSettings(settings=state.settings) {
 }
 
 const libraryViews = createLibraryViews({state,$,$$,svg,paintIcons,esc,initials,cover,titleOf,subOf,fmtDuration,bytesLabel,call,toast,setTheme,applyNavigationSettings,openModal,updatePlayer,updatePanel,ensureLyricsLoaded,lyricLinesMarkup});
-const {trackRow,songTable,card,cardGrid,section,viewHeader,toolbar,navigate,renderView,renderHome,renderSearch,viewFilter,renderTracksView,renderGroupsView,renderFolders,renderPlaylists,renderPlaylistDetail,renderGroupDetail,renderQueue,renderNowPlaying,renderLyrics,renderAudio,renderSettings,navigationSettingsMarkup,renderDuplicates,openDuplicateFiles}=libraryViews;
+const {trackRow,songTable,card,cardGrid,section,viewHeader,toolbar,navigate,renderView,loadMore,loadArtistAlbums,renderHome,renderSearch,viewFilter,renderTracksView,renderGroupsView,renderFolders,renderPlaylists,renderPlaylistDetail,renderGroupDetail,renderQueue,renderNowPlaying,renderLyrics,renderAudio,renderSettings,navigationSettingsMarkup,renderDuplicates,openDuplicateFiles}=libraryViews;
 function openModal(title, body, actions) { delete $("#modalLayer").dataset.lyricsSearchToken; state.modal = { title, body, actions }; $("#modalTitle").textContent = title; $("#modalBody").innerHTML = body; $("#modalActions").innerHTML = actions || `<button class="action" data-modal-close>Close</button>`; $("#modalLayer").hidden = false; paintIcons($("#modalLayer")); $$("#modalBody input,#modalBody textarea")[0]?.focus(); }
 function closeModal() { delete $("#modalLayer").dataset.lyricsSearchToken; $("#modalLayer").hidden = true; state.modal = null; }
 function askConfirm(title,message,confirmLabel,action) { openModal(title,`<p>${esc(message)}</p>`,`<button class="action" data-modal-close>Cancel</button><button class="action ${confirmLabel.toLowerCase().includes("delete")?"danger":"primary"}" data-confirm="${esc(action)}">${esc(confirmLabel)}</button>`); }
@@ -366,9 +366,9 @@ async function action(name,el) {
     case "export-logs": await call("exportLogs"); break;
     case "toggle-mute": await toggleMute(); break;
     case "reset-ui": openUiResetDialog(); break;
-    case "load-more": el.closest(".load-more")?.remove(); if(state.view==="Queue"){state.offset+=200;await renderView(true);}else{state.offset+=state.pageSize;if(["Albums","Artists","Genres"].includes(state.view)) await renderGroupsView(true); else await renderView(true);} break;
-    case "load-artist-albums": {const page=await call("getArtistAlbums",{artist:state.group?.name||"",offset:state.artistAlbumsOffset||0,pageSize:30}),groups=page.groups||[];state.artistAlbumItems=[...(state.artistAlbumItems||[]),...groups];state.artistAlbumsOffset=(state.artistAlbumsOffset||0)+groups.length;if(groups.length)$("#artistAlbumsGrid")?.insertAdjacentHTML("beforeend",groups.map(item=>card(item,"album")).join(""));state.artistAlbumsHaveMore=groups.length===30;if(!state.artistAlbumsHaveMore)el.remove();break;}
-    case "load-folders": el.closest(".load-more")?.remove(); await renderView(true); break;
+    case "load-more": await loadMore(el); break;
+    case "load-artist-albums": await loadArtistAlbums(el); break;
+    case "load-folders": await loadMore(el); break;
     case "direction": state.descending=!state.descending; state.offset=0; await renderView(); break;
     case "search-page": {const kind=el.dataset.type;state.searchPages[kind]=Math.max(0,(state.searchPages[kind]||0)+Number(el.dataset.direction||0));await renderView();break;}
     case "retry-search": state.searchQuery="";state.searchResults={};await renderView();break;

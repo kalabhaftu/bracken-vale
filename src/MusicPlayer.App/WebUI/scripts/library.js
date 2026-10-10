@@ -2,6 +2,7 @@ import { lyricLinesMarkup } from "./lyrics.js";
 
 export function createLibraryViews({state,$,$$,svg,paintIcons,esc,initials,cover,titleOf,subOf,fmtDuration,bytesLabel,call,toast,setTheme,applyNavigationSettings,openModal,updatePlayer,updatePanel,ensureLyricsLoaded,lyricLinesMarkup:renderLyricLines=lyricLinesMarkup}) {
 let renderRevision=0;
+let pageLoad=null;
 let searchRevision=0;
 let searchRequestSerial=0;
 function nextSearchRequestId(){return Date.now()*1000+(++searchRequestSerial%1000);}
@@ -67,11 +68,11 @@ async function navigate(view,push=true,query=undefined) {
   await renderView();
 }
 
-async function renderView(append=false) {
+async function renderView(append=false,previousButton=null) {
   const revision=++renderRevision;
   const requestedView=state.view;
   const root=$("#routeView");
-  if(!append) root.innerHTML=`<div class="empty-state"><b>Loading your library</b></div>`;
+  if(!append) {state.offset=0;state.nextOffset=0;pageLoad=null;root.innerHTML=`<div class="empty-state"><b>Loading your library</b></div>`;}
   try {
     let html="";
     switch(state.view) {
@@ -91,10 +92,42 @@ async function renderView(append=false) {
       case "Duplicates": html=await renderDuplicates(); break;
       default: html=await renderHome();
     }
-    if(revision!==renderRevision||requestedView!==state.view||html==null)return;
-    if(append) root.insertAdjacentHTML("beforeend",html); else root.innerHTML=html;
+    if(revision!==renderRevision||requestedView!==state.view||html==null)return false;
+    if(append) {if(previousButton){previousButton.insertAdjacentHTML("beforebegin",html);previousButton.remove();}else root.insertAdjacentHTML("beforeend",html);} else root.innerHTML=html;
     paintIcons(root); updatePanel(); updatePlayer();
-  } catch (error) { if(revision===renderRevision&&requestedView===state.view&&!append) root.innerHTML=`<div class="empty-state"><b>Could not load this view</b>${esc(error.message)}</div>`; }
+    return true;
+  } catch (error) { if(revision===renderRevision&&requestedView===state.view) {if(append)toast(`Could not load more: ${error.message}`);else root.innerHTML=`<div class="empty-state"><b>Could not load this view</b>${esc(error.message)}</div>`;}return false; }
+}
+
+async function loadMore(button) {
+  if(button.disabled||pageLoad)return false;
+  const previousOffset=state.offset;
+  const request={revision:renderRevision+1};pageLoad=request;
+  button.disabled=true;button.setAttribute("aria-busy","true");
+  state.offset=state.nextOffset;
+  try {
+    const loaded=await renderView(true,button);
+    if(!loaded&&request.revision===renderRevision)state.offset=previousOffset;
+    return loaded;
+  } finally {if(pageLoad===request)pageLoad=null;button.disabled=false;button.removeAttribute("aria-busy");}
+}
+
+async function loadArtistAlbums(button) {
+  if(button.disabled)return;
+  const revision=renderRevision,group=state.group;
+  button.disabled=true;button.setAttribute("aria-busy","true");
+  try {
+    const page=await call("getArtistAlbums",{artist:group?.name||"",offset:state.artistAlbumsOffset||0,pageSize:30});
+    if(revision!==renderRevision||group!==state.group||state.view!=="Artist")return;
+    const groups=page.groups||[];
+    state.artistAlbumItems=[...(state.artistAlbumItems||[]),...groups];
+    state.artistAlbumsOffset=(state.artistAlbumsOffset||0)+groups.length;
+    if(groups.length)$("#artistAlbumsGrid")?.insertAdjacentHTML("beforeend",groups.map(item=>card(item,"album")).join(""));
+    state.artistAlbumsHaveMore=page.hasMore===true;
+    if(!state.artistAlbumsHaveMore)button.remove();
+    paintIcons($("#artistAlbumsGrid"));
+  } catch(error) {if(revision===renderRevision)toast(`Could not load more albums: ${error.message}`);}
+  finally {button.disabled=false;button.removeAttribute("aria-busy");}
 }
 
 async function renderHome() {
@@ -134,9 +167,9 @@ async function renderSearch() {
   if(state.searchQuery!==query){state.searchQuery=query;state.searchPages={songs:0,albums:0,artists:0,playlists:0};state.searchResults={};}
   const definitions={songs:{filter:"song",label:"Songs",kind:"track",pageSize:40},albums:{filter:"album",label:"Albums",kind:"album",pageSize:24},artists:{filter:"artist",label:"Artists",kind:"artist",pageSize:24},playlists:{filter:"playlist",label:"Playlists",kind:"playlist",pageSize:20}};
   const selected=filter==="all"?Object.keys(definitions):[{song:"songs",album:"albums",artist:"artists",playlist:"playlists"}[filter]].filter(Boolean);
-  const pages=await Promise.all(selected.map(async key=>{const def=definitions[key],page=state.searchPages[key]||0;try{const result=await call("search",{query,filter:def.filter,offset:page*def.pageSize,pageSize:def.pageSize,requestId},false);if(!result||!Array.isArray(result.items))throw new Error("The library returned an invalid search response.");return [key,result];}catch(error){return [key,{error:error.message||"Search failed."}];}}));
+  const pages=await Promise.all(selected.map(async key=>{const def=definitions[key];let page=state.searchPages[key]||0;try{let result=await call("search",{query,filter:def.filter,offset:page*def.pageSize,pageSize:def.pageSize,requestId},false);if(!result||!Array.isArray(result.items))throw new Error("The library returned an invalid search response.");const lastPage=Math.max(0,Math.ceil((result.totalCount||0)/def.pageSize)-1);if(page>lastPage){page=lastPage;result=await call("search",{query,filter:def.filter,offset:page*def.pageSize,pageSize:def.pageSize,requestId},false);if(!result||!Array.isArray(result.items))throw new Error("The library returned an invalid search response.");}return [key,result,page];}catch(error){return [key,{error:error.message||"Search failed."}];}}));
   if(requestRevision!==searchRevision||query!==state.search.trim()||filter!==state.filter||state.view!=="Search")return null;
-  for(const [key,data] of pages)if(!data.error)state.searchResults[key]=data;
+  for(const [key,data,page] of pages)if(!data.error){state.searchResults[key]=data;state.searchPages[key]=page;}
   html+=`<div class="pill-row">${["all","song","album","artist","playlist"].map(f=>`<button class="chip ${filter===f?"active":""}" data-filter="${f}">${f==="all"?"All":`${f[0].toUpperCase()}${f.slice(1)}s`}</button>`).join("")}</div>`;
   let any=false;
   const failures=[];
@@ -160,12 +193,13 @@ async function renderTracksView(append=false) {
   const page=await call("getTracks",{view:state.view,search:state.search,sort:state.sort,descending:state.descending,offset:state.offset,pageSize:state.pageSize});
   if(revision!==renderRevision)return null;
   const pageTracks=page.tracks||[];const previousCount=append?state.items.length:0;
-  state.total=page.totalCount||0; state.items=append?[...state.items,...pageTracks]:pageTracks;
+  state.total=page.totalCount||0; state.items=append?[...state.items,...pageTracks]:pageTracks;state.nextOffset=state.offset+pageTracks.length;
+  if(append&&!pageTracks.length)return "";
   const subtitle=`${Number(state.total).toLocaleString()} ${state.view==="Videos"?"videos":"tracks"}`;
   const sorts=["Title","Artist","Album","Genre","Year","Added","Duration","PlayCount","LastPlayed","Path","Rating",...(state.videoSupportEnabled?["Type"]:[])];
   let html=append?"":viewHeader(state.view,subtitle,`<button class="action" data-action="play-view">Play all</button><button class="action" data-action="shuffle-view">Shuffle</button>`)+toolbar(`<label class="muted">Sort</label><select class="select" id="sortSelect">${sorts.map(x=>`<option ${state.sort===x?"selected":""}>${x}</option>`).join("")}</select><button class="action" data-action="direction">${state.descending?"Descending":"Ascending"}</button>`);
   html+=songTable(append?pageTracks:state.items,previousCount);
-  if(state.items.length<state.total) html+=`<button class="action load-more" data-action="load-more">Load more tracks</button>`;
+  if(state.nextOffset<state.total&&pageTracks.length) html+=`<button class="action load-more" data-action="load-more">Load more tracks</button>`;
   return html;
 }
 
@@ -177,19 +211,21 @@ async function renderGroupsView(append=false) {
   const pageGroups=(data.groups||[]).filter(item=>{
     const label=String(item?.name??item?.title??"").trim();
     return !!label&&!/^(?:undefined|null)$/i.test(label);
-  });state.total=data.totalCount||0; state.items=append?[...state.items,...pageGroups]:pageGroups;
-  const html=(append?"":viewHeader(state.view,`${Number(state.total).toLocaleString()} ${state.view.toLowerCase()}`))+cardGrid(append?pageGroups:state.items,column)+ (state.items.length<state.total?`<button class="action load-more" data-action="load-more">Load more</button>`:"");
+  });state.total=data.totalCount||0; state.items=append?[...state.items,...pageGroups]:pageGroups;state.nextOffset=state.offset+(data.groups||[]).length;
+  if(append&&!pageGroups.length)return state.nextOffset<state.total&&(data.groups||[]).length?`<button class="action load-more" data-action="load-more">Load more</button>`:"";
+  const html=(append?"":viewHeader(state.view,`${Number(state.total).toLocaleString()} ${state.view.toLowerCase()}`))+cardGrid(append?pageGroups:state.items,column)+ (state.nextOffset<state.total&&(data.groups||[]).length?`<button class="action load-more" data-action="load-more">Load more</button>`:"");
   return html;
 }
 
 async function renderFolders(append=false) {
-  const revision=renderRevision;const offset=append?(state.folderOffset||0)+50:0;const data=await call("getFolders",{offset,pageSize:50});if(revision!==renderRevision)return null;const roots=data.roots||[];const status=data.scan||null;
-  state.folderItems=append?[...(state.folderItems||[]),...(data.folders||[])]:data.folders||[];state.folderOffset=data.folderOffset||0;state.folderCount=data.folderCount||0;
-  if(append)return cardGrid(state.folderItems.slice(-50),"folder")+(state.folderOffset+50<state.folderCount?`<button class="action load-more" data-action="load-folders">Load more folders</button>`:"");
+  const revision=renderRevision;const offset=state.offset;const data=await call("getFolders",{offset,pageSize:50});if(revision!==renderRevision)return null;const roots=data.roots||[];const status=data.scan||null;
+  const pageFolders=data.folders||[];state.folderItems=append?[...(state.folderItems||[]),...pageFolders]:pageFolders;state.nextOffset=offset+pageFolders.length;state.folderOffset=data.folderOffset||0;state.folderCount=data.folderCount||0;
+  if(append&&!pageFolders.length)return "";
+  if(append)return cardGrid(pageFolders,"folder")+(state.nextOffset<state.folderCount&&pageFolders.length?`<button class="action load-more" data-action="load-folders">Load more folders</button>`:"");
   return viewHeader("Music folders","Choose where Music Player should look for supported media.",`<button class="action primary" data-action="add-folder">＋ Add folder</button><button class="action" data-action="scan">Scan now</button><button class="action" data-action="rebuild-index" title="Read file metadata again and reconcile missing tracks">Rebuild index</button><button class="action" data-action="manage-roots">Manage folders</button><button class="action" data-action="manage-exclusions">Scan exclusions</button>`)
     +`<div class="folder-row scan-status" id="folderScanStatus" ${status?.active?"":"hidden"}><span class="scan-dot"></span><div><b id="folderScanTitle">${status?.paused?"Scan paused":"Scanning library"}</b><span id="folderScanDetails">${esc(status?.currentPath||"")} · ${status?.filesFound||0} tracks · ${status?.directoriesVisited||0} folders</span></div></div>`
     +`<section class="section"><div class="section-head"><h2>Indexed folders</h2><span class="muted">${Number(state.folderCount).toLocaleString()}</span></div>${cardGrid(state.folderItems,"folder")}</section>`
-    +(state.folderOffset+50<state.folderCount?`<button class="action load-more" data-action="load-folders">Load more folders</button>`:"")
+    +(state.nextOffset<state.folderCount&&pageFolders.length?`<button class="action load-more" data-action="load-folders">Load more folders</button>`:"")
     +`<section class="section"><div class="section-head"><h2>Library roots</h2><button data-action="manage-roots">Manage</button></div><div class="folder-grid">${roots.map(root=>{const available=root.available!==false&&root.status!=="Unavailable";return `<div class="folder-row ${available?"":"folder-unavailable"}"><div class="folder-icon"></div><div style="min-width:0;flex:1"><b title="${esc(root.path)}">${esc(root.name||root.path)}</b><span>${esc(root.path)} · ${Number(root.trackCount||0).toLocaleString()} tracks · ${available?"Available":"Unavailable"}</span>${available?"":`<small class="folder-warning">Reconnect this drive, then rescan the library.</small>`}</div><button class="action" data-action="remove-root" data-path="${esc(root.path)}">Remove</button></div>`;}).join("")}</div>${roots.length?"":`<div class="empty-state"><b>No music folders added</b>Add a folder to build your local library.</div>`}</section>`;
 }
 
@@ -205,9 +241,10 @@ async function renderPlaylistDetail(append=false) {
   if(!state.playlist) return renderPlaylists();
   const revision=renderRevision;const playlist=state.playlist;
   const page=await call("getPlaylistTracks",{playlistId:playlist.id,search:state.search,offset:state.offset,pageSize:state.pageSize});if(revision!==renderRevision)return null;
-  state.total=page.totalCount||0; state.items=page.tracks||[];
-  const listing=state.items.length?songTable(state.items,state.offset):`<div class="empty-state"><b>${state.search?"No tracks match this search":"This playlist is empty"}</b>${state.search?"Try another title, artist, or album.":"Add tracks from your library to get started."}</div>`;
-  const pageContent=listing+(state.offset+state.items.length<state.total?`<button class="action load-more" data-action="load-more">Load more tracks</button>`:"");
+  const pageTracks=page.tracks||[],previousCount=append?state.items.length:0;state.total=page.totalCount||0;state.items=append?[...state.items,...pageTracks]:pageTracks;state.nextOffset=state.offset+pageTracks.length;
+  if(append&&!pageTracks.length)return "";
+  const listing=pageTracks.length?songTable(pageTracks,previousCount):`<div class="empty-state"><b>${state.search?"No tracks match this search":"This playlist is empty"}</b>${state.search?"Try another title, artist, or album.":"Add tracks from your library to get started."}</div>`;
+  const pageContent=listing+(state.nextOffset<state.total&&pageTracks.length?`<button class="action load-more" data-action="load-more">Load more tracks</button>`:"");
   return append?pageContent:viewHeader(state.playlist.name,`${Number(state.total).toLocaleString()} ${state.search?"matching ":""}tracks`,toolbar(`<button class="action primary" data-action="play-playlist">Play</button><button class="action" data-action="shuffle-playlist">Shuffle</button><button class="action" data-action="rename-playlist">Rename</button><button class="action" data-action="export-playlist">Export</button><button class="action danger" data-action="delete-playlist">Delete</button>`))+pageContent;
 }
 
@@ -217,20 +254,22 @@ async function renderGroupDetail(append=false) {
   const detailDescending=group.column==="artist"?true:group.column==="album"?false:state.descending;
   const page=await call("getTracks",{view:state.view,groupColumn:group.column,groupValue:group.name,offset:state.offset,pageSize:state.pageSize,sort:detailSort,descending:detailDescending});
   if(revision!==renderRevision)return null;
-  const pageTracks=page.tracks||[],previousCount=append?state.items.length:0;state.total=page.totalCount||0;state.items=append?[...state.items,...pageTracks]:pageTracks;
-  const sample=state.items[0]||group;let albums=[];if(group.column==="artist"&&!append){const a=await call("getArtistAlbums",{artist:group.name,offset:0,pageSize:30});if(revision!==renderRevision)return null;albums=a.groups||[];state.artistAlbumItems=albums;state.artistAlbumsOffset=albums.length;state.artistAlbumsHaveMore=albums.length===30;}
+  const pageTracks=page.tracks||[],previousCount=append?state.items.length:0;state.total=page.totalCount||0;state.items=append?[...state.items,...pageTracks]:pageTracks;state.nextOffset=state.offset+pageTracks.length;
+  if(append&&!pageTracks.length)return "";
+  const sample=state.items[0]||group;let albums=[];if(group.column==="artist"&&!append){const a=await call("getArtistAlbums",{artist:group.name,offset:0,pageSize:30});if(revision!==renderRevision)return null;albums=a.groups||[];state.artistAlbumItems=albums;state.artistAlbumsOffset=albums.length;state.artistAlbumsHaveMore=a.hasMore===true;}
   const tracksTitle=group.column==="artist"?"Popular tracks":"Tracks";
-  if(append)return songTable(pageTracks,previousCount)+(state.items.length<state.total?`<button class="action load-more" data-action="load-more">Load more tracks</button>`:"");
+  if(append)return songTable(pageTracks,previousCount)+(state.nextOffset<state.total&&pageTracks.length?`<button class="action load-more" data-action="load-more">Load more tracks</button>`:"");
   const albumSection=albums.length?`<section class="section"><div class="section-head"><h2>Albums</h2></div><div class="card-grid" id="artistAlbumsGrid">${albums.map(item=>card(item,"album")).join("")}</div>${state.artistAlbumsHaveMore?`<button class="action load-more" data-action="load-artist-albums">More albums</button>`:""}</section>`:"";
-  const tracksMore=state.items.length<state.total?`<button class="action load-more" data-action="load-more">Load more tracks</button>`:"";
+  const tracksMore=state.nextOffset<state.total&&pageTracks.length?`<button class="action load-more" data-action="load-more">Load more tracks</button>`:"";
   return `<div class="detail-hero">${cover({...sample,name:group.name,album:group.column==="album"?group.name:sample.album,artist:group.column==="artist"?group.name:sample.artist},group.column==="artist"?"round":"")}<div><div class="eyebrow">${esc(group.column)}</div><h1>${esc(group.name)}</h1><p>${Number(state.total).toLocaleString()} tracks${sample.year?` · ${sample.year}`:""}</p><div class="toolbar"><button class="action primary" data-action="play-view">Play</button><button class="action" data-action="shuffle-view">Shuffle</button></div></div></div>${albumSection}<section class="section"><div class="section-head"><h2>${tracksTitle}</h2></div>${songTable(state.items)}${tracksMore}</section>`;
 }
 
 async function renderQueue(append=false) {
-  const revision=renderRevision;const data=await call("getQueue",{offset:state.offset,pageSize:200});if(revision!==renderRevision)return null; state.queueItems=data.entries||[]; state.queuePageOffset=state.offset; state.queueTotal=data.totalCount||0; state.queueIndex=data.queueIndex??-1;
+  const revision=renderRevision;const data=await call("getQueue",{offset:state.offset,pageSize:200});if(revision!==renderRevision)return null; state.queueItems=data.entries||[]; state.queuePageOffset=state.offset; state.queueTotal=data.totalCount||0; state.queueIndex=data.queueIndex??-1;state.nextOffset=state.offset+state.queueItems.length;
+  if(append&&!state.queueItems.length)return "";
   let html=append?"":viewHeader("Queue",`${state.queueTotal} queued tracks`,toolbar(`<button class="action" data-action="clear-queue">Clear upcoming</button>`));
   html+=state.queueItems.length?`<div class="table-wrap"><table class="song-table queue-table"><thead><tr><th class="index">#</th><th>Title</th><th class="queue-actions-col">Actions</th></tr></thead><tbody>${state.queueItems.map((t,i)=>{const index=state.queuePageOffset+i;const current=index===state.queueIndex;const subtitle=t.fileUnavailable?(t.artist==="Unavailable"?"File unavailable":`${t.artist} · File unavailable`):t.artist;return `<tr data-queue-index="${index}" data-context="track" data-context-id="${esc(t.id)}" tabindex="0" aria-label="Play ${esc(t.title)}${current?", currently playing":""}" ${current?'aria-current="true"':""} class="queue-track-row ${current?"queue-current":""} ${t.fileUnavailable?"unavailable-track":""}"><td class="index">${current?"▶":index+1}</td><td><div class="song-cell">${cover(t,"song-thumb")}<div class="song-info"><b>${esc(t.title)}</b><span>${esc(subtitle)}</span></div></div></td><td class="queue-actions-col"><div class="queue-actions"><button class="ctrl queue-action" data-action="play-queue" data-index="${index}" title="Play queue entry" aria-label="Play queue entry">▶</button><button class="ctrl queue-action queue-drag-handle" data-queue-drag="${index}" title="Drag to reorder" aria-label="Drag to reorder queue entry" ${index<=state.queueIndex?"disabled":""}>⠿</button><button class="ctrl queue-action" data-action="queue-remove" data-index="${index}" title="Remove" aria-label="Remove from queue">×</button></div></td></tr>`;}).join("")}</tbody></table></div>`:`<div class="empty-state"><b>Queue is empty</b>Songs you add will appear here.</div>`;
-  if(state.queuePageOffset+state.queueItems.length<state.queueTotal) html+=`<button class="action load-more" data-action="load-more">Load more queued tracks</button>`;
+  if(state.nextOffset<state.queueTotal&&state.queueItems.length) html+=`<button class="action load-more" data-action="load-more">Load more queued tracks</button>`;
   return html;
 }
 
@@ -289,7 +328,7 @@ async function renderSettings() {
     const releaseRows=(about.releases||[]).map(release=>`<button class="about-version" data-action="open-release" data-url="${esc(release.url)}"><b>${esc(release.tag)}</b><span>${release.prerelease?"Preview release":"Stable release"}</span></button>`).join("");
   return viewHeader("Settings","Choose how Music Player looks and behaves.")+`<div class="settings-grid"><nav class="settings-menu" aria-label="Settings sections"><button class="active" data-settings-nav="appearance">Appearance</button><button data-settings-nav="library">Library</button><button data-settings-nav="playback">Playback</button><button data-view="Audio">Equalizer</button><button data-settings-nav="advanced">Advanced</button><button data-settings-nav="about">About</button></nav><div class="settings-panel">`+
     `<section class="setting-section settings-anchor" id="settings-appearance" data-settings-section="appearance"><h2>Appearance</h2><p>Match the player to your desktop.</p>${row("theme","Color theme","System, light, or dark.","select",[{value:"System",label:"System"},{value:"Light",label:"Light"},{value:"Dark",label:"Dark"}])}${row("accentMode","Accent style","Keep the Music Player lime or let album artwork color the whole interface.","select",[{value:"Native",label:"Lime"},{value:"Artwork",label:"Album artwork"}])}${row("accentManual","Use a custom accent","Choose a color for active controls.")}${row("accentColor","Custom accent color","Applied to controls when enabled; artwork still colors the interface.","color")}${row("selectionColorMode","Text selection color","Follow the active theme accent or choose your own.","select",[{value:"Theme",label:"Follow theme"},{value:"Custom",label:"Custom"}])}${row("selectionColor","Custom selection color","Used when text selection is set to Custom.","color")}${row("transparentWindow","Transparent window","Show the desktop behind the player. Off by default.")}${row("windowTransparency","Transparency","0% is opaque. The player always remains at least 40% solid.","range")}${row("motionStyle","Navigation motion","Respect accessibility animation preferences.","select",[{value:"Off",label:"Off"},{value:"Subtle",label:"Subtle"},{value:"Expressive",label:"Expressive"}])}<div class="setting-row"><div><b>Accent presets</b><span>Quick choices for the custom accent.</span></div><div class="accent-list">${[["#b7ff2d","Lime"],["#59d7ff","Sky"],["#a878ff","Violet"],["#ff6e91","Rose"],["#ffb04a","Amber"]].map(([color,label])=>`<button class="accent-dot ${activeAccent===color?"active":""}" data-accent-color="${color}" title="${label}" style="background:${color}"></button>`).join("")}</div></div><div class="toolbar"><button class="action" data-action="reset-ui">Reset UI settings…</button></div></section>`+
-    `<section class="setting-section settings-anchor" id="settings-library" data-settings-section="library"><h2>Library</h2><p>Local folders and indexed tracks.</p><div class="setting-row"><div><b>Indexed library</b><span>Total size of tracks currently indexed.</span></div><strong id="indexedLibrarySize">${bytesLabel(indexedBytes)}</strong></div>${row("hideDuplicates","Hide exact duplicates","Show one representative in normal library views.")}${["showArtwork","showArtist","showAlbum","showAdded","showYear","showDuration","showFavorite"].map((k,i)=>row(k,["Artwork","Artist","Album","Added date","Year","Duration","Favorite button"][i],"Show this column when the window is wide enough.")).join("")}<div class="toolbar"><button class="action" data-action="manage-roots">Manage folders</button><button class="action" data-action="manage-exclusions">Scan exclusions</button><button class="action" data-action="duplicates">Find duplicates</button><button class="action" data-action="scan">Scan library</button><button class="action" data-action="rebuild-index">Rebuild index and reconcile missing files</button></div><p class="muted">Rebuilding refreshes artwork and removes files confirmed missing from reachable locations. Playlist entries, favorites, ratings, and listening history are preserved.</p></section>`+
+    `<section class="setting-section settings-anchor" id="settings-library" data-settings-section="library"><h2>Library</h2><p>Local folders and indexed tracks.</p><div class="setting-row"><div><b>Indexed library</b><span>Total size of tracks currently indexed.</span></div><strong id="indexedLibrarySize">${bytesLabel(indexedBytes)}</strong></div>${row("hideDuplicates","Hide exact duplicates","Hide duplicate rows in track lists. Album, artist, genre, folder, and playlist contents stay complete.")}${["showArtwork","showArtist","showAlbum","showAdded","showYear","showDuration","showFavorite"].map((k,i)=>row(k,["Artwork","Artist","Album","Added date","Year","Duration","Favorite button"][i],"Show this column when the window is wide enough.")).join("")}<div class="toolbar"><button class="action" data-action="manage-roots">Manage folders</button><button class="action" data-action="manage-exclusions">Scan exclusions</button><button class="action" data-action="duplicates">Find duplicates</button><button class="action" data-action="scan">Scan library</button><button class="action" data-action="rebuild-index">Rebuild index and reconcile missing files</button></div><p class="muted">Rebuilding refreshes artwork and removes files confirmed missing from reachable locations. Playlist entries, favorites, ratings, and listening history are preserved.</p></section>`+
     `<section class="setting-section settings-anchor" id="settings-playback" data-settings-section="playback"><h2>Playback</h2><p>Keep playback state and the queue easy to reach.</p>${row("autoOpenPanel","Open the Now Playing pane when a song starts","Show the current track and upcoming queue.")}${row("autoLoadLyrics","Automatically find lyrics","If no saved lyrics exist, look for a likely LRCLIB match when playback starts. Sends the track title and artist; manual search remains available.")}${row("seekFromLyrics","Seek when selecting a lyric line","Jump playback to a timed lyric. Plain, untimed lyrics cannot seek.")}<div class="toolbar"><button class="action" data-view="Audio">Equalizer and audio output</button></div></section>`+
     `<section class="setting-section settings-anchor" id="settings-advanced" data-settings-section="advanced"><h2>Advanced</h2><p>Application behavior, navigation, and diagnostics.</p>${row("minimizeToTray","Minimize to notification area","Keep the player available from the system tray.")}${row("navigationWidth","Navigation width","Expanded sidebar width in logical pixels.","number")}${row("browseWidth","Browse grid spacing","Spacing between album, artist, and playlist tiles.","number")}<div class="toolbar"><button class="action" data-action="open-default-apps">Choose default music player</button><button class="action" data-action="open-logs">Open logs</button><button class="action" data-action="export-logs">Export logs</button></div><h3>Navigation order and visibility</h3><p>Drag the grip or use the arrows to reorder. Use the switch to hide a destination.</p><div class="nav-settings">${navigationSettingsMarkup(s)}</div></section>`+
     `<section class="setting-section settings-anchor" id="settings-about" data-settings-section="about"><h2>About Music Player</h2><p>A local music library and player for Windows.</p><div class="about-identity"><strong>Music Player</strong><span>Version ${esc(about.version||"Unknown")}</span><button class="action about-github" data-action="open-release" data-url="${esc(about.repositoryUrl||"https://github.com/kalabhaftu/music-player")}"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .8a11.2 11.2 0 0 0-3.54 21.83c.56.1.76-.24.76-.54v-2.1c-3.1.68-3.76-1.32-3.76-1.32-.5-1.3-1.24-1.65-1.24-1.65-1.01-.69.08-.68.08-.68 1.12.08 1.7 1.15 1.7 1.15 1 .1.77 2.2 3.55 1.55.1-.72.4-1.2.73-1.48-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.1-2.95 0 0 .94-.3 3.08 1.14a10.7 10.7 0 0 1 5.6 0c2.14-1.44 3.08-1.14 3.08-1.14.6 1.53.22 2.67.11 2.95.72.78 1.14 1.78 1.14 3.01 0 4.3-2.61 5.23-5.1 5.5.4.35.76 1.02.76 2.06v3.07c0 .3.2.64.77.53A11.2 11.2 0 0 0 12 .8Z"/></svg>View repository</button></div><div class="about-release setting-row"><div><b>Latest release</b><span>${latestRelease?`GitHub release ${esc(latestRelease.tag)} · updates are never installed automatically.`:"Check GitHub to see the latest published version."}</span></div>${latestRelease?`<button class="action" data-action="open-release" data-url="${esc(latestRelease.url)}">View release</button>`:`<button class="action" data-action="open-release" data-url="${esc(about.releasesUrl||"https://github.com/kalabhaftu/music-player/releases")}">Release history</button>`}</div>${row("checkUpdates","Check for updates automatically","Checks GitHub release metadata every six hours; installs are always manual.")}<div class="toolbar"><button class="action" data-action="check-updates" ${state.updateCheckActive?"disabled":""} aria-busy="${state.updateCheckActive}">${state.updateCheckActive?"Checking…":"Check for updates"}</button><button class="action" data-action="open-release" data-url="${esc(about.releasesUrl||"https://github.com/kalabhaftu/music-player/releases")}">View all releases</button></div><h3>Version history</h3>${releaseRows?`<div class="about-versions">${releaseRows}</div>`:`<p class="muted">Release history is unavailable offline. Use “View all releases” when connected.</p>`}<h3>Open-source software</h3><p>Music Player is distributed under the MIT License. Third-party components keep their own licenses and attributions.</p>${componentRows?`<div class="about-table-wrap"><table class="about-table"><thead><tr><th>Component</th><th>Version</th><th>License</th><th>Source</th></tr></thead><tbody>${componentRows}</tbody></table></div>`:`<p class="muted">${about.noticesAvailable?"No third-party components were listed.":"The bundled third-party notices could not be found."}</p>`}<div class="toolbar about-documents"><button class="action" data-action="open-legal" data-file="LICENSE">Open MIT license</button><button class="action" data-action="open-legal" data-file="ThirdPartyNotices.md">Open third-party notices</button><button class="action" data-action="open-legal" data-file="LGPL-2.1.txt">Open LGPL 2.1 text</button></div><h3>Privacy and network use</h3><p>Your music library stays on this device. Manual checks, and automatic checks when enabled, contact GitHub for release information. Searching LRCLIB sends the current track title and artist to LRCLIB to find matching lyrics.</p></section></div></div>`;
@@ -312,5 +351,5 @@ async function openDuplicateFiles(id,offset=0) {
   openModal("Duplicate locations",`${body}${pages>1?`<p class="muted">Page ${page+1} of ${pages} · ${Number(total).toLocaleString()} files</p>`:""}`,actions);
 }
 
-  return {trackRow,songTable,card,cardGrid,section,viewHeader,toolbar,navigate,renderView,renderHome,renderSearch,viewFilter,renderTracksView,renderGroupsView,renderFolders,renderPlaylists,renderPlaylistDetail,renderGroupDetail,renderQueue,renderNowPlaying,renderLyrics,renderAudio,renderSettings,navigationSettingsMarkup,renderDuplicates,openDuplicateFiles};
+  return {trackRow,songTable,card,cardGrid,section,viewHeader,toolbar,navigate,renderView,loadMore,loadArtistAlbums,renderHome,renderSearch,viewFilter,renderTracksView,renderGroupsView,renderFolders,renderPlaylists,renderPlaylistDetail,renderGroupDetail,renderQueue,renderNowPlaying,renderLyrics,renderAudio,renderSettings,navigationSettingsMarkup,renderDuplicates,openDuplicateFiles};
 }

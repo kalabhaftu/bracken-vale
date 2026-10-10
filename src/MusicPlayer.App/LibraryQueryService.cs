@@ -227,7 +227,8 @@ internal sealed class LibraryQueryService
         try
         {
             result = _store.GetTracksPageWithCount(request.Search, request.Sort, request.Descending, request.Filter,
-                request.GroupColumn, request.GroupValue, request.Offset, request.PageSize, HideExactDuplicates);
+                request.GroupColumn, request.GroupValue, request.Offset, request.PageSize,
+                HideExactDuplicates && request.GroupColumn is null);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (request.View == "Songs")
@@ -311,7 +312,8 @@ internal sealed class LibraryQueryService
     {
         var offset = Math.Max(0, requestedOffset);
         var pageSize = Math.Clamp(requestedPageSize, 1, 60);
-        return new { groups = _store.GetArtistAlbumsPage(artist, offset, pageSize).Select(group => GroupDto(group, "album")).ToArray() };
+        var page = _store.GetArtistAlbumsPage(artist, offset, pageSize + 1);
+        return new { groups = page.Take(pageSize).Select(group => GroupDto(group, "album")).ToArray(), hasMore = page.Count > pageSize };
     }
 
     public object Playlists() => new
@@ -416,11 +418,11 @@ internal sealed class LibraryQueryService
             _ => null
         };
         return _store.GetTrackPaths(_context.View == "Search" ? _context.Search : string.Empty, _sort, _descending, filter,
-            _context.GroupColumn, _context.GroupValue, hideExactDuplicates: HideExactDuplicates);
+            _context.GroupColumn, _context.GroupValue, hideExactDuplicates: HideExactDuplicates && _context.GroupColumn is null);
     }
 
     public IReadOnlyList<string> GroupTrackPaths(string column, string value) =>
-        _store.GetTrackPaths(groupColumn: column, groupValue: value, hideExactDuplicates: HideExactDuplicates);
+        _store.GetTrackPaths(groupColumn: column, groupValue: value);
 
     public Track? ResolveTrack(string? id) =>
         ResolveTrackPath(id) is { } path ? _store.GetTrack(path) : null;
