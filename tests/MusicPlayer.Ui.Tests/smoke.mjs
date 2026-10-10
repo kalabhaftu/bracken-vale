@@ -167,6 +167,7 @@ await until(async()=>!(await call("getCurrentTrack")).playing,"Windows media key
 await new Promise(resolve=>setTimeout(resolve,500));
 assert.equal((await call("getCurrentTrack")).playing,false,"Media key toggled playback twice");
 await call("playQueueEntry",{index:0});
+await until(async()=>{const state=await call("getCurrentTrack");return state.playing&&state.queueIndex===0;},"Final queue selection did not start");
 await call("playPause");
 await until(async()=>!(await call("getCurrentTrack")).playing,"Final paused state did not settle");
 const idleBefore=metrics();
