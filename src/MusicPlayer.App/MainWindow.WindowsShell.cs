@@ -117,14 +117,15 @@ public sealed partial class MainWindow : Window
             var file = await StorageFile.GetFileFromPathAsync(artworkPath);
             using var stream = await file.OpenAsync(FileAccessMode.Read);
             var decoder = await BitmapDecoder.CreateAsync(stream);
-            var data = await decoder.GetPixelDataAsync(BitmapPixelFormat.Rgba8, BitmapAlphaMode.Ignore,
-                new BitmapTransform { ScaledWidth = 32, ScaledHeight = 32 }, ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
+            var data = await decoder.GetPixelDataAsync(BitmapPixelFormat.Rgba8, BitmapAlphaMode.Straight,
+                new BitmapTransform { ScaledWidth = 32, ScaledHeight = 32 }, ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.ColorManageToSRgb);
             var pixels = data.DetachPixelData();
-            if (pixels.Length < 3) { _webArtworkAccent = null; _webArtworkPalette = null; _webArtworkTitleBarColor = null; ResetAccent(); ApplyNativeWindowChrome(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null }); return false; }
             if (!SameTrack(_playback.CurrentTrack?.ArtworkPath, artworkPath) || _store.GetSetting("accent-mode") != "Artwork") return false;
-            var accent = SelectArtworkAccent(pixels);
+            if (pixels.Length < 4) { _webArtworkAccent = null; _webArtworkPalette = null; _webArtworkTitleBarColor = null; ResetAccent(); ApplyNativeWindowChrome(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null }); return false; }
+            var artwork = ArtworkColors.FromRgba(pixels);
+            var accent = Color.FromArgb(255, artwork.Accent.R, artwork.Accent.G, artwork.Accent.B);
             _webArtworkAccent = $"#{accent.R:X2}{accent.G:X2}{accent.B:X2}";
-            var selectedPalette = SelectArtworkPalette(pixels, accent);
+            var selectedPalette = SelectArtworkPalette(artwork);
             _webArtworkPalette = selectedPalette.Palette;
             _webArtworkTitleBarColor = selectedPalette.MainSurface;
             if (_store.GetSetting("accent-manual") != "true") ApplyAccent(accent);
@@ -133,67 +134,18 @@ public sealed partial class MainWindow : Window
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
-        { LocalAppLog.Shared.Warning("artwork-accent", $"Could not read artwork '{artworkPath}'.", ex); _webArtworkAccent = null; _webArtworkPalette = null; _webArtworkTitleBarColor = null; ResetAccent(); ApplyNativeWindowChrome(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null }); return false; }
+        { LocalAppLog.Shared.Warning("artwork-accent", $"Could not read artwork '{artworkPath}'.", ex); if (!SameTrack(_playback.CurrentTrack?.ArtworkPath, artworkPath) || _store.GetSetting("accent-mode") != "Artwork") return false; _webArtworkAccent = null; _webArtworkPalette = null; _webArtworkTitleBarColor = null; ResetAccent(); ApplyNativeWindowChrome(); _webBridge?.SendEvent("artworkAccentChanged", new { color = (string?)null, palette = (object?)null }); return false; }
     }
 
-    private static (object Palette, Color MainSurface) SelectArtworkPalette(byte[] pixels, Color accent)
+    private static (object Palette, Color MainSurface) SelectArtworkPalette(ArtworkPalette artwork)
     {
-        double red = 0, green = 0, blue = 0;
-        var count = 0;
-        for (var index = 0; index + 2 < pixels.Length; index += 4)
-        {
-            red += pixels[index]; green += pixels[index + 1]; blue += pixels[index + 2]; count++;
-        }
-        if (count == 0) count = 1;
-        var averageRed = red / count; var averageGreen = green / count; var averageBlue = blue / count;
-        var gray = averageRed * .299 + averageGreen * .587 + averageBlue * .114;
-        Color Tone(double shade) => Color.FromArgb(255,
-            (byte)Math.Clamp(Math.Round(10 + ((averageRed * .82 + gray * .18) - 10) * shade), 0, 255),
-            (byte)Math.Clamp(Math.Round(10 + ((averageGreen * .82 + gray * .18) - 10) * shade), 0, 255),
-            (byte)Math.Clamp(Math.Round(10 + ((averageBlue * .82 + gray * .18) - 10) * shade), 0, 255));
-        static Color Lift(Color color, int amount) => Color.FromArgb(255,
-            (byte)Math.Clamp(color.R + amount, 0, 255), (byte)Math.Clamp(color.G + amount, 0, 255), (byte)Math.Clamp(color.B + amount, 0, 255));
-        static string Hex(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
-        // Keep large surfaces dark enough for the existing light-on-dark player
-        // typography while carrying the cover's dominant hue through the UI.
-        var background = Tone(.29);
-        var mainSurface = Tone(.31);
         var palette = new
         {
-            background = Hex(background),
-            sidebar = Hex(Tone(.27)),
-            main = Hex(mainSurface),
-            panel = Hex(Tone(.29)),
-            raised = Hex(Lift(background, 10)),
-            hover = Hex(Lift(background, 18)),
-            control = Hex(Lift(background, 22)),
-            accent = Hex(accent)
+            background = artwork.Background.Hex, sidebar = artwork.Sidebar.Hex, main = artwork.Main.Hex,
+            panel = artwork.Panel.Hex, raised = artwork.Raised.Hex, hover = artwork.Hover.Hex,
+            control = artwork.Control.Hex, accent = artwork.Accent.Hex
         };
-        return (palette, mainSurface);
-    }
-
-    private static Color SelectArtworkAccent(byte[] pixels)
-    {
-        var bins = new Dictionary<int, (double Weight, double Red, double Green, double Blue)>();
-        for (var index = 0; index + 2 < pixels.Length; index += 4)
-        {
-            var red = pixels[index]; var green = pixels[index + 1]; var blue = pixels[index + 2];
-            var maximum = Math.Max(red, Math.Max(green, blue));
-            var minimum = Math.Min(red, Math.Min(green, blue));
-            var saturation = maximum == 0 ? 0 : (maximum - minimum) / (double)maximum;
-            var luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255.0;
-            var usableBrightness = Math.Clamp((luminance - 0.06) / 0.22, 0, 1) * Math.Clamp((0.99 - luminance) / 0.16, 0, 1);
-            var weight = (0.18 + saturation * 1.35) * (0.35 + usableBrightness * 0.65);
-            var key = ((red >> 4) << 8) | ((green >> 4) << 4) | (blue >> 4);
-            bins.TryGetValue(key, out var bin);
-            bins[key] = (bin.Weight + weight, bin.Red + red * weight, bin.Green + green * weight, bin.Blue + blue * weight);
-        }
-        var selected = bins.Values.OrderByDescending(bin => bin.Weight).FirstOrDefault();
-        if (selected.Weight <= 0) return Color.FromArgb(255, pixels[0], pixels[1], pixels[2]);
-        return Color.FromArgb(255,
-            (byte)Math.Clamp(selected.Red / selected.Weight, 0, 255),
-            (byte)Math.Clamp(selected.Green / selected.Weight, 0, 255),
-            (byte)Math.Clamp(selected.Blue / selected.Weight, 0, 255));
+        return (palette, Color.FromArgb(255, artwork.Main.R, artwork.Main.G, artwork.Main.B));
     }
 
     private static void ApplyAccent(Color color)

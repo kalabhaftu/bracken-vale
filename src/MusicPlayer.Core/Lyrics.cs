@@ -159,5 +159,5 @@ public static partial class Lyrics
         }
     }
 
-    private static string NormalizeNewlines(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+    private static string NormalizeNewlines(string text) => text.TrimStart('\uFEFF').Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 }

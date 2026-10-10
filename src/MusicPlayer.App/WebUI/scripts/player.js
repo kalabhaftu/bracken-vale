@@ -1,3 +1,5 @@
+import { activeLyricIndex } from "./lyrics.js";
+
 export function createPlayerUi({state,$,$$,call,command,cover,esc,fmtDuration,svg,lyricLinesMarkup,loadLyricsForTrack}) {
   const trackDetailsCache = new Map();
   let trackDetailsRequest = 0;
@@ -75,7 +77,7 @@ function renderImmersiveLyrics(){
   $("#immersiveLyricsSource").textContent=current&&source?`· ${source}`:"";
   if(!current)lines.innerHTML=`<div class="empty-state"><b>Loading lyrics…</b>Saved lyrics appear here when they are ready.</div>`;
   else if(state.lyricLines?.length)lines.innerHTML=lyricLinesMarkup(state.lyricLines,esc,state.settings.seekFromLyrics!==false);
-  else if(state.lyricText)lines.innerHTML=`<div class="lyrics-plain">${esc(state.lyricText)}</div>`;
+  else if(state.lyricText)lines.innerHTML=`<p class="lyric-source">Untimed lyrics · automatic following requires timestamps.</p><div class="lyrics-plain">${esc(state.lyricText)}</div>`;
   else if(state.lyricsLoadingTrackId===state.track.id)lines.innerHTML=`<div class="empty-state"><b>Finding lyrics…</b>${state.settings.autoLoadLyrics?"Checking for a matching LRCLIB result.":"Loading lyrics saved with this track."}</div>`;
   else lines.innerHTML=`<div class="empty-state"><b>No lyrics found</b>${esc(state.lyricsAutoError||"Search LRCLIB or edit lyrics to add them.")}</div>`;
 }
@@ -84,7 +86,7 @@ function updateActiveLyric(){
   const trackId=state.lyricsTrack?.id;
   const canFollow=state.lyricLines.length>0&&!!trackId&&trackId===state.track?.id;
   let active=-1;
-  if(canFollow)for(let i=0;i<state.lyricLines.length;i++)if(Number(state.lyricLines[i].seconds)<=currentPosition())active=i;
+  if(canFollow)active=activeLyricIndex(state.lyricLines,currentPosition());
   const canFollowMain=canFollow&&state.view==="Lyrics";
   const canFollowImmersive=canFollow&&state.immersiveLyricsOpen&&!$("#immersivePlayer").hidden;
   const roots=[{element:$("#lyricsLines"),enabled:canFollowMain,scroller:$("#content")},{element:$("#immersiveLyricsLines"),enabled:canFollowImmersive,scroller:$("#immersiveLyricsScroll")}];

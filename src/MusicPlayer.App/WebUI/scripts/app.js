@@ -1,7 +1,8 @@
 import { command, onEvent } from "./api.js";
 import { createLibraryViews } from "./library.js";
 import { createPlayerUi } from "./player.js";
-import { lyricLinesMarkup, parseLyricsText } from "./lyrics.js";
+import { lyricLinesMarkup, parseLyricsText, selectLyricsMatch, createLyricsSearch } from "./lyrics.js";
+import { contrastingInk } from "./colors.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -60,52 +61,11 @@ function fmtDuration(seconds) { const n = Math.max(0, Math.floor(Number(seconds)
 function bytesLabel(bytes) { const value = Number(bytes)||0; return value > 1024**3 ? `${(value/1024**3).toFixed(1)} GB` : value > 1024**2 ? `${(value/1024**2).toFixed(0)} MB` : `${(value/1024).toFixed(0)} KB`; }
 
 const state = { view:"Home", search:"", filter:"all", searchQuery:"", searchPages:{songs:0,albums:0,artists:0,playlists:0}, searchResults:{}, duplicateSort:"Title", duplicateDescending:false, duplicateOffset:0, sort:"Title", descending:false, videoSupportEnabled:false, offset:0, pageSize:200, total:0, items:[], group:null, playlist:null, track:null, trackDetails:null, playing:false, position:0, duration:0, volume:75, shuffle:false, repeat:"Off", repeatA:null, repeatB:null, queue:[], queueTotal:0, queueOffset:0, queueIndex:-1, panel:"queue", panelOpen:true, history:["Home"], historyIndex:0, settings:{}, modal:null, muted:false, scan:null, loading:false, lyricLines:[], lyricText:"", lyricsRaw:"", lyricsSource:"none", lyricsLoadingTrackId:"", lyricsAutoError:"", lyricsRevision:0, lyricsLoadRevision:0, immersiveLyricsOpen:false, lyricsSearchResults:[], lyricsSearchTrackId:"", updateCheckActive:false, aboutInfo:null };
-const lyricsSearchCache = new Map();
-const lyricsSearchEmptyUntil = new Map();
-const lyricsSearchRetryAfter = new Map();
-const lyricsSearchRequests = new Map();
+const lyricsSearch = createLyricsSearch(trackId => call("searchLyrics", {id:trackId}, false));
 const automaticLyricsCache = new Map();
 const automaticLyricsRequests = new Map();
-
-function normalizedWords(value) {
-  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
-}
-function lyricMatchScore(track, result) {
-  const expectedTitle=normalizedWords(track?.title),candidateTitle=normalizedWords(result?.trackName);
-  if(!expectedTitle.length||!candidateTitle.length)return -1;
-  const candidateSet=new Set(candidateTitle),expectedSet=new Set(expectedTitle);
-  const common=expectedTitle.filter(word=>candidateSet.has(word)).length;
-  const titleCoverage=common/expectedSet.size,titlePrecision=common/candidateSet.size;
-  const titleScore=expectedTitle.join(" ")===candidateTitle.join(" ")?1:titleCoverage*.78+titlePrecision*.22;
-  const expectedArtist=normalizedWords(track?.artist),candidateArtist=normalizedWords(result?.artistName);
-  let artistScore=1;
-  if(expectedArtist.length&&candidateArtist.length){
-    const candidateArtists=new Set(candidateArtist),expectedArtists=new Set(expectedArtist);
-    const artistCommon=expectedArtist.filter(word=>candidateArtists.has(word)).length;
-    artistScore=expectedArtist.join(" ")===candidateArtist.join(" ")?1:(artistCommon/expectedArtists.size)*.75+(artistCommon/candidateArtists.size)*.25;
-  } else if(expectedArtist.length) artistScore=0;
-  return titleScore>=.72&&(!expectedArtist.length||artistScore>=.45)?titleScore*.78+artistScore*.22:-1;
-}
-async function searchLyricsResults(trackId,notifyError=true) {
-  if(!trackId)return [];
-  if(lyricsSearchCache.has(trackId))return lyricsSearchCache.get(trackId);
-  if ((lyricsSearchEmptyUntil.get(trackId) || 0) > Date.now()) return [];
-  if(lyricsSearchRequests.has(trackId))return lyricsSearchRequests.get(trackId);
-  const retryAfter = lyricsSearchRetryAfter.get(trackId) || 0;
-  if (retryAfter > Date.now()) throw new Error(`Please wait ${Math.ceil((retryAfter - Date.now()) / 1000)} seconds before searching for lyrics again.`);
-  const request=call("searchLyrics",{id:trackId},notifyError).then(data=>{
-    const results=Array.isArray(data?.results)?data.results:[];
-    if(results.length)lyricsSearchCache.set(trackId,results);
-    else lyricsSearchEmptyUntil.set(trackId, Date.now() + 60_000);
-    lyricsSearchRetryAfter.delete(trackId);
-    return results;
-  }).catch(error => {
-    const cooldown = /429|rate.?limit/i.test(String(error?.message || "")) ? 30_000 : 15_000;
-    lyricsSearchRetryAfter.set(trackId, Date.now() + cooldown);
-    throw error;
-  }).finally(()=>lyricsSearchRequests.delete(trackId));
-  lyricsSearchRequests.set(trackId,request);
-  return request;
+async function searchLyricsResults(trackId, manual=false) {
+  return lyricsSearch.search(trackId,{manual});
 }
 async function ensureLyricsLoaded(trackId, allowRemote=!!state.settings.autoLoadLyrics) {
   if(!trackId)return {track:null,raw:"",source:"none",lines:[],plainText:""};
@@ -124,14 +84,12 @@ async function ensureLyricsLoaded(trackId, allowRemote=!!state.settings.autoLoad
     try {
       const results=await searchLyricsResults(trackId,false);
       const track=local?.track||state.track;
-      const matches=results.map(result=>({result,score:lyricMatchScore(track,result)})).filter(item=>item.score>=0).sort((a,b)=>b.score-a.score);
-      const best=matches.find(({result})=>{const candidate=String(result?.syncedLyrics||"").trim()||String(result?.plainLyrics||"").trim();if(!candidate)return false;const parsed=parseLyricsText(candidate);return parsed.lines.length>0||!!parsed.plainText.trim();})?.result;
-      const selected=String(best?.syncedLyrics||"").trim()||String(best?.plainLyrics||"").trim();
-      if(!selected)return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:matches.length?"LRCLIB matched this track, but did not provide usable lyrics.":results.length?"LRCLIB returned results, but none matched this track confidently.":"No LRCLIB lyrics were found for this track."};
-      const lyrics=parseLyricsText(selected);
-      return {...local,raw:selected,lines:lyrics.lines,plainText:lyrics.plainText,source:"lrclib",offsetMilliseconds:0};
-    } catch { return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:"LRCLIB could not be reached. Check your connection or search manually."}; }
-  })().then(result=>{if(result.source==="lrclib"&&(result.lines?.length||result.plainText?.trim()))automaticLyricsCache.set(trackId,result);return result;}).finally(()=>automaticLyricsRequests.delete(trackId));
+      const match=selectLyricsMatch(track,results);
+      if(!match)return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:results.length?"LRCLIB returned results, but none provided usable lyrics matching this track confidently.":"No LRCLIB lyrics were found for this track."};
+      const lyrics=parseLyricsText(match.raw);
+      return {...local,raw:match.raw,lines:lyrics.lines,plainText:lyrics.plainText,source:"lrclib",offsetMilliseconds:lyrics.offsetMilliseconds};
+    } catch (error) { return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:error?.message||"LRCLIB could not be reached. Check your connection or search manually."}; }
+  })().then(result=>{if(result.source==="lrclib"&&(result.lines?.length||result.plainText?.trim())) {automaticLyricsCache.set(trackId,result);if(automaticLyricsCache.size>128)automaticLyricsCache.delete(automaticLyricsCache.keys().next().value);}return result;}).finally(()=>automaticLyricsRequests.delete(trackId));
   automaticLyricsRequests.set(trackId,request);
   return request;
 }
@@ -285,15 +243,12 @@ function setTheme(settings) {
     document.documentElement.style.setProperty("--accent",color);
     const r=parseInt(color.slice(1,3),16),g=parseInt(color.slice(3,5),16),b=parseInt(color.slice(5,7),16);
     document.documentElement.style.setProperty("--accent-rgb",`${r},${g},${b}`);
-    const luminance=(0.2126*r+0.7152*g+0.0722*b)/255;
-    document.documentElement.style.setProperty("--accent-ink",luminance>.58?"#101210":"#ffffff");
+    document.documentElement.style.setProperty("--accent-ink",contrastingInk(color));
   }
   const selectionColor=settings?.selectionColorMode==="Custom"&&/^#[0-9a-f]{6}$/i.test(String(settings?.selectionColor||""))?settings.selectionColor:color;
   if(/^#[0-9a-f]{6}$/i.test(selectionColor)){
     root.style.setProperty("--selection-color",selectionColor);
-    const r=parseInt(selectionColor.slice(1,3),16),g=parseInt(selectionColor.slice(3,5),16),b=parseInt(selectionColor.slice(5,7),16);
-    const luminance=(0.2126*r+0.7152*g+0.0722*b)/255;
-    root.style.setProperty("--selection-ink",luminance>.58?"#101210":"#ffffff");
+    root.style.setProperty("--selection-ink",contrastingInk(selectionColor));
   }
   const selectionColorControl=$('[data-setting="selectionColor"]');
   if(selectionColorControl)selectionColorControl.disabled=settings?.selectionColorMode!=="Custom";
@@ -411,12 +366,12 @@ async function action(name,el) {
       openModal("Find lyrics", `<div class="lyric-search-state" aria-live="polite"><span class="lyric-search-spinner" aria-hidden="true"></span><div><b>Searching for lyrics…</b><p>Searching LRCLIB, an online lyrics catalog. This may take a few seconds.</p></div></div>`);
       $("#modalLayer").dataset.lyricsSearchToken = token;
       try {
-        const results = await searchLyricsResults(trackId, false);
+        const results = await searchLyricsResults(trackId, true);
         if (state.lyricsSearchModalToken !== token || $("#modalLayer").dataset.lyricsSearchToken !== token) break;
         state.lyricsSearchResults = results;
       const body=results.length?`<div class="lyric-search-results">${results.map((r,i)=>{
         const hasLyrics=!!String(r.syncedLyrics||r.plainLyrics||"").trim();
-        return `<button type="button" class="action lyric-search-result" data-lyric-result="${i}" ${hasLyrics?"":"disabled aria-disabled=\"true\""}><span>${esc(r.trackName||"Untitled")}</span><small>${esc(r.artistName||"Unknown artist")}${r.albumName?` · ${esc(r.albumName)}`:""}${hasLyrics?"":" · Lyrics not provided"}</small></button>`;
+        return `<button type="button" class="action lyric-search-result" data-lyric-result="${i}" ${hasLyrics?"":"disabled aria-disabled=\"true\""}><span>${esc(r.trackName||"Untitled")}</span><small>${esc(r.artistName||"Unknown artist")}${r.albumName?` · ${esc(r.albumName)}`:""}${hasLyrics?parseLyricsText(r.syncedLyrics).lines.length?" · Timed":" · Untimed":""}${hasLyrics?"":" · Lyrics not provided"}</small></button>`;
         }).join("")}</div>` : `<div class="lyric-search-state"><div><b>No matching lyrics found</b><p>Try again in a minute if you expect this track to have lyrics.</p></div></div>`;
         $("#modalTitle").textContent = "Find lyrics";
         $("#modalBody").innerHTML = body;
@@ -491,7 +446,8 @@ document.addEventListener("click",async e=>{
       const selected=state.lyricsSearchResults[index];
       const trackId=state.lyricsSearchTrackId||state.lyricsTrack?.id||state.trackId||state.track?.id;
       if(!selected)throw new Error("That LRCLIB result is no longer available. Search again and choose a result.");
-      const lyrics=String(selected.syncedLyrics||"").trim()||String(selected.plainLyrics||"").trim();
+      const synced=String(selected.syncedLyrics||"").trim();
+      const lyrics=parseLyricsText(synced).lines.length?synced:String(selected.plainLyrics||"").trim()||synced;
       if(!lyrics){toast("This LRCLIB result does not include readable lyrics.");return;}
       if(!trackId)throw new Error("Choose a track before opening a lyrics result.");
       lyricResult.disabled=true;
@@ -518,7 +474,7 @@ document.addEventListener("click",async e=>{
     else if(kind==="rename-playlist"){await call("renamePlaylist",{playlistId:state.playlist.id,name:$("#playlistName").value});state.playlist.name=$("#playlistName").value;closeModal();await renderView();}
     else if(kind==="add-to-playlist"){await call("addToPlaylist",{playlistId:$("#playlistChoice").value,trackId:modalCmd.dataset.trackId});closeModal();toast("Added to playlist.");}
     else if(kind==="set-rating"){await call("setRating",{id:modalCmd.dataset.trackId,rating:Number($("#ratingValue").value)});closeModal();await renderView();}
-    else if(kind==="save-lyrics"){const trackId=modalCmd.dataset.trackId;modalCmd.disabled=true;try{const result=await call("saveLyrics",{id:trackId,text:$("#lyricsEditor").value,mode:$("#lyricsMode").value,offsetMilliseconds:Number($("#lyricsOffset").value)||0});automaticLyricsCache.delete(trackId);lyricsSearchCache.delete(trackId);await loadLyricsForTrack(trackId,false);closeModal();toast(result?.storage==="sidecar-fallback"?"The audio file couldn’t be updated, so lyrics were saved beside it.":result?.storage==="sidecar"?"Lyrics saved beside the audio file.":"Lyrics embedded in the audio file.");await renderView();}catch(error){modalCmd.disabled=false;toast(error?.message||"Could not save lyrics. Check file permissions and try saving beside the audio file.");}}
+    else if(kind==="save-lyrics"){const trackId=modalCmd.dataset.trackId;modalCmd.disabled=true;try{const result=await call("saveLyrics",{id:trackId,text:$("#lyricsEditor").value,mode:$("#lyricsMode").value,offsetMilliseconds:Number($("#lyricsOffset").value)||0});automaticLyricsCache.delete(trackId);lyricsSearch.forget(trackId);await loadLyricsForTrack(trackId,false);closeModal();toast(result?.storage==="sidecar-fallback"?"The audio file couldn’t be updated, so lyrics were saved beside it.":result?.storage==="sidecar"?"Lyrics saved beside the audio file.":"Lyrics embedded in the audio file.");await renderView();}catch(error){modalCmd.disabled=false;toast(error?.message||"Could not save lyrics. Check file permissions and try saving beside the audio file.");}}
     else if(kind==="save-tags"){const tags={};$$('[data-tag]').forEach(el=>tags[el.dataset.tag]=el.value);tags.customFields={};$$('[data-custom-tag]').forEach(el=>tags.customFields[el.dataset.customTag]=el.value);tags.additionalFields={};$$('[data-additional-tag]').forEach(el=>tags.additionalFields[el.dataset.additionalTag]=el.value);await call("saveTags",{id:modalCmd.dataset.trackId,tags,artworkToken:$("#modalLayer").dataset.artworkToken||""});closeModal();toast("Tags saved with a backup.");await renderView();}
     else if(kind==="save-eq"){await call("saveEqualizerPreset",{name:$("#presetName").value});closeModal();await renderView();}
     else if(kind==="reset-ui-settings"){const groups=$$('[data-reset-category]:checked').map(input=>input.dataset.resetCategory);if(!groups.length){closeModal();return;}await call("resetUiSettings",{groups});const bootstrap=await call("getBootstrap");state.settings={...(bootstrap.settings||{}),resolvedTheme:bootstrap.resolvedTheme||"Dark"};state.panel=bootstrap.panel||"queue";closeModal();setTheme(state.settings);applyLayoutPreferences();setPanelOpen(bootstrap.panelOpen??state.settings.rightPanelOpen??(window.innerWidth>1180),false);updatePanel();toast("Selected UI settings restored.");await renderView();}

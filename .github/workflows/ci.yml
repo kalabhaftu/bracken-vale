@@ -31,6 +31,9 @@ jobs:
       - name: Test core
         run: dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj --configuration Release --no-restore
 
+      - name: Test lyrics requests, following and theme contrast
+        run: node --test tests/MusicPlayer.Ui.Tests/lyrics-theme.test.mjs
+
   test-and-build:
     name: ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}

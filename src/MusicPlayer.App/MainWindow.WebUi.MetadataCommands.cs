@@ -32,8 +32,15 @@ public sealed partial class MainWindow
     private async Task<object> SearchLyricsAsync(Track? track)
     {
         if (track is null) return new { results = Array.Empty<object>() };
-        var results = await _trackMetadata.SearchLyricsAsync(track.Title, track.Artist);
-        return new { results };
+        try
+        {
+            var results = await _trackMetadata.SearchLyricsAsync(track.Title, track.Artist);
+            return new { results };
+        }
+        catch (LyricsRateLimitException ex)
+        {
+            return new { results = Array.Empty<object>(), rateLimited = true, retryAfterMilliseconds = Math.Ceiling(ex.RetryAfter.TotalMilliseconds) };
+        }
     }
 
     private async Task SaveTagsAsync(JsonElement payload)

@@ -45,7 +45,7 @@ export function command(name, payload = {}) {
   if (!window.chrome?.webview) return Promise.reject(new Error("The native Music Player connection is unavailable."));
   const id = `web-${++nextId}`;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(id); const error=new Error("The request timed out.");error.musicPlayerCommand=name;reject(error); }, 30000);
+    const timer = setTimeout(() => { pending.delete(id); const error=new Error("The request timed out.");error.musicPlayerCommand=name;reject(error); }, name === "searchLyrics" ? 110000 : 30000);
     pending.set(id, { resolve, reject, timer, command:name });
     window.chrome.webview.postMessage({ type: "command", id, name, payload });
   });
