@@ -5,12 +5,17 @@ $setup=(Resolve-Path -LiteralPath $SetupPath).Path
 $install=Join-Path $env:RUNNER_TEMP "installed-music-player-$Architecture"
 $data=Join-Path $env:LOCALAPPDATA 'MusicPlayer'
 $interactionErrors=[Collections.Generic.List[string]]::new()
+$script:installerAttempt=0
 function Test-Interaction([string] $Executable){
     try { & (Join-Path $PSScriptRoot 'Run-Smoke.ps1') -Executable $Executable }
     catch { $interactionErrors.Add($_.Exception.Message); Write-Warning "UI check failed; independent installer lifecycle checks will continue: $($_.Exception.Message)" }
 }
 function Run-Installer([string] $File,[string[]] $Arguments){
-    $process=Start-Process -FilePath $File -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru
+    $script:installerAttempt++
+    $evidence=[IO.Path]::GetFullPath('artifacts/ui-evidence')
+    New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+    $log=Join-Path $evidence "$Architecture-installer-$script:installerAttempt.log"
+    $process=Start-Process -FilePath $File -ArgumentList ($Arguments+@('/LOG="'+$log+'"')) -WindowStyle Hidden -Wait -PassThru
     if($process.ExitCode -notin @(0,3010)){throw "Installer exited with $($process.ExitCode)."}
 }
 function Verify-Signature([string] $File){

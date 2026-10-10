@@ -63,7 +63,14 @@ $policy='HKLM:/Software/Policies/Microsoft/Edge/WebView2/AdditionalBrowserArgume
 New-Item -Path $policy -Force | Out-Null
 New-ItemProperty -Path $policy -Name 'MusicPlayer.exe' -Value '--remote-debugging-port=9222' -PropertyType String -Force | Out-Null
 $exe=(Resolve-Path -LiteralPath $Executable).Path
-& (Join-Path $PSScriptRoot 'Prepare-ArtworkFixture.ps1') -TrackPath (Join-Path $music 'MusicPlayerSmoke-A.wav') -TagLibPath (Join-Path (Split-Path -Parent $exe) 'TagLibSharp.dll')
+# Loading the installed TagLib assembly into this long-lived test host locks it
+# across setup upgrade/uninstall. Prepare the fixture in a process that exits
+# before launching the app; hiding it also preserves the interactive desktop.
+$fixtureArguments=@('-NoLogo','-NoProfile','-File',('"'+(Join-Path $PSScriptRoot 'Prepare-ArtworkFixture.ps1')+'"'),
+    '-TrackPath',('"'+(Join-Path $music 'MusicPlayerSmoke-A.wav')+'"'),
+    '-TagLibPath',('"'+(Join-Path (Split-Path -Parent $exe) 'TagLibSharp.dll')+'"'))
+$fixtureProcess=Start-Process -FilePath (Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe') -ArgumentList $fixtureArguments -WindowStyle Hidden -Wait -PassThru
+if($fixtureProcess.ExitCode -ne 0){throw "Isolated artwork fixture preparation failed with $($fixtureProcess.ExitCode)."}
 function Save-Diagnostics {
     $out=Join-Path $PWD 'artifacts/ui-evidence'
     New-Item -ItemType Directory -Path $out -Force | Out-Null
