@@ -1,7 +1,7 @@
 import { command, onEvent } from "./api.js";
 import { createLibraryViews } from "./library.js";
 import { createPlayerUi } from "./player.js";
-import { lyricLinesMarkup, parseLyricsText, selectLyricsMatch, createLyricsSearch } from "./lyrics.js";
+import { lyricLinesMarkup, parseLyricsText, createLyricsSearch, createLyricsLoader } from "./lyrics.js";
 import { contrastingInk } from "./colors.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -62,36 +62,12 @@ function bytesLabel(bytes) { const value = Number(bytes)||0; return value > 1024
 
 const state = { view:"Home", search:"", filter:"all", searchQuery:"", searchPages:{songs:0,albums:0,artists:0,playlists:0}, searchResults:{}, duplicateSort:"Title", duplicateDescending:false, duplicateOffset:0, sort:"Title", descending:false, videoSupportEnabled:false, offset:0, pageSize:200, total:0, items:[], group:null, playlist:null, track:null, trackDetails:null, playing:false, position:0, duration:0, volume:75, shuffle:false, repeat:"Off", repeatA:null, repeatB:null, queue:[], queueTotal:0, queueOffset:0, queueIndex:-1, panel:"queue", panelOpen:true, history:["Home"], historyIndex:0, settings:{}, modal:null, muted:false, scan:null, loading:false, lyricLines:[], lyricText:"", lyricsRaw:"", lyricsSource:"none", lyricsLoadingTrackId:"", lyricsAutoError:"", lyricsRevision:0, lyricsLoadRevision:0, immersiveLyricsOpen:false, lyricsSearchResults:[], lyricsSearchTrackId:"", updateCheckActive:false, aboutInfo:null };
 const lyricsSearch = createLyricsSearch(trackId => call("searchLyrics", {id:trackId}, false));
-const automaticLyricsCache = new Map();
-const automaticLyricsRequests = new Map();
+const automaticLyrics = createLyricsLoader(trackId=>call("getLyrics",{id:trackId}),trackId=>searchLyricsResults(trackId,false));
 async function searchLyricsResults(trackId, manual=false) {
   return lyricsSearch.search(trackId,{manual});
 }
 async function ensureLyricsLoaded(trackId, allowRemote=!!state.settings.autoLoadLyrics) {
-  if(!trackId)return {track:null,raw:"",source:"none",lines:[],plainText:""};
-  let local;
-  try { local=await call("getLyrics",{id:trackId}); }
-  catch { local={track:state.track?.id===trackId?state.track:null,raw:"",source:"none",lines:[],plainText:""}; }
-  if(local?.track?.isVideo)return {...local,lines:[],plainText:"",raw:"",source:"none"};
-  const raw=String(local?.raw||"");
-  const parsed=raw?parseLyricsText(raw):{lines:[],plainText:""};
-  const localHasLyrics=(local?.lines?.length||parsed.lines.length||String(local?.plainText||parsed.plainText).trim().length)>0;
-  if(localHasLyrics)return {...local,raw,lines:local.lines?.length?local.lines:parsed.lines,plainText:local.plainText||parsed.plainText};
-  if(!allowRemote)return {...local,raw,source:"none",lines:[],plainText:""};
-  if(automaticLyricsCache.has(trackId))return automaticLyricsCache.get(trackId);
-  if(automaticLyricsRequests.has(trackId))return automaticLyricsRequests.get(trackId);
-  const request=(async()=>{
-    try {
-      const results=await searchLyricsResults(trackId,false);
-      const track=local?.track||state.track;
-      const match=selectLyricsMatch(track,results);
-      if(!match)return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:results.length?"LRCLIB returned results, but none provided usable lyrics matching this track confidently.":"No LRCLIB lyrics were found for this track."};
-      const lyrics=parseLyricsText(match.raw);
-      return {...local,raw:match.raw,lines:lyrics.lines,plainText:lyrics.plainText,source:"lrclib",offsetMilliseconds:lyrics.offsetMilliseconds};
-    } catch (error) { return {...local,raw,lines:local.lines||[],plainText:local.plainText||"",autoLookupFailed:true,autoLookupMessage:error?.message||"LRCLIB could not be reached. Check your connection or search manually."}; }
-  })().then(result=>{if(result.source==="lrclib"&&(result.lines?.length||result.plainText?.trim())) {automaticLyricsCache.set(trackId,result);if(automaticLyricsCache.size>128)automaticLyricsCache.delete(automaticLyricsCache.keys().next().value);}return result;}).finally(()=>automaticLyricsRequests.delete(trackId));
-  automaticLyricsRequests.set(trackId,request);
-  return request;
+  return automaticLyrics.load(trackId,{allowRemote,track:state.track?.id===trackId?state.track:null});
 }
 async function loadLyricsForTrack(trackId,allowRemote=!!state.settings.autoLoadLyrics) {
   if(!trackId){state.lyricsLoadRevision++;state.lyricsLoadingTrackId="";state.lyricsTrack=null;state.lyricLines=[];state.lyricText="";state.lyricsRaw="";state.lyricsSource="none";state.lyricsRevision++;updatePlayer();return null;}
@@ -471,7 +447,7 @@ document.addEventListener("click",async e=>{
     else if(kind==="rename-playlist"){await call("renamePlaylist",{playlistId:state.playlist.id,name:$("#playlistName").value});state.playlist.name=$("#playlistName").value;closeModal();await renderView();}
     else if(kind==="add-to-playlist"){await call("addToPlaylist",{playlistId:$("#playlistChoice").value,trackId:modalCmd.dataset.trackId});closeModal();toast("Added to playlist.");}
     else if(kind==="set-rating"){await call("setRating",{id:modalCmd.dataset.trackId,rating:Number($("#ratingValue").value)});closeModal();await renderView();}
-    else if(kind==="save-lyrics"){const trackId=modalCmd.dataset.trackId;modalCmd.disabled=true;try{const result=await call("saveLyrics",{id:trackId,text:$("#lyricsEditor").value,mode:$("#lyricsMode").value,offsetMilliseconds:Number($("#lyricsOffset").value)||0});automaticLyricsCache.delete(trackId);lyricsSearch.forget(trackId);await loadLyricsForTrack(trackId,false);closeModal();toast(result?.storage==="sidecar-fallback"?"The audio file couldn’t be updated, so lyrics were saved beside it.":result?.storage==="sidecar"?"Lyrics saved beside the audio file.":"Lyrics embedded in the audio file.");await renderView();}catch(error){modalCmd.disabled=false;toast(error?.message||"Could not save lyrics. Check file permissions and try saving beside the audio file.");}}
+    else if(kind==="save-lyrics"){const trackId=modalCmd.dataset.trackId;modalCmd.disabled=true;try{const result=await call("saveLyrics",{id:trackId,text:$("#lyricsEditor").value,mode:$("#lyricsMode").value,offsetMilliseconds:Number($("#lyricsOffset").value)||0});automaticLyrics.forget(trackId);lyricsSearch.forget(trackId);await loadLyricsForTrack(trackId,false);closeModal();toast(result?.storage==="sidecar-fallback"?"The audio file couldn’t be updated, so lyrics were saved beside it.":result?.storage==="sidecar"?"Lyrics saved beside the audio file.":"Lyrics embedded in the audio file.");await renderView();}catch(error){modalCmd.disabled=false;toast(error?.message||"Could not save lyrics. Check file permissions and try saving beside the audio file.");}}
     else if(kind==="save-tags"){const tags={};$$('[data-tag]').forEach(el=>tags[el.dataset.tag]=el.value);tags.customFields={};$$('[data-custom-tag]').forEach(el=>tags.customFields[el.dataset.customTag]=el.value);tags.additionalFields={};$$('[data-additional-tag]').forEach(el=>tags.additionalFields[el.dataset.additionalTag]=el.value);await call("saveTags",{id:modalCmd.dataset.trackId,tags,artworkToken:$("#modalLayer").dataset.artworkToken||""});closeModal();toast("Tags saved with a backup.");await renderView();}
     else if(kind==="save-eq"){await call("saveEqualizerPreset",{name:$("#presetName").value});closeModal();await renderView();}
     else if(kind==="reset-ui-settings"){const groups=$$('[data-reset-category]:checked').map(input=>input.dataset.resetCategory);if(!groups.length){closeModal();return;}await call("resetUiSettings",{groups});const bootstrap=await call("getBootstrap");state.settings={...(bootstrap.settings||{}),resolvedTheme:bootstrap.resolvedTheme||"Dark"};state.panel=bootstrap.panel||"queue";closeModal();setTheme(state.settings);applyLayoutPreferences();setPanelOpen(bootstrap.panelOpen??state.settings.rightPanelOpen??(window.innerWidth>1180),false);updatePanel();toast("Selected UI settings restored.");await renderView();}

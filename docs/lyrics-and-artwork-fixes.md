@@ -9,7 +9,7 @@ Validated locally on 2026-10-10. This change is limited to artwork palettes and 
 - Automatic matching could choose plain lyrics before another confident result with timestamps. Matching now prefers usable timed lyrics after checking title, artist and available duration. Non-Latin titles are preserved. Malformed timed content falls back to provided plain lyrics. Manual results identify timed/untimed content.
 - Frontend parsing applied an LRC offset only to lines after the offset tag and discarded negative shifted times; this differed from native parsing. It now applies the final offset to every line, preserves negative shifted times, validates seconds, and hides metadata in plain display. Native parsing also handles a leading BOM. Both views use the same active-line lookup, follow backward seeks, and avoid repeated scrolling when the active line is unchanged.
 
-Online automatic lyrics remain a display cache for the current app session. Existing saved lyrics take precedence. Persisting lyrics still uses the existing explicit editor save, with sidecar/embedded storage and backups unchanged. Untimed lyrics cannot accurately follow playback; the UI labels this rather than manufacturing timestamps.
+Online automatic lyrics remain a display cache. Existing timed lyrics take precedence. With automatic lookup enabled, an untimed embedded lyric or sidecar now permits a lookup for a confident timed version for display. The original file stays untouched and remains the fallback for offline, missing, plain-only, or mismatched results. Untimed online results expire after five minutes so new timestamps can be found; timed results expire after thirty minutes. Persisting lyrics still uses the explicit editor save, with sidecar/embedded storage and backups unchanged. Untimed lyrics cannot accurately follow playback; the UI labels this rather than manufacturing timestamps.
 
 ## Verification
 
@@ -22,3 +22,12 @@ Online automatic lyrics remain a display cache for the current app session. Exis
 The running app was not opened/restarted for validation. These tests exercise the scroll implementation with a DOM fixture; manual visual review of real album covers in the installed app remains separate.
 
 The decoder uses Microsoft's documented [ColorManageToSRgb](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.imaging.colormanagementmode) option. Catalog documentation is available at [LRCLIB](https://lrclib.net/docs).
+
+## Follow-up verification, 2026-10-10
+
+`node --test tests/MusicPlayer.Ui.Tests/lyrics-theme.test.mjs` now passes **15/15**,
+including an untimed local lyric upgraded for display, local fallback on network
+failure or a wrong match, avoiding requests for timed local lyrics or disabled
+auto-fetch, and refreshing expired untimed results. All six WebUI scripts pass
+Node syntax checks. The isolated x64 app compile passes with zero warnings/errors;
+its native-package limitation is recorded in [music-crossfade.md](music-crossfade.md).

@@ -88,10 +88,54 @@ export function activeLyricIndex(lines, position) {
   return low-1;
 }
 
+export function createLyricsLoader(loadLocal, searchResults, now=Date.now) {
+  const cache=new Map(),pending=new Map();
+  return {
+    forget(id){cache.delete(id);},
+    async load(id,{allowRemote=false,track=null}={}) {
+      if(!id)return {track:null,raw:"",source:"none",lines:[],plainText:""};
+      let local;
+      try {local=await loadLocal(id);}
+      catch {local={track,raw:"",source:"none",lines:[],plainText:""};}
+      if(local?.track?.isVideo)return {...local,lines:[],plainText:"",raw:"",source:"none"};
+      const raw=String(local?.raw||""),parsed=parseLyricsText(raw);
+      local={...local,raw,lines:local?.lines?.length?local.lines:parsed.lines,plainText:local?.plainText||parsed.plainText};
+      const hasLocal=local.lines.length>0||!!local.plainText.trim();
+      // An untimed sidecar/embedded lyric must not block looking for timestamps.
+      // Online lookup only changes the display; the user's file remains intact.
+      if(local.lines.length||!allowRemote)return local;
+      const saved=cache.get(id);
+      if(saved?.expires>now())return hasLocal&&!saved.value.lines.length?local:saved.value;
+      if(pending.has(id))return pending.get(id);
+      const request=(async()=>{
+        try {
+          const results=await searchResults(id);
+          const match=selectLyricsMatch(local.track||track,results);
+          if(!match){
+            if(hasLocal)return local;
+            return {...local,autoLookupFailed:true,autoLookupMessage:results.length?"LRCLIB returned results, but none provided usable lyrics matching this track confidently.":"No LRCLIB lyrics were found for this track."};
+          }
+          if(hasLocal&&!match.timed)return local;
+          const lyrics=parseLyricsText(match.raw);
+          const value={...local,raw:match.raw,...lyrics,source:"lrclib"};
+          cache.set(id,{value,expires:now()+(match.timed?30*60_000:5*60_000)});
+          if(cache.size>128)cache.delete(cache.keys().next().value);
+          return value;
+        } catch(error) {
+          if(hasLocal)return local;
+          return {...local,autoLookupFailed:true,autoLookupMessage:error?.message||"LRCLIB could not be reached. Check your connection or search manually."};
+        }
+      })().finally(()=>pending.delete(id));
+      pending.set(id,request);
+      return request;
+    }
+  };
+}
+
 export function createLyricsSearch(fetchResults, now=Date.now) {
   const cache=new Map(),pending=new Map();
   let retryUntil=0;
-  function remember(id,results){cache.delete(id);cache.set(id,{results,expires:now()+(results.length?30*60_000:60_000)});if(cache.size>128)cache.delete(cache.keys().next().value);}
+  function remember(id,results){const timed=results.some(result=>parseLyricsText(result?.syncedLyrics).lines.length);cache.delete(id);cache.set(id,{results,expires:now()+(timed?30*60_000:results.length?5*60_000:60_000)});if(cache.size>128)cache.delete(cache.keys().next().value);}
   return {
     forget(id){cache.delete(id);},
     async search(id,{manual=false}={}) {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseLyricsText, selectLyricsMatch, createLyricsSearch, activeLyricIndex } from "../../src/MusicPlayer.App/WebUI/scripts/lyrics.js";
+import { parseLyricsText, selectLyricsMatch, createLyricsSearch, createLyricsLoader, activeLyricIndex } from "../../src/MusicPlayer.App/WebUI/scripts/lyrics.js";
 import { contrastingInk, relativeLuminance } from "../../src/MusicPlayer.App/WebUI/scripts/colors.js";
 import { createPlayerUi } from "../../src/MusicPlayer.App/WebUI/scripts/player.js";
 
@@ -11,6 +11,36 @@ test("auto lookup prefers a confident timed match over plain lyrics",()=>{
   const match=selectLyricsMatch(track,[result,{...result,syncedLyrics:"[00:01.00]Timed line"}]);
   assert.equal(match.timed,true);
   assert.equal(parseLyricsText(match.raw).lines[0].seconds,1);
+});
+test("existing untimed local lyrics can be upgraded for display without changing the file",async()=>{
+  const local={track,source:"embedded",raw:"My local words"};
+  const loader=createLyricsLoader(async()=>local,async()=>[result,{...result,syncedLyrics:"[00:01]Timed line"}]);
+  const loaded=await loader.load("a",{allowRemote:true});
+  assert.equal(loaded.source,"lrclib");assert.equal(loaded.lines.length,1);
+  assert.equal(local.raw,"My local words");
+});
+test("local plain lyrics survive offline, plain-only, and mismatched remote results",async()=>{
+  for(const search of [async()=>{throw new Error("Offline");},async()=>[result],async()=>[{...result,trackName:"Other",syncedLyrics:"[00:01]Wrong"}]]){
+    const loader=createLyricsLoader(async()=>({track,source:"sidecar",raw:"My local words"}),search);
+    const loaded=await loader.load("a",{allowRemote:true});
+    assert.equal(loaded.source,"sidecar");assert.equal(loaded.plainText,"My local words");assert.equal(loaded.autoLookupFailed,undefined);
+  }
+});
+test("timed local lyrics and disabled automatic lookup avoid network requests",async()=>{
+  let calls=0;
+  const loader=createLyricsLoader(async()=>({track,source:"sidecar",raw:"[00:01]Local timing"}),async()=>{calls++;return [result];});
+  assert.equal((await loader.load("a",{allowRemote:true})).source,"sidecar");
+  assert.equal(calls,0);
+  const disabled=createLyricsLoader(async()=>({track,source:"embedded",raw:"Local words"}),async()=>{calls++;return [result];});
+  assert.equal((await disabled.load("a")).plainText,"Local words");assert.equal(calls,0);
+});
+test("untimed automatic results expire so newly available timestamps can be found",async()=>{
+  let now=0,calls=0;
+  const search=createLyricsSearch(async()=>({results:++calls===1?[result]:[{...result,syncedLyrics:"[00:01]Timed"}]}),()=>now);
+  const loader=createLyricsLoader(async()=>({track,source:"none",raw:""}),id=>search.search(id),()=>now);
+  assert.equal((await loader.load("a",{allowRemote:true})).lines.length,0);
+  now=5*60_000+1;
+  assert.equal((await loader.load("a",{allowRemote:true})).lines.length,1);assert.equal(calls,2);
 });
 test("wrong song/version/duration cannot win simply by having timestamps",()=>{
   assert.equal(selectLyricsMatch(track,[{...result,trackName:"Song live remix",syncedLyrics:"[00:01]Other"}]),null);
