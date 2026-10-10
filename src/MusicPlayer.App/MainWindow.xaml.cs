@@ -57,6 +57,7 @@ public sealed partial class MainWindow : Window
     public MainWindow(LibraryStore store)
     {
         _store = store;
+        if (_store.GetSetting("accent-mode") is null) _store.SetSetting("accent-mode", "Artwork");
         InitializeComponent();
         ShellRoot.ActualThemeChanged += (_, _) => ApplyNativeWindowChrome();
         _libraryQueries = new(_store, _appData);
