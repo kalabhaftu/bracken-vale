@@ -53,8 +53,17 @@ public sealed partial class MainWindow
         {
             if (_windowClosed) return;
             _pendingWatchFullScan |= fullScan;
-            foreach (var directory in directories) _pendingWatchDirectories.Add(directory);
-            if (_pendingWatchDirectories.Count > 512) _pendingWatchFullScan = true;
+            if (!_pendingWatchFullScan)
+            {
+                foreach (var directory in directories)
+                {
+                    _pendingWatchDirectories.Add(directory);
+                    if (_pendingWatchDirectories.Count > 512) { _pendingWatchFullScan = true; break; }
+                }
+            }
+            // A full configured-root scan supersedes these paths. Keep overflow
+            // and cancellation delays from retaining an unbounded directory set.
+            if (_pendingWatchFullScan) _pendingWatchDirectories.Clear();
             if (_libraryScan.IsRunning)
             {
                 _libraryWatcherRescanPending = true;

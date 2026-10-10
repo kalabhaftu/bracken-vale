@@ -25,7 +25,10 @@ verification precedes draft-release publication. See [release.md](release.md).
 
 ## Observed results and open gates
 
-- Core suite: 76/76 passed on Linux/x64/ARM64 at `7bfc083`.
+- Core suite: 76/76 passed on Linux/x64/ARM64 at `7bfc083`. The combined lyrics
+  and artwork changes in `9c1e12b` passed 88/88 locally with no failures or skips,
+  plus 11/11 Node regression cases. Commands and behavior coverage are recorded
+  in [lyrics-and-artwork-fixes.md](lyrics-and-artwork-fixes.md).
 - Native playback/format suite: 49/49 passed on x64 and ARM64 at `7bfc083`,
   CI [38036024119](https://github.com/kalabhaftu/music-player/actions/runs/38036024119).
   Genuine fixtures cover all 19 audio extensions, tag editing or safe read-only
@@ -46,6 +49,13 @@ verification precedes draft-release publication. See [release.md](release.md).
   its Start menu retained foreground focus during the fullscreen Escape check.
   `3971bdd` dismisses only that observed Windows system menu before activation;
   the real keyboard and window-bounds assertions remain required.
+  Escape did not close the runner's Start overlay; `cb43490` resets only that
+  foreground system process before player launch. Its subsequent ARM64 run
+  [38040242390](https://github.com/kalabhaftu/music-player/actions/runs/38040242390)
+  exposed a real cancellation bug: the scan stopped, then a pending overflow
+  recovery immediately restarted it. `368dabb` defers automatic watcher work
+  for five minutes after cancellation, preserving pending changes and immediate
+  manual scans. Complete ARM64 input and package gates remain open.
 - Private signed candidate `fc99848`, run
   [38005548773](https://github.com/kalabhaftu/music-player/actions/runs/38005548773),
   built and authenticated all required assets. Its complete x64 MSIX gate passed,
