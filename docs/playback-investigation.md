@@ -61,6 +61,16 @@ unknown chunks and truncated payload rejection.
 
 At `19577d5`, all 49 native cases passed on x64 and ARM64 (LibVLC 3.0.24), and all
 76 core cases passed. x64 completed both initial and restarted WebView smoke
-checks including native media keys. ARM64 tray registration remains open.
+checks including native media keys. The ARM64 tray failure was reproduced with
+a stock Windows notification icon and traced to the runner's unfinished OOBE
+privacy screen. Disposable-desktop initialization corrected the independent
+probe. At `7bfc083`, both architectures again passed all 49 native cases; x64
+passed the complete portable UI gate, while ARM64 still required closing the
+observed Start menu before its real fullscreen Escape interaction.
+
+The installed MKV fixture also exposed null artist/genre arrays in TagLib's
+Matroska reader. `79b1ba7` treats these arrays as empty, preserving fallback
+titles and native duration; the genuine video regression now indexes its MKV
+through the real TrackReader before playback.
 Local cached-engine checks also passed 11/11 playback/queue/DFF cases with the
 older cached LibVLC 3.0.23.1; these are supplementary, not the final engine gate.

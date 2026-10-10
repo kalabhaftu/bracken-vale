@@ -462,6 +462,11 @@ jobs:
           $armZipSaved = 1 - $afterArmZip / $beforeArmZip
           [pscustomobject]@{baseline='9759726';candidate=$env:GITHUB_SHA;beforeBytes=$beforeArm;afterBytes=$afterArm;reduction=$armSaved;beforeZipBytes=$beforeArmZip;afterZipBytes=$afterArmZip;zipReduction=$armZipSaved} | ConvertTo-Json | Set-Content artifacts/ui-evidence/performance/package-size-arm64.json
           if ($armSaved -lt 0.10 -or $armZipSaved -lt 0.10) { throw 'The ARM64 package did not meet both 10% size-reduction targets.' }
+          # Keep numerical evidence readable without downloading package artifacts.
+          Get-ChildItem artifacts/ui-evidence/performance -Recurse -File -Filter '*.json' | ForEach-Object {
+            Write-Host "Resource evidence: $($_.FullName.Substring($PWD.Path.Length + 1))"
+            Get-Content -LiteralPath $_.FullName -Raw | Write-Host
+          }
       - name: Upload comparative resource evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

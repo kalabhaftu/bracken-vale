@@ -60,7 +60,12 @@ for 100 tracks and 471,498,752 / 320,045,056 bytes for 100,000 tracks. The large
 baseline was still scanning after cancellation, so its 7.234375 CPU-seconds
 must not be called idle CPU. The candidate scan had settled and consumed
 0.296875 CPU-seconds; the small settled samples consumed 0.53125 / 0.046875.
-Final main validation and the added ARM64 size comparison remain required.
+Private run [38005548773](https://github.com/kalabhaftu/music-player/actions/runs/38005548773)
+at `fc99848` passed the complete performance gate, including the added ARM64
+unpacked and ZIP comparisons against `9759726`; each reduction exceeded 10%.
+Exact values are retained in that run's performance-evidence artifact. Final
+main validation remains required. Numerical evidence is also printed in future
+workflow logs so it can be reviewed without downloading package artifacts.
 
 ## Remaining stable-release gates
 

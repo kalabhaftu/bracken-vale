@@ -25,33 +25,52 @@ verification precedes draft-release publication. See [release.md](release.md).
 
 ## Observed results and open gates
 
-- Core suite: 76/76 passed locally and on Linux/x64/ARM64 at `19577d5`.
-- Native playback/format suite: 49/49 passed on x64 and ARM64 at `19577d5`,
-  CI [37996036525](https://github.com/kalabhaftu/music-player/actions/runs/37996036525).
+- Core suite: 76/76 passed on Linux/x64/ARM64 at `7bfc083`.
+- Native playback/format suite: 49/49 passed on x64 and ARM64 at `7bfc083`,
+  CI [38036024119](https://github.com/kalabhaftu/music-player/actions/runs/38036024119).
   Genuine fixtures cover all 19 audio extensions, tag editing or safe read-only
   rejection, video rendering, subtitles, rate changes, seeking and snapshots.
   Ogg seeking, WAV alias metadata and DFF opening/duration failures are fixed.
-- x64 portable UI completed discovery, search, duplicate queue dragging, immersive
-  lyrics, 60 navigations, minimized queue advancement, tray restore, taskbar/media
-  keys and restart persistence. ARM64 tray registration still fails with Windows
-  E_FAIL and a correctly sized 976-byte NOTIFYICONDATA. An independent Windows
-  notification probe is being added; this gate remains open.
-- Private signed candidate [37996130358](https://github.com/kalabhaftu/music-player/actions/runs/37996130358)
-  authenticated all required assets. x64 setup installation and upgrade completed
-  four UI checks; explicit data-removal uninstall failed because Inno Setup checks
-  are evaluated at installation. `efc6241` moves the choice into uninstallation.
-  MSIX installation has not yet run past the setup gate.
-- Performance baseline completed both 100-track runs, then its 100,000-track
-  scan failed to cancel within 60 seconds. The next run records that baseline
-  limitation without labeling its CPU sample idle. Candidate scan cancellation
-  must still settle before its idle measurement. Final package/resource comparison
-  remains pending. Constant-size database checkpoint results are recorded in
-  [optimization-validation.md](optimization-validation.md).
+- x64 portable UI at `a73e62f` completed discovery, search, duplicate queue
+  dragging, immersive lyrics, 60 navigations, minimized queue advancement,
+  tray restore, taskbar/media keys and restart persistence. Video controls,
+  subtitle selection, real fullscreen/Escape, and PNG snapshots also passed.
+  CI [38003017907](https://github.com/kalabhaftu/music-player/actions/runs/38003017907)
+  recorded 1,208,320 bytes of private-memory growth in the final 20 navigations,
+  below the 32 MiB regression limit.
+  ARM64's independent Windows tray probe failed because the disposable image
+  remained on its first-login privacy screen. Initializing that desktop with
+  Windows' OOBE policy fixed the stock probe at `8d37bbb`, diagnostics
+  [38004081735](https://github.com/kalabhaftu/music-player/actions/runs/38004081735).
+  x64 also passed the complete portable UI gate at `7bfc083`; ARM64 failed because
+  its Start menu retained foreground focus during the fullscreen Escape check.
+  `3971bdd` dismisses only that observed Windows system menu before activation;
+  the real keyboard and window-bounds assertions remain required.
+- Private signed candidate `fc99848`, run
+  [38005548773](https://github.com/kalabhaftu/music-player/actions/runs/38005548773),
+  built and authenticated all required assets. Its complete x64 MSIX gate passed,
+  including UI, upgrade, associations and both uninstall data choices. Setup
+  lifecycle checks completed, but its UI gate failed on a playback-state timing
+  race. ARM64 setup/MSIX lifecycle checks ran independently; their UI gate failed
+  on foreground activation. These partial results do not close the package gate.
+  Windows PowerShell hosts Appx tests; the shipped PowerShell 7 helper uses the
+  official Windows PowerShell compatibility import.
+- The complete x64 performance gate passed at `9c2f75c`, private run
+  [38000118310](https://github.com/kalabhaftu/music-player/actions/runs/38000118310).
+  Unpacked packages were 14.0% smaller; signed portable ZIPs were 13.2% smaller.
+  Visible-library times fell from 15,502 to 4,744 ms for 100 saved tracks and
+  12,740 to 7,961 ms for 100,000 tracks. The large baseline's resource sample
+  still had an active scan, so its CPU measurement is explicitly not idle.
+  The complete performance gate at `fc99848` also passed both x64 and ARM64
+  unpacked and downloadable ZIP size targets. Final main validation remains
+  required. Constant-size database
+  checkpoint and combined-memory results are in [optimization-validation.md](optimization-validation.md).
 - `9c2f75c` adds installed video controls/subtitle/screenshot checks and repairs
   video file activation while retaining the opt-in video-extension setting.
   Final release commits must be GitHub-created (`web-flow`) and verified; this
   provides the requested GitHub.com signature badge, separately from self-signed
   Windows package signatures.
+
 ## Still required
 
 - [ ] Pass all protected CI checks on the final candidate, including all formats.
