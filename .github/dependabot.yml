@@ -10,3 +10,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      media-fixture-cache:
+        patterns:
+          - "actions/cache/*"
+  - package-ecosystem: npm
+    directory: "/tests/MusicPlayer.Ui.Tests"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2

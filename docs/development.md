@@ -36,7 +36,7 @@ The separate native playback tests run on Windows x64 and native ARM64. They com
 
 ## Configuration and data
 
-Application data lives under `%LOCALAPPDATA%\MusicPlayer`; the SQLite database, artwork cache, recoverable tag backups and rotating logs are local. Logs are in `%LOCALAPPDATA%\MusicPlayer\Logs` and can be opened from Settings. They contain error details and may include local file paths, so review them before sharing. The app has no server or public API. Playlists import M3U and M3U8 files and export UTF-8 M3U8. Lyrics can be read from supported embedded tags or adjacent `.lrc` files. LRCLIB searches send only title and artist after the user starts the search; the optional GitHub release check uses conditional requests and does not download or install releases.
+Application data lives under `%LOCALAPPDATA%\MusicPlayer`; the SQLite database, artwork cache, recoverable tag backups and rotating logs are local. Logs are in `%LOCALAPPDATA%\MusicPlayer\Logs` and can be opened from Settings. They contain error details and may include local file paths, so review them before sharing. The app has no server or public API. Playlists import M3U and M3U8 files and export UTF-8 M3U8. Lyrics can be read from supported embedded tags or adjacent `.lrc` files. LRCLIB searches send title and artist when the user starts a search or enables automatic lyrics lookup; the optional GitHub release check uses conditional requests and does not download or install releases.
 
 ## Release signing
 

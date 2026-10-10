@@ -114,7 +114,7 @@ visibility was slower in this final sample; reduced startup contention is
 supported by settled candidate scans and resource measurements, not a claim
 that every startup became faster. Raw JSON remains in the workflow log and
 performance-evidence artifact. Both architecture package reductions exceed 10%.
-Final main validation still requires the same gates after protected merge.
+The merged revision's results are recorded below.
 
 - [x] Required `Core tests · Linux`, `x64`, and `ARM64` on the tested code candidate.
 - [x] Signed packaging, timestamps, assemblies/scripts, embedded uninstaller, MSIX and authenticated manifest.
@@ -122,9 +122,34 @@ Final main validation still requires the same gates after protected merge.
 - [x] Setup/MSIX install, upgrade, associations and both data-retention choices.
 - [x] Representative playback results for every listed audio format.
 - [x] Small/100,000-track resource comparison; navigation and minimized-playback checks.
-- [ ] Protected PR merge; synchronize main; signing preflight and final package validation from merged revision.
-- [ ] Delete the archived local backup branch only after gates pass; tag `v1.0.0`, publish self-signed assets, and verify uploaded hashes.
+- [x] Protected PR merge; synchronize main; signing preflight and final package validation from merged revision.
+- [x] Delete the archived local backup branch after gates passed and create tag `v1.0.0`.
+- [x] Publish self-signed assets and verify uploaded hashes.
 
 Signing is explicitly self-signed, **not publicly trusted**. See
 [`SIGNING.md`](../packaging/windows/SIGNING.md). Publisher/SmartScreen warnings and
 the MSIX certificate-trust choice must remain explicit in release notes.
+
+## Merged release revision, 3328407
+
+[Main CI 38059601873](https://github.com/kalabhaftu/music-player/actions/runs/38059601873),
+[signing preflight 38060250632](https://github.com/kalabhaftu/music-player/actions/runs/38060250632),
+and [full candidate 38060262194](https://github.com/kalabhaftu/music-player/actions/runs/38060262194)
+all passed at `3328407d5df3f68674f02c116a88372e336c4e9e`, after the final Artwork
+default was merged. Both installed architecture jobs passed complete setup/MSIX
+interaction and lifecycle gates. The comparative performance job passed both
+architecture package-size reductions of at least 10%; its numerical JSON and
+startup/CPU/combined-memory samples remain in the job log and performance-evidence
+artifact. Passing the gate does not imply that every startup sample is faster.
+
+Tag `v1.0.0` points to this GitHub-verified source commit.
+[38062507918](https://github.com/kalabhaftu/music-player/actions/runs/38062507918)
+passed the repeated signed build, both complete installed package jobs and the
+resource job. The publish job authenticated the manifest and compared every
+uploaded draft asset with its validated candidate before publishing
+[Music Player 1.0.0](https://github.com/kalabhaftu/music-player/releases/tag/v1.0.0)
+at 2026-10-10 15:31:27 UTC. The public release has all 12 expected assets and is
+neither a draft nor a prerelease. Final downloadable ZIP sizes are 123,630,739
+bytes (x64) and 115,715,056 bytes (ARM64); the repeated comparison exceeded the
+10% reduction target for both ZIP and unpacked sizes on both architectures.
+No release binaries or uncached dependencies are downloaded to the user's PC.
