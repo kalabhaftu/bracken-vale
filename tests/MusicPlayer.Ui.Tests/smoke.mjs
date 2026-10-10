@@ -101,6 +101,25 @@ await until(async()=>await page.locator('#routeView tr[data-track]').count()>=4,
 await call("playTrack",{id:fixtures[0].id,view:"Songs"});
 await until(async()=>(await call("getCurrentTrack")).playing,"Native playback did not start");
 await call("playPause");
+await call("updateSettings",{settings:{accentMode:"Artwork",accentManual:false,theme:"Dark"}});
+await until(async()=>!!(await call("getBootstrap")).settings.artworkPalette,"Native artwork palette did not reach the UI");
+const artworkThemes=[];
+for(const theme of ["Dark","Light"]){
+  await call("updateSettings",{settings:{theme}});
+  await until(()=>page.evaluate(theme=>document.documentElement.dataset.artwork==="true"&&document.documentElement.dataset.theme===theme.toLowerCase(),theme),"Artwork colors were not applied");
+  const sample=await page.evaluate(()=>{
+    const root=getComputedStyle(document.documentElement),title=getComputedStyle(document.querySelector("#nowTitle"));
+    return {accent:root.getPropertyValue("--accent").trim(),main:root.getPropertyValue("--main-surface").trim(),title:title.color};
+  });
+  const channels=value=>value.startsWith("#")?[1,3,5].map(i=>parseInt(value.slice(i,i+2),16)):value.match(/[\d.]+/g).slice(0,3).map(Number);
+  const luminance=value=>{const c=channels(value).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return c[0]*.2126+c[1]*.7152+c[2]*.0722;};
+  assert(channels(sample.main)[0]>channels(sample.main)[2]*2,"Competing cover hues invented a purple surface");
+  assert.deepEqual(channels(sample.title),channels(sample.accent),"Now-playing title did not use the artwork accent");
+  assert((luminance(sample.title)+.05)/(luminance(sample.main)+.05)>=4.5,"Artwork title contrast is below 4.5:1");
+  artworkThemes.push({theme,...sample});
+  await page.screenshot({path:`${output}/artwork-${theme.toLowerCase()}.png`,fullPage:true});
+}
+await call("updateSettings",{settings:{accentMode:"Native",theme:"System"}});
 await until(async()=>!(await call("getCurrentTrack")).playing,"Playback did not pause before queue editing");
 await call("clearQueue");
 for(const track of [fixtures[1],fixtures[1],fixtures[2],fixtures[3]])await call("addToQueue",{id:track.id});
@@ -175,7 +194,7 @@ const idleBefore=metrics();
 await new Promise(resolve=>setTimeout(resolve,5000));
 const idleAfter=metrics();
 await page.screenshot({path:`${output}/final-ui.png`,fullPage:true});
-await fs.writeFile(`${output}/results${process.argv.includes("--restart")?"-restart":""}.json`,JSON.stringify({usableViewMs,discoveredFixtures:fixtures.length,installedVideo:{play:true,pause:true,seek:true,speed:true,embeddedSubtitle:true,fullscreen:true,screenshotCommand:true,closePauses:true},queueDragging:true,duplicateQueue:true,immersiveLyrics:true,repeatedNavigation:60,memorySamples,minimizedPlayback:{beforeMinimize,minimized,nativeAdvancement:true,tray:true,taskbar:true,mediaKey:true},pausedIdle:{before:idleBefore,after:idleAfter},errors},null,2));
+await fs.writeFile(`${output}/results${process.argv.includes("--restart")?"-restart":""}.json`,JSON.stringify({usableViewMs,discoveredFixtures:fixtures.length,artworkThemes,installedVideo:{play:true,pause:true,seek:true,speed:true,embeddedSubtitle:true,fullscreen:true,screenshotCommand:true,closePauses:true},queueDragging:true,duplicateQueue:true,immersiveLyrics:true,repeatedNavigation:60,memorySamples,minimizedPlayback:{beforeMinimize,minimized,nativeAdvancement:true,tray:true,taskbar:true,mediaKey:true},pausedIdle:{before:idleBefore,after:idleAfter},errors},null,2));
 assert.deepEqual(errors,[],"WebUI raised JavaScript errors");
 console.log("Windows WebView UI smoke passed");
 await browser.close();

@@ -62,6 +62,7 @@ $policy='HKLM:/Software/Policies/Microsoft/Edge/WebView2/AdditionalBrowserArgume
 New-Item -Path $policy -Force | Out-Null
 New-ItemProperty -Path $policy -Name 'MusicPlayer.exe' -Value '--remote-debugging-port=9222' -PropertyType String -Force | Out-Null
 $exe=(Resolve-Path -LiteralPath $Executable).Path
+& (Join-Path $PSScriptRoot 'Prepare-ArtworkFixture.ps1') -TrackPath (Join-Path $music 'MusicPlayerSmoke-A.wav') -TagLibPath (Join-Path (Split-Path -Parent $exe) 'TagLibSharp.dll')
 function Save-Diagnostics {
     $out=Join-Path $PWD 'artifacts/ui-evidence'
     New-Item -ItemType Directory -Path $out -Force | Out-Null
