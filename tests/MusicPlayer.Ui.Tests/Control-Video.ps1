@@ -34,6 +34,13 @@ public static class VideoWindowBounds {
         return GetAncestor(WindowFromPoint(point),2);
     }
     public static void Activate(IntPtr window) {
+        // Closing system welcome UI restores foreground asynchronously. Use
+        // Windows' documented activation/wait pattern before requiring focus.
+        SetForegroundWindow(window);
+        IntPtr result;
+        if(SendMessageTimeout(window,0,IntPtr.Zero,IntPtr.Zero,2,5000,out result)==IntPtr.Zero)
+            throw new InvalidOperationException("The video window did not process activation within five seconds.");
+        if(GetForegroundWindow()==window)return;
         Rect rect;
         if(!GetWindowRect(window,out rect))throw new InvalidOperationException("Could not locate the video title bar.");
         var point=new Point {X=rect.Left+(rect.Right-rect.Left)/2,Y=rect.Top+16};
@@ -45,8 +52,14 @@ public static class VideoWindowBounds {
         if(!SetCursorPos(point.X,point.Y))throw new InvalidOperationException("The runner desktop rejected cursor positioning.");
         var inputs=new[] {new Input {Type=0,MouseFlags=2},new Input {Type=0,MouseFlags=4}};
         if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the video title-bar click.");
+        SetForegroundWindow(window);
+        if(SendMessageTimeout(window,0,IntPtr.Zero,IntPtr.Zero,2,5000,out result)==IntPtr.Zero)
+            throw new InvalidOperationException("The video window did not process activation after input.");
         for(var attempt=0;attempt<30 && GetForegroundWindow()!=window;attempt++)System.Threading.Thread.Sleep(100);
-        if(GetForegroundWindow()!=window)throw new InvalidOperationException("A real title-bar click did not activate the video window on the runner desktop.");
+        if(GetForegroundWindow()!=window){
+            var title=new System.Text.StringBuilder(256);GetWindowText(GetForegroundWindow(),title,title.Capacity);
+            throw new InvalidOperationException("The video window did not obtain foreground focus after activation and input; foreground: "+title+".");
+        }
     }
     static void SendEscape() {
         var inputs=new[] {new Input {Type=1,Key=0x1B},new Input {Type=1,Key=0x1B,Flags=2}};
