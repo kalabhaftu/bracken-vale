@@ -43,6 +43,7 @@ public sealed partial class MainWindow
     private readonly HashSet<string> _pendingWatchDirectories = new(StringComparer.OrdinalIgnoreCase);
     private bool _pendingWatchFullScan;
     private DateTimeOffset _nextWatcherRecoveryUtc;
+    private DateTimeOffset _watcherScansCancelledUntilUtc;
 
     private void RequestLibraryWatcherRescan() => RequestLibraryWatcherRescan([], true);
 
@@ -59,7 +60,8 @@ public sealed partial class MainWindow
                 _libraryWatcherRescanPending = true;
                 return;
             }
-            if (_pendingWatchFullScan && DateTimeOffset.UtcNow < _nextWatcherRecoveryUtc)
+            if (DateTimeOffset.UtcNow < _watcherScansCancelledUntilUtc ||
+                (_pendingWatchFullScan && DateTimeOffset.UtcNow < _nextWatcherRecoveryUtc))
             {
                 _libraryWatcherRescanPending = true;
                 return;
@@ -77,7 +79,8 @@ public sealed partial class MainWindow
     private void RunPendingLibraryWatcherRescan()
     {
         if (!_libraryWatcherRescanPending || _windowClosed) return;
-        if (_pendingWatchFullScan && DateTimeOffset.UtcNow < _nextWatcherRecoveryUtc) return;
+        if (DateTimeOffset.UtcNow < _watcherScansCancelledUntilUtc ||
+            (_pendingWatchFullScan && DateTimeOffset.UtcNow < _nextWatcherRecoveryUtc)) return;
         _libraryWatcherRescanPending = false;
         RequestLibraryWatcherRescan([], false);
     }

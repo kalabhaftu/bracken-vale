@@ -27,6 +27,9 @@ public sealed partial class MainWindow
                 if (_libraryScan.TogglePause()) PublishScanState();
                 return null;
             case "cancelScan":
+                // Keep queued watcher work from immediately undoing the user's
+                // cancellation. Manual scans bypass this automatic-scan delay.
+                _watcherScansCancelledUntilUtc = DateTimeOffset.UtcNow + MusicPlayer.Core.LibraryWatchBatch.RecoveryInterval;
                 if (_libraryScan.Cancel()) PublishScanState();
                 return null;
             case "showInFolder":
