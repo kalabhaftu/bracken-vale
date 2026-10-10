@@ -6,9 +6,28 @@ using System;
 using System.Runtime.InteropServices;
 public static class MusicPlayerShellTest {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string name, string title);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint id);
 }
 '@
 & (Join-Path $PSScriptRoot 'Probe-NotificationArea.ps1')
+# A fresh Windows 11 image can leave Start covering the desktop and ignoring
+# injected Escape. Recover that observed system UI before launching any player.
+$foreground=[MusicPlayerShellTest]::GetForegroundWindow()
+$foregroundOwner=[uint32]0
+$null=[MusicPlayerShellTest]::GetWindowThreadProcessId($foreground,[ref]$foregroundOwner)
+$startMenu=Get-Process -Id $foregroundOwner -ErrorAction SilentlyContinue
+if($startMenu -and $startMenu.ProcessName -eq 'StartMenuExperienceHost'){
+    if(Get-Process MusicPlayer -ErrorAction SilentlyContinue){throw 'Disposable Start-menu recovery must precede player launch.'}
+    if($startMenu.SessionId -ne (Get-Process -Id $PID).SessionId -or !$startMenu.Path -or
+        !$startMenu.Path.StartsWith((Join-Path $env:WINDIR 'SystemApps')+'\',[StringComparison]::OrdinalIgnoreCase)){
+        throw 'The foreground Start menu is not the disposable session Windows system process.'
+    }
+    Write-Host 'Resetting the foreground Start menu on the disposable Windows desktop.'
+    Stop-Process -Id $startMenu.Id -Force
+    for($attempt=0;$attempt -lt 30 -and [MusicPlayerShellTest]::GetForegroundWindow() -eq $foreground;$attempt++){Start-Sleep -Milliseconds 100}
+    if([MusicPlayerShellTest]::GetForegroundWindow() -eq $foreground){throw 'The disposable Start-menu overlay did not clear.'}
+}
 # Tray and thumbnail tests need Explorer in this disposable runner session.
 if([MusicPlayerShellTest]::FindWindow('Shell_TrayWnd',$null) -eq [IntPtr]::Zero){
     Start-Process explorer.exe -WindowStyle Hidden

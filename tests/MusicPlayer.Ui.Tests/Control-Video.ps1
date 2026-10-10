@@ -31,8 +31,11 @@ public static class VideoWindowBounds {
         Rect rect;
         if(!GetWindowRect(window,out rect))throw new InvalidOperationException("Could not locate the video title bar.");
         var point=new Point {X=rect.Left+(rect.Right-rect.Left)/2,Y=rect.Top+16};
-        if(GetAncestor(WindowFromPoint(point),2)!=window)
-            throw new InvalidOperationException("The video title bar is covered by another window; real input cannot activate it.");
+        var coveringWindow=GetAncestor(WindowFromPoint(point),2);
+        if(coveringWindow!=window) {
+            var coveringTitle=new System.Text.StringBuilder(256);GetWindowText(coveringWindow,coveringTitle,coveringTitle.Capacity);
+            throw new InvalidOperationException("The video title bar is covered by another window: "+coveringTitle+"; real input cannot activate it.");
+        }
         if(!SetCursorPos(point.X,point.Y))throw new InvalidOperationException("The runner desktop rejected cursor positioning.");
         var inputs=new[] {new Input {Type=0,MouseFlags=2},new Input {Type=0,MouseFlags=4}};
         if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the video title-bar click.");
