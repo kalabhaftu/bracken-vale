@@ -1,6 +1,13 @@
+param([int] $AppProcessId)
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Welcome-window cleanup requires a disposable runner.'}
-if(Get-Process MusicPlayer -ErrorAction SilentlyContinue){throw 'Welcome-window cleanup must precede player launch.'}
+$players=@(Get-Process MusicPlayer -ErrorAction SilentlyContinue)
+if($AppProcessId){
+    if($env:MUSICPLAYER_TEST_APP_PID -ne [string]$AppProcessId -or $players.Count -ne 1 -or
+        $players[0].Id -ne $AppProcessId -or $players[0].SessionId -ne (Get-Process -Id $PID).SessionId){
+        throw 'Welcome-window cleanup may only accompany the sole player launched by this disposable smoke test.'
+    }
+} elseif($players.Count){throw 'Prelaunch welcome-window cleanup requires no running player.'}
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
 Add-Type @'
 using System;
@@ -36,7 +43,7 @@ for($attempt=0;$attempt -lt 12;$attempt++){
             !$owner.Path.StartsWith($env:WINDIR+'\',[StringComparison]::OrdinalIgnoreCase)){
             throw 'The account welcome window is not owned by the disposable Windows system session.'
         }
-        Write-Host "Closing optional Microsoft-account welcome UI owned by $($owner.ProcessName)."
+        [Console]::Error.WriteLine("Closing optional Microsoft-account welcome UI owned by $($owner.ProcessName).")
         $window=[Windows.Automation.AutomationElement]::FromHandle($handle)
         $pattern=$null
         if($window.TryGetCurrentPattern([Windows.Automation.WindowPattern]::Pattern,[ref]$pattern)){$pattern.Close()}

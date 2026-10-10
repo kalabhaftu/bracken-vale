@@ -98,7 +98,12 @@ function Find-Control([string] $Label){
     return $control
 }
 switch($Action){
-    Activate { [VideoWindowBounds]::Activate([IntPtr]$window.Current.NativeWindowHandle) }
+    Activate {
+        # Windows first-login welcome UI can arrive after startup. Close only
+        # that verified system dialog before testing a real title-bar click.
+        & (Join-Path $PSScriptRoot 'Close-DisposableWelcomeWindows.ps1') -AppProcessId $AppProcessId
+        [VideoWindowBounds]::Activate([IntPtr]$window.Current.NativeWindowHandle)
+    }
     Invoke {
         $invokedAt=[DateTime]::UtcNow
         (Find-Control $Name).GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
