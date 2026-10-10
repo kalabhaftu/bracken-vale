@@ -16,6 +16,10 @@ directories and bound overflow scans. Small discovery batches become visible
 before full-drive scanning finishes. WebView minimizes using official suspension
 APIs while native playback advances. WinUI component selection removes unused
 SDK payloads. The launcher explicitly builds x64 and preserves a running instance.
+Completed shared changes in `2495a47` isolate music crossfade volumes and wait
+for incoming decoder readiness; `2eb5212` allows untimed local lyrics to obtain
+timed display lyrics while preserving the local file and offline fallback.
+These changes require their own final-source CI and package validation.
 
 Signing uses one persistent **self-signed** project key, with expected Actions
 secrets configured. Portable/setup/MSIX pipelines sign first-party binaries and
@@ -25,44 +29,45 @@ verification precedes draft-release publication. See [release.md](release.md).
 
 ## Observed results and open gates
 
-- Core suite: 76/76 passed on Linux/x64/ARM64 at `7bfc083`. The combined lyrics
-  and artwork changes in `9c1e12b` passed 88/88 locally with no failures or skips,
-  plus 11/11 Node regression cases. Commands and behavior coverage are recorded
+- Core suite: 88/88 passed on Linux/x64/ARM64 at `eeb4711`, with no failures
+  or skips. The required Linux check also passed all 11 Node regression cases.
+  CI [38047712311](https://github.com/kalabhaftu/music-player/actions/runs/38047712311)
+  passed all three protected checks. Commands and behavior coverage are recorded
   in [lyrics-and-artwork-fixes.md](lyrics-and-artwork-fixes.md).
-- Native playback/format suite: 49/49 passed on x64 and ARM64 at `7bfc083`,
-  CI [38036024119](https://github.com/kalabhaftu/music-player/actions/runs/38036024119).
+- Native playback/format suite: 49/49 passed on x64 and ARM64 at `eeb4711`,
+  CI [38047712311](https://github.com/kalabhaftu/music-player/actions/runs/38047712311).
   Genuine fixtures cover all 19 audio extensions, tag editing or safe read-only
   rejection, video rendering, subtitles, rate changes, seeking and snapshots.
   Ogg seeking, WAV alias metadata and DFF opening/duration failures are fixed.
-- x64 portable UI at `a73e62f` completed discovery, search, duplicate queue
+- Both x64 and ARM64 portable UI at `eeb4711` completed discovery, search, duplicate queue
   dragging, immersive lyrics, 60 navigations, minimized queue advancement,
   tray restore, taskbar/media keys and restart persistence. Video controls,
-  subtitle selection, real fullscreen/Escape, and PNG snapshots also passed.
+  subtitle selection, real fullscreen/Escape, PNG snapshots, and artwork-accent
+  contrast in light/dark themes also passed. Initial and restart checks both ran.
+  CI [38047712311](https://github.com/kalabhaftu/music-player/actions/runs/38047712311).
+  The earlier x64 run at `a73e62f`,
   CI [38003017907](https://github.com/kalabhaftu/music-player/actions/runs/38003017907)
   recorded 1,208,320 bytes of private-memory growth in the final 20 navigations,
   below the 32 MiB regression limit.
-  ARM64's independent Windows tray probe failed because the disposable image
-  remained on its first-login privacy screen. Initializing that desktop with
-  Windows' OOBE policy fixed the stock probe at `8d37bbb`, diagnostics
-  [38004081735](https://github.com/kalabhaftu/music-player/actions/runs/38004081735).
-  x64 also passed the complete portable UI gate at `7bfc083`; ARM64 failed because
-  its Start menu retained foreground focus during the fullscreen Escape check.
-  `3971bdd` dismisses only that observed Windows system menu before activation;
-  the real keyboard and window-bounds assertions remain required.
-  Escape did not close the runner's Start overlay; `cb43490` resets only that
-  foreground system process before player launch. Its subsequent ARM64 run
-  [38040242390](https://github.com/kalabhaftu/music-player/actions/runs/38040242390)
-  exposed a real cancellation bug: the scan stopped, then a pending overflow
-  recovery immediately restarted it. `368dabb` defers automatic watcher work
-  for five minutes after cancellation, preserving pending changes and immediate
-  manual scans. Complete ARM64 input and package gates remain open.
-- Private signed candidate `fc99848`, run
-  [38005548773](https://github.com/kalabhaftu/music-player/actions/runs/38005548773),
-  built and authenticated all required assets. Its complete x64 MSIX gate passed,
-  including UI, upgrade, associations and both uninstall data choices. Setup
-  lifecycle checks completed, but its UI gate failed on a playback-state timing
-  race. ARM64 setup/MSIX lifecycle checks ran independently; their UI gate failed
-  on foreground activation. These partial results do not close the package gate.
+  ARM64's disposable Windows desktop required initialization of its first-login
+  privacy screen and dismissal of a Microsoft-account welcome window owned by
+  Windows `WWAHost`. Desktop-app enumeration missed that packaged welcome UI;
+  the test now uses the actual obstructing HWND, exact title, system-process
+  ownership and session checks. Real input assertions remain required and passed.
+  `368dabb` also fixes a real cancellation bug exposed during these tests:
+  pending watcher recovery immediately restarted an explicitly cancelled scan.
+  Automatic watcher work now waits five minutes, preserving pending changes and
+  allowing immediate manual scans. Installed package and final-source gates
+  still require their own completed evidence.
+- Private signed candidate `eeb4711`, run
+  [38048035180](https://github.com/kalabhaftu/music-player/actions/runs/38048035180),
+  built and authenticated all required assets. Complete x64 and ARM64 MSIX
+  gates passed, including UI, upgrade, associations and both uninstall choices.
+  Setup's initial UI checks passed, but upgrade exited with code 5 on both
+  architectures. The artwork-fixture helper loaded the installed TagLib DLL
+  into the long-lived test host. `a0fb3fb` moves that work into a hidden child
+  process that exits before upgrade and retains installer logs. Setup and
+  final-source package gates require a successful rerun.
   Windows PowerShell hosts Appx tests; the shipped PowerShell 7 helper uses the
   official Windows PowerShell compatibility import.
 - The complete x64 performance gate passed at `9c2f75c`, private run
@@ -71,10 +76,15 @@ verification precedes draft-release publication. See [release.md](release.md).
   Visible-library times fell from 15,502 to 4,744 ms for 100 saved tracks and
   12,740 to 7,961 ms for 100,000 tracks. The large baseline's resource sample
   still had an active scan, so its CPU measurement is explicitly not idle.
-  The complete performance gate at `fc99848` also passed both x64 and ARM64
+  The complete performance gate at `eeb4711` also passed both x64 and ARM64
   unpacked and downloadable ZIP size targets. Final main validation remains
   required. Constant-size database
   checkpoint and combined-memory results are in [optimization-validation.md](optimization-validation.md).
+- Follow-up shared changes: 15/15 Node lyric checks passed locally; seven
+  crossfade checks passed using cached VLC 3.0.23.1. The tracked release engine
+  remains 3.0.24 and is validated on CI runners. Three real Windows audio-device
+  cases require an audio endpoint; their cached-engine evidence is separate
+  from headless CI. See [music-crossfade.md](music-crossfade.md).
 - `9c2f75c` adds installed video controls/subtitle/screenshot checks and repairs
   video file activation while retaining the opt-in video-extension setting.
   Final release commits must be GitHub-created (`web-flow`) and verified; this

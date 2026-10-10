@@ -69,6 +69,23 @@ workflow logs so it can be reviewed without downloading package artifacts.
 
 ## Remaining stable-release gates
 
+Private candidate [38048035180](https://github.com/kalabhaftu/music-player/actions/runs/38048035180)
+at `eeb4711` passed the resource gate on the same runner used for each baseline
+comparison. Unpacked/ZIP reductions were **14.0%/13.2% on x64** and
+**13.4%/12.3% on ARM64**. Both full portable UI gates and both complete MSIX
+installation gates also passed; setup upgrade still requires a successful rerun.
+
+| Saved tracks | Visible library ms, before / after | Combined private bytes, before / after | Combined working-set bytes, before / after | Ten-second CPU seconds, before / after |
+|---:|---:|---:|---:|---:|
+| 100 | 14,272 / 4,556 | 211,906,560 / 203,313,152 | 499,720,192 / 483,016,704 | 0.59375 / 0.5 |
+| 100,000 | 6,965 / 6,971 | 473,833,472 / 305,250,304 | 738,242,560 / 555,778,048 | 11.390625 (scanning) / 0.640625 (idle) |
+
+The large-library startup times in this single sample were effectively equal;
+do not describe every startup as faster. The baseline large scan remained active
+and its CPU sample is not idle. Both candidate scans settled before sampling.
+Raw numerical JSON is retained and printed in the workflow job log. Final merged
+revision validation remains required.
+
 - [ ] Required `Core tests · Linux`, `x64`, and `ARM64` checks on the final candidate.
 - [ ] Private signed candidate packaging, timestamps, first-party assemblies/scripts, setup and embedded-uninstaller signatures, MSIX signatures, authenticated manifest verification.
 - [ ] Clean Windows installed-library discovery and restart persistence; search, queue dragging/selection, lyrics, settings, tray/taskbar/media keys, video/subtitles.
