@@ -1,9 +1,47 @@
 # Project status
 
-Updated: 2026-10-10. Results below refer to immutable tested revisions; later
-merge and publication results are available in the linked workflows. The user's
+Updated: 2026-10-10. Music Player 1.0.0 is published. Results below refer to
+immutable tested revisions and the verified public assets. The user's
 running instance remains untouched. Windows UI/package tests use disposable
 GitHub runners. No release binaries are downloaded to the user's PC.
+
+## Music Player 1.0.0 release revision
+
+Release tag `v1.0.0` points to `3328407d5df3f68674f02c116a88372e336c4e9e`.
+PRs [#2](https://github.com/kalabhaftu/music-player/pull/2) and
+[#9](https://github.com/kalabhaftu/music-player/pull/9) were protected-squash-merged.
+The release commit was created on GitHub.com by `web-flow`; GitHub reports
+`verification.verified: true` and `reason: valid`. Local main is synchronized.
+
+- [Main CI 38059601873](https://github.com/kalabhaftu/music-player/actions/runs/38059601873) passed all required Linux/x64/ARM64 checks, including the final Artwork default.
+- [Main signing preflight 38060250632](https://github.com/kalabhaftu/music-player/actions/runs/38060250632) passed certificate identity, key, validity, purpose, timestamping, source signature and detached manifest checks.
+- [Main candidate 38060262194](https://github.com/kalabhaftu/music-player/actions/runs/38060262194) passed signed packaging, complete x64/ARM64 setup/MSIX installation, upgrade, interaction, associations and both uninstall choices, plus the small/100,000-track resource comparisons and both package-size targets. Publication was intentionally skipped in private candidate mode.
+- [Tag release workflow 38062507918](https://github.com/kalabhaftu/music-player/actions/runs/38062507918) passed signed build, complete x64/ARM64 package tests and resource comparisons. Its publication step downloaded every draft asset on the runner, compared bytes with the validated candidate and authenticated the manifest before publishing.
+- [Music Player 1.0.0](https://github.com/kalabhaftu/music-player/releases/tag/v1.0.0) was published at **2026-10-10 15:31:27 UTC**, with `isDraft: false`, `isPrerelease: false` and all **12 expected assets**. The public certificate asset's SHA-256 digest matches the pinned certificate. Release notes link the GitHub-verified source commit and state the self-signed trust limitations.
+
+Final publication commands:
+
+```powershell
+gh workflow run release.yml --ref main -f mode=preflight
+gh workflow run release.yml --ref main -f mode=candidate
+git tag -a v1.0.0 3328407d5df3f68674f02c116a88372e336c4e9e -m 'Music Player 1.0.0'
+git push origin refs/tags/v1.0.0
+gh release view v1.0.0 --repo kalabhaftu/music-player --json tagName,isDraft,isPrerelease,publishedAt,url,assets
+```
+
+The release includes both portable ZIPs, both setup installers, the combined
+MSIX bundle, public certificate, signing instructions, dependency notices,
+verification and MSIX uninstall helpers, SHA-256 manifest and detached signature.
+There are **no remaining mandatory release gates**. Physical endpoint tests
+skipped on hosted runners and codec/hardware coverage limits remain documented;
+they are not represented as universally tested behavior.
+
+The retained `codex/update-verification-status` branch preserves baseline
+`9759726` for reproducible comparisons after squash merges. The obsolete branches
+and unused worktree have been removed; their complete verified bundles remain
+outside the repository. No additional release dependency is required from the
+user. Exact offline local builds would need uncached LibVLC 3.0.24; the existing
+local player uses cached 3.0.23.1. No dependency download was started locally.
 
 ## Reviewed implementation
 
@@ -112,26 +150,44 @@ The separate backup bundle is also verified; its fingerprint is in
 [optimization-validation.md](optimization-validation.md). The local backup branch
 was removed after the complete candidate gates passed.
 
-## Final theme addition and merge checkpoint
+## Final theme addition
 
 PR #2 was protected-squash-merged as `d12de43bc4c4c8df6223f611d01ab6b2575b87a5`.
 Its tree exactly matches the verified documentation candidate `5b5e830`.
 The completed shared commit `98c5460` subsequently makes Artwork the accent
 default only when a profile has no saved accent mode, and for explicit appearance
-resets. Existing Native/manual choices remain. The follow-up PR contains this
-small change and updated notes; its protected checks and final merged-revision
-signing/package gates are required before release.
+resets. Existing Native/manual choices remain. PR #9 passed all protected checks
+and was squash-merged as `3328407`; main CI, signing preflight and complete
+merged-revision package/resource validation then passed.
 
-## Remaining steps at this checkpoint
+## Release gates
 
 - [x] Final code's required CI, core/native formats and complete portable UI.
 - [x] Complete signed setup/MSIX UI, upgrades, associations and both uninstall choices on x64/ARM64.
 - [x] Complete final before/after resource and package-size gates.
 - [x] Protected squash merge PR #2; its validated files match the merged tree.
-- [ ] Pass final theme follow-up CI and protected merge; verify final `web-flow` signature.
-- [ ] Synchronize main; pass main signing preflight and full merged-revision package validation.
+- [x] Pass final theme follow-up CI and protected merge; verify final `web-flow` signature.
+- [x] Synchronize main; pass main signing preflight and full merged-revision package validation.
 - [x] Remove archived local backup branch after verified candidate gates.
-- [ ] Create `v1.0.0`; authenticate uploaded assets on CI before public release.
+- [x] Create `v1.0.0` at the verified main revision.
+- [x] Authenticate uploaded assets on CI and publish the first stable release.
 
-At this checkpoint PR #2 is merged and no stable tag or public release exists.
-The [release process](release.md) requires every remaining gate before publication.
+The [release process](release.md) completed final upload verification before
+publication. Optional monitoring is not part of release acceptance and is stopped.
+
+## Dependency maintenance
+
+Dependabot alerts and automatic security-update PRs are enabled. Repository
+secret scanning and push protection were already enabled and remain enabled.
+Weekly version updates cover NuGet, GitHub Actions and the UI test driver's npm
+manifest. Cache restore/save updates are grouped so they can be reviewed together.
+Protected checks still apply; updates are not automatically merged.
+
+The six open Dependabot PRs were reviewed during publication: #3/#6 update cache
+actions, #4 updates artifact uploads, #5 updates artifact downloads, and #7/#8
+update the test SDK/runner. All existing required checks passed, but the PRs need
+validation against current main before merging. #5 changes only release workflow
+steps, so ordinary CI does not exercise its new download action; validate that
+change with a private candidate before using it for a future release. These PRs
+do not change Music Player's app version or runtime dependency set. The project
+and MSIX manifest already declare 1.0.0 and 1.0.0.0 respectively.
