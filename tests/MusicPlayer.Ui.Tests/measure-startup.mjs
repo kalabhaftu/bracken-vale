@@ -20,7 +20,7 @@ for(let attempt=0;attempt<120;attempt++){
 assert(page,"Music Player navigation did not complete.");
 await page.locator('#routeView tr[data-track]').first().waitFor({state:"visible",timeout:120000});
 const usableLibraryMs=Date.now()-started;
-const measure=()=>JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Measure-Processes.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID],{encoding:"utf8"}));
+const measure=()=>JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Measure-Processes.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID],{encoding:"utf8",windowsHide:true}));
 const ready=measure();
 const call=(name)=>page.evaluate(async name=>(await import("/scripts/api.js")).command(name,{}),name);
 await call("cancelScan");

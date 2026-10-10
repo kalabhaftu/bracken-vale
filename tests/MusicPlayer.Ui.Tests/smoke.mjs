@@ -26,16 +26,16 @@ page.on("pageerror",error=>errors.push(error.message));
 const call=(name,payload={})=>page.evaluate(async({name,payload})=>{
   const api=await import("/scripts/api.js");return api.command(name,payload);
 },{name,payload});
-function metrics(){return JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Measure-Processes.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID],{encoding:"utf8"}));}
+function metrics(){return JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Measure-Processes.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID],{encoding:"utf8",windowsHide:true}));}
 let mainWindowHandle;
 function nativeWindow(action){
   const args=["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Control-Window.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID,"-Action",action];
   if(mainWindowHandle)args.push("-MainWindowHandle",mainWindowHandle);
-  const result=JSON.parse(execFileSync("powershell.exe",args,{encoding:"utf8"}));
+  const result=JSON.parse(execFileSync("powershell.exe",args,{encoding:"utf8",windowsHide:true}));
   mainWindowHandle=result.handle;return result;
 }
 function videoControl(action,name="",value=0){
-  return JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Control-Video.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID,"-Action",action,"-Name",name,"-Value",String(value)],{encoding:"utf8"}));
+  return JSON.parse(execFileSync("powershell.exe",["-NoLogo","-NoProfile","-File",path.join(path.dirname(fileURLToPath(import.meta.url)),"Control-Video.ps1"),"-AppProcessId",process.env.MUSICPLAYER_TEST_APP_PID,"-Action",action,"-Name",name,"-Value",String(value)],{encoding:"utf8",windowsHide:true}));
 }
 async function navigate(view){
   if(view==="Settings"){await page.locator("#topMenuToggle").click();await page.locator('#topMenu [data-view="Settings"]').click();}

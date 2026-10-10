@@ -18,6 +18,7 @@ public static class VideoWindowBounds {
     }
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window,System.Text.StringBuilder text,int count);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr window,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
     [DllImport("user32.dll")] static extern uint SendInput(uint count,Input[] inputs,int size);
     public static void Escape(IntPtr window) {
@@ -27,7 +28,10 @@ public static class VideoWindowBounds {
         IntPtr result;
         if(SendMessageTimeout(window,0,IntPtr.Zero,IntPtr.Zero,2,5000,out result)==IntPtr.Zero)
             throw new InvalidOperationException("The video window did not process foreground activation within five seconds.");
-        if(GetForegroundWindow()!=window)throw new InvalidOperationException("The video window did not obtain foreground focus for Escape.");
+        if(GetForegroundWindow()!=window){
+            var title=new System.Text.StringBuilder(256);GetWindowText(GetForegroundWindow(),title,title.Capacity);
+            throw new InvalidOperationException("The video window did not obtain foreground focus for Escape; foreground window: "+title+".");
+        }
         var inputs=new[] {new Input {Type=1,Key=0x1B},new Input {Type=1,Key=0x1B,Flags=2}};
         if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the video Escape key input.");
     }
@@ -93,13 +97,14 @@ switch($Action){
     }
     Subtitle {
         (Find-Control 'Subtitles').GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-        Start-Sleep -Milliseconds 300
         $items=[Collections.Generic.List[object]]::new()
-        $condition=[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::MenuItem)
-        foreach($ownedWindow in [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,$owned)){
-            foreach($item in $ownedWindow.FindAll([Windows.Automation.TreeScope]::Descendants,$condition)){
+        $menuType=[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::MenuItem)
+        $condition=[Windows.Automation.AndCondition]::new($owned,$menuType)
+        for($attempt=0;$attempt -lt 30 -and $items.Count -eq 0;$attempt++){
+            foreach($item in [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Descendants,$condition)){
                 if($item.Current.IsEnabled -and $item.Current.Name -match 'Release subtitle|English|eng'){$items.Add($item)}
             }
+            if($items.Count -eq 0){Start-Sleep -Milliseconds 200}
         }
         if($items.Count -eq 0){throw 'The embedded subtitle did not appear in the video menu.'}
         $items[0].GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
