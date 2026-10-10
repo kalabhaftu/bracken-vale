@@ -1,5 +1,5 @@
 param([Parameter(Mandatory=$true)][int] $AppProcessId,
-    [Parameter(Mandatory=$true)][ValidateSet('Inspect','Invoke','Subtitle','Seek','Speed','Escape','Close')][string] $Action,
+    [Parameter(Mandatory=$true)][ValidateSet('Inspect','Activate','Invoke','Subtitle','Seek','Speed','Escape','Close')][string] $Action,
     [string] $Name,[double] $Value)
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Video interaction tests require an isolated Windows runner.'}
@@ -15,6 +15,7 @@ public static class VideoWindowBounds {
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr monitor,ref MonitorInfo info);
     [StructLayout(LayoutKind.Explicit,Size=40)] public struct Input {
         [FieldOffset(0)] public uint Type;[FieldOffset(8)] public ushort Key;[FieldOffset(12)] public uint Flags;
+        [FieldOffset(24)] public uint MouseFlags;
     }
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
@@ -22,6 +23,22 @@ public static class VideoWindowBounds {
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window,System.Text.StringBuilder text,int count);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr window,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
     [DllImport("user32.dll")] static extern uint SendInput(uint count,Input[] inputs,int size);
+    [StructLayout(LayoutKind.Sequential)] public struct Point {public int X,Y;}
+    [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window,uint flags);
+    public static void Activate(IntPtr window) {
+        Rect rect;
+        if(!GetWindowRect(window,out rect))throw new InvalidOperationException("Could not locate the video title bar.");
+        var point=new Point {X=rect.Left+(rect.Right-rect.Left)/2,Y=rect.Top+16};
+        if(GetAncestor(WindowFromPoint(point),2)!=window)
+            throw new InvalidOperationException("The video title bar is covered by another window; real input cannot activate it.");
+        if(!SetCursorPos(point.X,point.Y))throw new InvalidOperationException("The runner desktop rejected cursor positioning.");
+        var inputs=new[] {new Input {Type=0,MouseFlags=2},new Input {Type=0,MouseFlags=4}};
+        if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the video title-bar click.");
+        for(var attempt=0;attempt<30 && GetForegroundWindow()!=window;attempt++)System.Threading.Thread.Sleep(100);
+        if(GetForegroundWindow()!=window)throw new InvalidOperationException("A real title-bar click did not activate the video window on the runner desktop.");
+    }
     static void SendEscape() {
         var inputs=new[] {new Input {Type=1,Key=0x1B},new Input {Type=1,Key=0x1B,Flags=2}};
         if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the Escape key input.");
@@ -78,6 +95,7 @@ function Find-Control([string] $Label){
     return $control
 }
 switch($Action){
+    Activate { [VideoWindowBounds]::Activate([IntPtr]$window.Current.NativeWindowHandle) }
     Invoke {
         $invokedAt=[DateTime]::UtcNow
         (Find-Control $Name).GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
