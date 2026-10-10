@@ -42,9 +42,11 @@ saves its own master volume, and fade steps should not rewrite VLC preferences.
   and the candidate's 3.0.24 runtime still need separate verification. This
   evidence does not establish installed-package or release readiness.
 
-The focused native check uses `MUSICPLAYER_TEST_WINDOWS_AUDIO=1` on this machine
-(the three real audio-endpoint checks are explicitly skipped on headless runners)
-and the command
+The focused native check uses `MUSICPLAYER_TEST_WINDOWS_AUDIO=1` on this machine.
+The three real audio-endpoint checks also run automatically when endpoint
+enumeration finds a Windows output; only machines with no output skip them.
+The environment override requires these checks even if enumeration is empty.
+Command:
 `dotnet test artifacts/crossfade-validation/CachedNative.Tests.csproj --no-restore --filter "FullyQualifiedName~PlaybackIntegrationTests|FullyQualifiedName~CrossfadeIntegrationTests|FullyQualifiedName~QueueRevisionTests" --verbosity quiet`.
 The ignored verification project mirrors the checked-in playback project with
 the cached native package selected explicitly.

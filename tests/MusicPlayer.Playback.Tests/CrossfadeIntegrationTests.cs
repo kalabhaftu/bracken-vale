@@ -10,10 +10,17 @@ namespace MusicPlayer.Playback.Tests;
 
 public sealed class WindowsAudioFactAttribute : FactAttribute
 {
+    private static readonly Lazy<bool> HasOutput = new(() =>
+    {
+        LibVLCSharp.Shared.Core.Initialize();
+        using var engine = new LibVLC("--aout=dummy", "--no-volume-save");
+        return engine.AudioOutputDevices("mmdevice").Any(device => !string.IsNullOrWhiteSpace(device.DeviceIdentifier));
+    });
+
     public WindowsAudioFactAttribute()
     {
-        if (Environment.GetEnvironmentVariable("MUSICPLAYER_TEST_WINDOWS_AUDIO") != "1")
-            Skip = "Requires a Windows audio endpoint; set MUSICPLAYER_TEST_WINDOWS_AUDIO=1 on the test machine.";
+        if (Environment.GetEnvironmentVariable("MUSICPLAYER_TEST_WINDOWS_AUDIO") != "1" && !HasOutput.Value)
+            Skip = "No Windows audio endpoint was detected; MUSICPLAYER_TEST_WINDOWS_AUDIO=1 requires the hardware checks explicitly.";
     }
 }
 
