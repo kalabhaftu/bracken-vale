@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: windows-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   core-tests-linux:
     name: Core tests · Linux
@@ -23,9 +27,12 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Restore core tests
-        run: dotnet restore tests/BrackenVale.Tests/BrackenVale.Tests.csproj
+        run: dotnet restore tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj
       - name: Test core
-        run: dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj --configuration Release --no-restore
+        run: dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj --configuration Release --no-restore
+
+      - name: Test library pagination, lyrics and theme contrast
+        run: node --test tests/MusicPlayer.Ui.Tests/lyrics-theme.test.mjs tests/MusicPlayer.Ui.Tests/library-pagination.test.mjs
 
   test-and-build:
     name: ${{ matrix.arch }}
@@ -41,7 +48,7 @@ jobs:
             os: windows-2022
           - arch: ARM64
             rid: win-arm64
-            os: windows-11-arm
+            os: windows-11-vs2026-arm
     steps:
       # actions/checkout v7, pinned to the verified tag commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -50,40 +57,82 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Restore
-        run: dotnet restore BrackenVale.sln
+        run: dotnet restore MusicPlayer.sln
       - name: Test core
-        run: dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj --configuration Release --no-restore
+        run: dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj --configuration Release --no-restore
       - name: Build WinUI app
-        run: dotnet build src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --no-restore -p:Platform=${{ matrix.arch }} -p:RuntimeIdentifier=${{ matrix.rid }} -p:AppxPackageSigningEnabled=false -p:GenerateAppxPackageOnBuild=false
+        run: dotnet build src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --no-restore -p:Platform=${{ matrix.arch }} -p:RuntimeIdentifier=${{ matrix.rid }} -p:AppxPackageSigningEnabled=false -p:GenerateAppxPackageOnBuild=false
+      - name: Restore validated media fixtures
+        id: media-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/media-fixtures
+          key: windows-media-${{ hashFiles('tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1') }}
+      - name: Generate representative audio and video formats
+        shell: pwsh
+        run: |
+          if ('${{ steps.media-cache.outputs.cache-hit }}' -ne 'true') {
+            if (!(Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg --yes --no-progress }
+            & tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1
+          }
+          "MUSICPLAYER_MEDIA_FIXTURES=$PWD/artifacts/media-fixtures" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Cache validated media fixtures
+        if: steps.media-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/media-fixtures
+          key: windows-media-${{ hashFiles('tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1') }}
+      - name: Test native playback, queue transitions and supported formats
+        id: native
+        continue-on-error: true
+        run: dotnet test tests/MusicPlayer.Playback.Tests/MusicPlayer.Playback.Tests.csproj --configuration Release --runtime ${{ matrix.rid }} --logger 'trx;LogFileName=native.trx' --results-directory artifacts/ui-evidence/native
       - name: Publish self-contained portable app
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = Join-Path $PWD 'artifacts/portable'
-          dotnet publish src/BrackenVale.App/BrackenVale.App.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --output $out -p:Platform=${{ matrix.arch }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
+          $out = Join-Path $PWD 'artifacts/publish'
+          dotnet publish src/MusicPlayer.App/MusicPlayer.App.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --output $out -p:Platform=${{ matrix.arch }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true
           if ($LASTEXITCODE -ne 0) { throw 'Portable publish failed.' }
-          $archive = 'artifacts/bracken-vale-${{ matrix.rid }}.zip'
-          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $archive -CompressionLevel Optimal
-      - name: Smoke test self-contained app startup
+          $arch = '${{ matrix.arch }}'.ToLowerInvariant()
+          $packageName = "MusicPlayer-ci-$arch-portable"
+          $stage = Join-Path $PWD "artifacts/$packageName"
+          & packaging/windows/Prepare-PortablePackage.ps1 -PublishDirectory $out -DestinationDirectory $stage -Version 'ci' -Architecture $arch
+          if ($LASTEXITCODE -ne 0) { throw 'Portable package preparation failed.' }
+          $archive = "artifacts/$packageName.zip"
+          Compress-Archive -LiteralPath $stage -DestinationPath $archive -CompressionLevel Optimal
+      - name: Install WebView UI test driver
+        shell: pwsh
+        working-directory: tests/MusicPlayer.Ui.Tests
+        run: npm install --ignore-scripts
+      - name: Test clean-profile discovery, queue dragging, lyrics and restart
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD 'artifacts/portable/BrackenVale.exe'
-          $process = Start-Process -FilePath $exe -PassThru
-          try {
-            Start-Sleep -Seconds 8
-            $process.Refresh()
-            if ($process.HasExited) {
-              $logs = Join-Path $env:LOCALAPPDATA 'BrackenVale/Logs'
-              if (Test-Path $logs) { Get-ChildItem $logs -Filter 'bracken-vale-*.log' | Get-Content }
-              throw "Bracken Vale exited during startup with code $($process.ExitCode)."
-            }
-          } finally {
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-          }
+          $arch = '${{ matrix.arch }}'.ToLowerInvariant()
+          $packageName = "MusicPlayer-ci-$arch-portable"
+          $exe = Join-Path $PWD "artifacts/$packageName/MusicPlayer.exe"
+          & tests/MusicPlayer.Ui.Tests/Run-Smoke.ps1 -Executable $exe
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: music-player-${{ matrix.rid }}-runtime-evidence
+          path: artifacts/ui-evidence/
+          if-no-files-found: warn
+      - name: Upload native decoder diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-${{ matrix.rid }}-logs
+          path: ~/AppData/Local/MusicPlayer/Logs/
+          if-no-files-found: warn
+      - name: Require successful native playback validation
+        if: always() && steps.native.outcome != 'success'
+        shell: pwsh
+        run: throw 'Native playback or format validation failed; this required architecture check cannot pass.'
       - name: Upload portable build
         # actions/upload-artifact v7, pinned to the verified tag commit.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: bracken-vale-${{ matrix.rid }}-portable
-          path: artifacts/bracken-vale-${{ matrix.rid }}.zip
+          name: music-player-${{ matrix.rid }}-portable
+          path: artifacts/MusicPlayer-ci-*-portable.zip
           if-no-files-found: error

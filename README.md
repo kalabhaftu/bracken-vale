@@ -1,46 +1,42 @@
-# Bracken Vale
+# Music Player
 
-Bracken Vale is a native Windows music library and player built with WinUI 3, C# and .NET. It uses Segoe UI and Fluent controls, with switchable system and album-art accent styles. Your library, playlists, ratings, lyrics, settings and playback session stay on your PC.
+Music Player is a Windows desktop app for playing and organizing a local music library. It uses a WinUI 3 window with a packaged WebView2 interface. C# remains responsible for playback, library access, playlists, settings, filesystem operations, and Windows integrations.
 
-> **Development status:** this repository is under active development. The core library and automated tests run cross-platform; the WinUI application must be built and visually/audio tested on Windows. The release workflow supports unsigned preview ZIPs and blocks stable releases until signing preflight passes. See [project status](docs/project-status.md) for verified results and [known limitations](docs/known-limitations.md).
+## Features
 
-## Current capabilities
+- Search and browse songs, albums, artists, genres, favorites, history, and playlists.
+- Scan local folders with exclusions, progress, pause, resume, and cancel controls.
+- Manage the queue, shuffle, repeat, A–B repeat, volume, crossfade, output device, and ten-band equalizer.
+- Edit supported tags with backups; view lyrics, search LRCLIB on request, and inspect track details.
+- Find exact duplicate files, inspect their locations, and open them in File Explorer.
+- Use Windows media controls, media keys, file activation, optional tray behavior, and paused-session restore.
 
-- Searchable SQLite library with album, artist, genre and folder groups; sort modes; favorites, five-star ratings, most/recently played views; and local M3U8 playlists.
-- Reorderable and hideable library navigation, with adjustable navigation and browse pane widths.
-- Background scan of fixed drives, folder selection, ignored paths, pause/cancel, and skipping system or linked directories.
-- Playback through bundled LibVLC; an editable queue, shuffle, repeat, A–B repeat, crossfade, volume, EQ presets and saved 10-band EQ settings.
-- Choose a connected Windows audio output, including Bluetooth headphones and speakers; output selection is saved and can be refreshed in Settings.
-- Choose Mica, Desktop Acrylic glass, or an opaque window surface; set page transitions to subtle, expressive, or off. Motion follows Windows accessibility preferences and never animates individual library rows.
-- Paused-session restore for the track, position, queue, shuffle, repeat mode and A–B marks.
-- Local tag editing with preview, explicit save, backup and restore; standard and format-specific text fields, embedded/sidecar LRC lyrics and optional user-triggered LRCLIB search.
-- System/light/dark themes, artwork or manual accent color, Windows media controls, optional tray behavior, and weekly GitHub release checks that never install updates.
+## Build
 
-The supported audio formats depend on the bundled LibVLC modules and the file container. See [the format matrix](docs/format-matrix.md); it is intentionally not a promise that every codec/tag combination has been verified.
-
-## Get a Windows build
-
-Download the latest x64 or ARM64 portable ZIP from [GitHub Releases](https://github.com/kalabhaftu/bracken-vale/releases). Extract it and start `BrackenVale.exe`. These self-contained builds do not need a separate .NET or codec installation. Preview ZIPs may be unsigned when signing preflight has not passed, and Windows may show a security warning. Signed setup installers and MSIX releases require a trusted certificate and Windows installation checks.
-
-## Build from the command line
-
-Use Windows 10 1809 or later with the .NET 10 SDK and Windows 10 SDK 10.0.26100 or later. The Windows App SDK is restored by NuGet. Visual Studio IDE is not required; Windows SDK build tools are required for the native WinUI XAML build.
+Use Windows 10 version 1809 or later, the .NET 10 SDK, and Windows SDK 10.0.26100 or later.
 
 ```powershell
-dotnet restore BrackenVale.sln
-dotnet test tests/BrackenVale.Tests/BrackenVale.Tests.csproj -c Release
-dotnet build src/BrackenVale.App/BrackenVale.App.csproj -c Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64
-dotnet run --project src/BrackenVale.App/BrackenVale.App.csproj
+dotnet restore MusicPlayer.sln
+dotnet build src/MusicPlayer.App/MusicPlayer.App.csproj -c Release -p:Platform=x64 -p:RuntimeIdentifier=win-x64
+dotnet run --project src/MusicPlayer.App/MusicPlayer.App.csproj
 ```
 
-`dotnet run` starts the app built from this checkout; it does not make release packages. For ARM64 builds, use `-p:Platform=ARM64 -p:RuntimeIdentifier=win-arm64`. More setup and release notes are in [development](docs/development.md) and [the GitHub release process](docs/release.md).
+For ARM64, use `-p:Platform=ARM64 -p:RuntimeIdentifier=win-arm64`. The core tests can be run with `dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj -c Release`.
 
-## Privacy and network use
+## Local files and network access
 
-There are no accounts, streaming, telemetry or cloud sync. The weekly update check can be disabled. LRCLIB is contacted only after you request a search, and only the track title and artist are sent. No audio files or file paths are sent to either service.
+The SQLite database, settings, artwork cache, tag backups, and logs are stored under `%LOCALAPPDATA%\MusicPlayer`. The app has no account, streaming service, or cloud sync. Lyrics can come from sidecar `.lrc` files or supported embedded audio tags; LRCLIB receives only title and artist after a user starts a search. The optional GitHub update check runs at most once every six hours after a successful response and can be disabled in Settings. Updates open the release page and are never installed automatically.
 
-Crash and error logs are stored locally at `%LOCALAPPDATA%\BrackenVale\Logs`. Open the folder or export a ZIP from Settings. Logs may contain local file paths and error details; review them before sharing.
+Windows format support depends on the bundled LibVLC modules and the specific file/device combination. See [the format matrix](docs/format-matrix.md). Release signing requirements and current signing status are documented in [the release process](docs/release.md). Remaining migration and release checks are listed in [project status](docs/project-status.md).
+
+## Third-party components
+
+The app uses WinUI 3 from the Windows App SDK, WebView2 for its interface, LibVLCSharp and LibVLC for media playback, TagLib# for audio metadata, and Microsoft.Data.Sqlite with SQLite for its local library. The WebView2 Evergreen Runtime is supplied separately by Microsoft. See [ThirdPartyNotices.md](ThirdPartyNotices.md) for versions, licenses, and bundled notices.
 
 ## License
 
-Bracken Vale source is MIT licensed. Third-party components and their notices are listed in [ThirdPartyNotices.md](ThirdPartyNotices.md).
+The source is MIT licensed. Third-party components retain their own license terms; see [ThirdPartyNotices.md](ThirdPartyNotices.md).
+
+## Contributing and support
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use the GitHub issue forms to [report a bug](https://github.com/kalabhaftu/music-player/issues/new?template=bug_report.yml) or [request a feature](https://github.com/kalabhaftu/music-player/issues/new?template=feature_request.yml). For troubleshooting and safe log sharing, see [SUPPORT.md](SUPPORT.md). Security issues should be reported privately as described in [SECURITY.md](SECURITY.md).

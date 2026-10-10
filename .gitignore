@@ -8,8 +8,12 @@
 *.pfx
 *.p12
 *.cer
+!packaging/windows/MusicPlayer-Signing.cer
 *.msix
 *.msixbundle
 *.appxupload
 artifacts/
 TestResults/
+node_modules/
+/local_music_player.html
+/local_music_player_v2.html
