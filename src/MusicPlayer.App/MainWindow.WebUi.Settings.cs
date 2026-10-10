@@ -52,6 +52,7 @@ public sealed partial class MainWindow
             var devices = await DeviceInformation.FindAllAsync(MediaDevice.GetAudioRenderSelector());
             name = devices.FirstOrDefault(device => device.Id == id)?.Name ?? (_store.GetSetting("audio-output-name") ?? "Saved output");
         }
+        CancelCrossfadeAndRestoreQueue();
         _playback.SelectAudioOutputDevice(id); _store.SetSetting("audio-output-device", id); _store.SetSetting("audio-output-name", name);
         await ShowNoticeAsync($"Audio output: {name}.");
     }

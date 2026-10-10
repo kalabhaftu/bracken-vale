@@ -11,6 +11,7 @@ public sealed class PlaybackService : IDisposable
 {
     private readonly object _gate = new();
     private readonly LibVLC _libVlc;
+    private readonly bool _independentMusicOutput;
     private HashSet<string> _videoExtensions = new(StringComparer.OrdinalIgnoreCase);
     private readonly MediaPlayer _first;
     private MediaPlayer _active;
@@ -23,6 +24,7 @@ public sealed class PlaybackService : IDisposable
     }
 
     private readonly Dictionary<MediaPlayer, PlayerSubscription> _subscriptions = [];
+    private readonly Dictionary<MediaPlayer, (string Output, string Device)> _audioRoutes = [];
     private Media? _activeMedia;
     private Media? _spareMedia;
     private readonly Dictionary<MediaPlayer, DffStreamInput> _fileInputs = [];
@@ -47,8 +49,10 @@ public sealed class PlaybackService : IDisposable
     private Track? _currentTrack;
     private Track? _crossfadeTarget;
     private CancellationTokenSource? _crossfadeCancellation;
+    private double _crossfadeProgress;
     private string? _reportedFailurePath;
     private string? _audioOutputDeviceId;
+    private string _directSoundDeviceId = "";
     private string? _equalizerPreset;
     private IReadOnlyList<float>? _equalizerBands;
     private float _volume = 75;
@@ -60,11 +64,14 @@ public sealed class PlaybackService : IDisposable
     private bool _videoTrack;
     private bool _disposed;
 
-    public PlaybackService() : this("--aout=mmdevice", "--no-video-title-show") { }
+    // VLC 3's MMDevice volume belongs to the shared Windows session. DirectSound
+    // controls each music player's buffer independently, which crossfade needs.
+    public PlaybackService() : this("--aout=directsound", "--no-video-title-show", "--no-volume-save") { }
 
     internal PlaybackService(params string[] options)
     {
         LibVLCSharp.Shared.Core.Initialize();
+        _independentMusicOutput = options.Contains("--aout=directsound", StringComparer.Ordinal);
         // Video is rendered into the app's own child HWND when an enabled video
         // extension is played. Never let LibVLC create its standalone video window.
         _libVlc = new LibVLC(options);
@@ -112,8 +119,7 @@ public sealed class PlaybackService : IDisposable
             {
                 if (_disposed) return;
                 _volume = Math.Clamp(value, 0, 100);
-                _active.Volume = (int)_volume;
-                if (_spare is not null) _spare.Volume = (int)_volume;
+                ApplyCrossfadeVolumeCore();
             }
         }
     }
@@ -196,8 +202,25 @@ public sealed class PlaybackService : IDisposable
         lock (_gate)
         {
             if (_disposed) return;
+            var resume = _active.IsPlaying;
+            var position = Math.Max(_restorePosition, _active.Time);
+            if (_independentMusicOutput && !_videoTrack) CancelCrossfadeCore();
             _audioOutputDeviceId = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId;
-            ApplyAudioOutputDevice(_active);
+            _directSoundDeviceId = _independentMusicOutput && _audioOutputDeviceId is not null
+                ? AudioOutputRouting.DirectSoundDeviceId(_audioOutputDeviceId) : "";
+            if (_independentMusicOutput && !_videoTrack && _activeMedia is not null)
+            {
+                // DirectSound selects the endpoint at stream creation. Reopen
+                // this song at the same position when the user changes output.
+                _mediaGeneration++;
+                _active.Stop();
+                Interlocked.Exchange(ref _subscriptions[_active].Generation, _mediaGeneration);
+                ConfigureAudioOutputCore(_active);
+                _restorePosition = Math.Max(0, position);
+                _active.Volume = (int)_volume;
+                if (resume) PlayLoaded();
+            }
+            else ApplyAudioOutputDevice(_active);
             if (_spare is not null) ApplyAudioOutputDevice(_spare);
         }
     }
@@ -428,6 +451,7 @@ public sealed class PlaybackService : IDisposable
                         fade = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                         _crossfadeCancellation = fade;
                         _crossfadeTarget = nextTrack;
+                        _crossfadeProgress = 0;
                         _mediaGeneration++;
                         incoming.Stop();
                         SetMedia(incoming, ref _spareMedia, nextTrack.Path);
@@ -450,22 +474,39 @@ public sealed class PlaybackService : IDisposable
 
         if (fadeMilliseconds <= 0) { Play(nextTrack); fade?.Dispose(); return; }
         var tokenSource = fade!;
-        var stepCount = Math.Max(1, (int)Math.Ceiling(fadeMilliseconds / 40d));
-        var start = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            for (var step = 1; step <= stepCount; step++)
+            // Play() only schedules opening/decoding. Keep the outgoing song at
+            // full volume until the incoming playback clock actually advances.
+            var opening = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
             {
-                await Task.Delay(40, tokenSource.Token).ConfigureAwait(false);
+                await Task.Delay(20, tokenSource.Token).ConfigureAwait(false);
+                lock (_gate)
+                {
+                    if (_disposed || !ReferenceEquals(_crossfadeCancellation, tokenSource) || tokenSource.IsCancellationRequested) return;
+                    if (incoming.IsPlaying && incoming.Time > 0)
+                    {
+                        var remaining = old.Length > 0 ? Math.Max(0, old.Length - old.Time) : milliseconds;
+                        fadeMilliseconds = Math.Min(milliseconds, (int)Math.Min(int.MaxValue, remaining));
+                        break;
+                    }
+                    if (incoming.State is VLCState.Error or VLCState.Ended || opening.Elapsed > TimeSpan.FromSeconds(5))
+                        throw new InvalidOperationException("The incoming crossfade track did not become ready.");
+                }
+            }
+            var start = System.Diagnostics.Stopwatch.GetTimestamp();
+            while (true)
+            {
+                await Task.Delay(20, tokenSource.Token).ConfigureAwait(false);
                 Track? completed = null;
                 lock (_gate)
                 {
                     if (_disposed || !ReferenceEquals(_crossfadeCancellation, tokenSource) || tokenSource.IsCancellationRequested) return;
                     var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                    var fraction = Math.Clamp(elapsed / fadeMilliseconds, 0, 1);
-                    incoming.Volume = (int)(_volume * fraction);
-                    old.Volume = (int)(_volume * (1 - fraction));
-                    if (fraction >= 1 || step == stepCount)
+                    _crossfadeProgress = fadeMilliseconds > 0 ? Math.Clamp(elapsed / fadeMilliseconds, 0, 1) : 1;
+                    ApplyCrossfadeVolumeCore();
+                    if (_crossfadeProgress >= 1)
                     {
                         old.Stop();
                         _active = incoming;
@@ -475,7 +516,7 @@ public sealed class PlaybackService : IDisposable
                         _trackEnded = false;
                         _restorePosition = 0;
                         _active.Volume = (int)_volume;
-                        _spare.Volume = (int)_volume;
+                        _spare.Volume = 0;
                         _crossfadeTarget = null;
                         _crossfadeCancellation = null;
                         completed = nextTrack;
@@ -555,6 +596,7 @@ public sealed class PlaybackService : IDisposable
 
     private void SetMedia(MediaPlayer player, ref Media? media, string path)
     {
+        ConfigureAudioOutputCore(player);
         media?.Dispose();
         if (_fileInputs.Remove(player, out var previousInput)) previousInput.Dispose();
         var extension = Path.GetExtension(path).ToLowerInvariant();
@@ -625,9 +667,50 @@ public sealed class PlaybackService : IDisposable
 
     private void ApplyAudioOutputDevice(MediaPlayer player)
     {
-        var deviceId = _audioOutputDeviceId ?? string.Empty;
+        if (_independentMusicOutput && !(ReferenceEquals(player, _active) && _videoTrack))
+        {
+            // The module shortcut is directsound; its device option is directx.
+            player.SetOutputDevice(_directSoundDeviceId, "directx");
+            return;
+        }
+        var deviceId = AudioOutputRouting.EndpointId(_audioOutputDeviceId ?? string.Empty);
         player.SetOutputDevice(deviceId, "mmdevice");
         player.SetOutputDevice(deviceId);
+    }
+
+    private void ConfigureAudioOutputCore(MediaPlayer player)
+    {
+        if (!_independentMusicOutput) return;
+        var video = ReferenceEquals(player, _active) && _videoTrack;
+        var route = (Output: video ? "mmdevice" : "directsound", Device: video
+            ? AudioOutputRouting.EndpointId(_audioOutputDeviceId ?? "") : _directSoundDeviceId);
+        if (_audioRoutes.TryGetValue(player, out var previous) && previous == route) return;
+        // Configure the option before VLC creates the output and inherits it.
+        player.SetOutputDevice(route.Device, video ? "mmdevice" : "directx");
+        if (!player.SetAudioOutput(route.Output)) throw new InvalidOperationException("LibVLC could not configure the audio output.");
+        _audioRoutes[player] = route;
+        ApplyEqualizerCore(player);
+        player.Volume = (int)_volume;
+    }
+
+    internal static (int Outgoing, int Incoming) CrossfadeVolumes(int volume, double progress)
+    {
+        volume = Math.Clamp(volume, 0, 100);
+        progress = Math.Clamp(progress, 0, 1);
+        if (progress <= 0) return (volume, 0);
+        if (progress >= 1) return (0, volume);
+        // VLC's Windows volume scale cubes the slider value. Convert equal-power
+        // amplitude gains back into that scale to avoid a deep midpoint dip.
+        var angle = progress * Math.PI / 2;
+        return ((int)Math.Round(volume * Math.Cbrt(Math.Cos(angle))),
+            (int)Math.Round(volume * Math.Cbrt(Math.Sin(angle))));
+    }
+
+    private void ApplyCrossfadeVolumeCore()
+    {
+        var volumes = CrossfadeVolumes((int)_volume, _crossfadeCancellation is null ? 0 : _crossfadeProgress);
+        _active.Volume = volumes.Outgoing;
+        if (_spare is not null) _spare.Volume = volumes.Incoming;
     }
 
     private void Subscribe(MediaPlayer player)
@@ -753,17 +836,22 @@ public sealed class PlaybackService : IDisposable
         var fade = _crossfadeCancellation;
         _crossfadeCancellation = null;
         _crossfadeTarget = null;
+        _crossfadeProgress = 0;
         fade?.Cancel();
         if (_disposed) return;
         if (_spare is not null)
         {
             _spare.Stop();
-            _spare.Volume = (int)_volume;
+            _spare.Volume = 0;
         }
         // A canceled/failed fade keeps the outgoing media alive. Its eventual
         // end/error belongs to the current generation again.
         if (fade is not null)
+        {
             Interlocked.Exchange(ref _subscriptions[_active].Generation, _mediaGeneration);
+            // Its native end may have arrived while the fade suppressed it.
+            if (_active.State == VLCState.Ended) QueuePlayerEvent(_active, _mediaGeneration, endReached: true);
+        }
         _active.Volume = (int)_volume;
     }
 

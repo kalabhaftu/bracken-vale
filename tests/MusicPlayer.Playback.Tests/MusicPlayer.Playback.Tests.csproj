@@ -13,6 +13,7 @@
     <PackageReference Include="VideoLAN.LibVLC.Windows" />
     <ProjectReference Include="../../src/MusicPlayer.Core/MusicPlayer.Core.csproj" />
     <Compile Include="../../src/MusicPlayer.App/PlaybackService.cs" Link="PlaybackService.cs" />
+    <Compile Include="../../src/MusicPlayer.App/AudioOutputRouting.cs" Link="AudioOutputRouting.cs" />
     <Compile Include="../../src/MusicPlayer.App/PlaybackCommandCoordinator.cs" Link="PlaybackCommandCoordinator.cs" />
     <Compile Include="../../src/MusicPlayer.App/PlaybackQueueCoordinator.cs" Link="PlaybackQueueCoordinator.cs" />
   </ItemGroup>
