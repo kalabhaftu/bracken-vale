@@ -13,6 +13,7 @@
 ```powershell
 dotnet restore MusicPlayer.sln
 dotnet test tests/MusicPlayer.Tests/MusicPlayer.Tests.csproj -c Release
+node --test tests/MusicPlayer.Ui.Tests/lyrics-theme.test.mjs tests/MusicPlayer.Ui.Tests/library-pagination.test.mjs
 # Install FFmpeg for representative-format fixture generation.
 & tests/MusicPlayer.Playback.Tests/Prepare-MediaFixtures.ps1
 $env:MUSICPLAYER_MEDIA_FIXTURES="$PWD/artifacts/media-fixtures"
@@ -43,6 +44,6 @@ The release workflow contains signing and verification steps for the executable,
 
 ## Search and memory limits
 
-The UI reads library and playlist rows in 200-entry pages. SQLite FTS5's trigram tokenizer indexes substring searches of three or more characters; one- and two-character searches keep the existing `LIKE` behavior. Artwork thumbnails are decoded to display size and the in-memory cache is capped at an estimated 64 MB. The 100,000-track Windows x64 benchmark records the first-page search p95 against a 250 ms target.
+The UI reads track and playlist rows in 200-entry pages; album, artist and genre grids use 60-entry pages, and artist album panels use 30-entry pages. SQLite FTS5's trigram tokenizer indexes substring searches of three or more characters; one- and two-character searches keep the existing `LIKE` behavior. Artwork thumbnails are decoded to display size and the in-memory cache is capped at an estimated 64 MB. The 100,000-track Windows x64 benchmark records the first-page search p95 against a 250 ms target.
 
 Scanning uses per-run database generations instead of holding the whole library in a scan map. Unavailable or incomplete roots do not trigger stale-row deletion. Successful scan completion prunes only cached artwork paths no longer referenced by indexed tracks.

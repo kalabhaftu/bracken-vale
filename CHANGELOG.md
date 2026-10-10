@@ -6,6 +6,9 @@ Changes to Music Player are documented here. The app name, executable, package i
 
 ## [1.0.0]
 
+- Fix Load more across library views, preserve complete album/artist/genre contents, and retain duplicate queue identities while paging.
+- Use independent music output buffers for crossfade, wait for incoming playback, and restore correctly on failure, pause or seek.
+- Prefer confident timed lyrics for display while preserving local lyrics and offline fallback; improve artwork contrast in both themes.
 - Fix Ogg/OGA seeking, WAV alias metadata and DFF startup/duration handling; preserve original media bytes and tag recovery copies.
 - Preserve user-owned files during setup upgrades and honor the explicit saved-data removal choice during uninstall.
 - Allow enabled video extensions through file activation and name native video controls for accessibility.

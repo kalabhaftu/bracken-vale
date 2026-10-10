@@ -4,8 +4,9 @@ Updated 2026-10-10. Candidate work is on `codex/update-verification-status`.
 Playback changes in `9759726` and UI changes in `393ee8c` are preserved.
 Optimization commits: `73981a8` (schema 9), `0c9c61c` (startup, watchers,
 queue revisions and presentation), `00ccd77` (components/launcher),
-`e24d59d` (self-signing/candidate packaging). No stable tag or release has been
-created. Passing builds are not installation or interaction evidence.
+`e24d59d` (self-signing/candidate packaging). At the initial optimization
+checkpoint no stable tag or release existed. Passing builds are not installation
+or interaction evidence; the final code's completed gates are recorded below.
 
 ## Verified locally
 
@@ -86,12 +87,41 @@ and its CPU sample is not idle. Both candidate scans settled before sampling.
 Raw numerical JSON is retained and printed in the workflow job log. Final merged
 revision validation remains required.
 
-- [ ] Required `Core tests · Linux`, `x64`, and `ARM64` checks on the final candidate.
-- [ ] Private signed candidate packaging, timestamps, first-party assemblies/scripts, setup and embedded-uninstaller signatures, MSIX signatures, authenticated manifest verification.
-- [ ] Clean Windows installed-library discovery and restart persistence; search, queue dragging/selection, lyrics, settings, tray/taskbar/media keys, video/subtitles.
-- [ ] Setup and MSIX install, upgrade, uninstall, file associations and both data-retention choices on isolated x64/ARM64 environments.
-- [ ] Actual representative playback results for every format in `format-matrix.md`.
-- [ ] Before/after GUI time to usable library, CPU and combined native/WebView2 memory for small and 100,000-track fixtures; repeated-navigation and minimized-playback checks.
+## Final code candidate, b1316ef
+
+[CI 38053176126](https://github.com/kalabhaftu/music-player/actions/runs/38053176126)
+passed all protected Linux/x64/ARM64 checks. Core: 101/101; Node: 44/44.
+Both architectures passed 53 native cases and skipped only three physical
+audio-device cases on runners without an output endpoint. All portable UI
+checks passed. [Private candidate 38053565166](https://github.com/kalabhaftu/music-player/actions/runs/38053565166)
+passed signed build/authentication, complete setup and MSIX UI/install/upgrade/
+association/uninstall gates on both architectures, and the resource comparison.
+
+| Package | Baseline bytes | Candidate bytes | Reduction |
+|---|---:|---:|---:|
+| x64 unpacked | 336,531,048 | 289,386,104 | 14.01% |
+| x64 signed portable ZIP | 142,352,103 | 123,630,720 | 13.15% |
+| ARM64 unpacked | 329,230,402 | 285,132,721 | 13.39% |
+| ARM64 signed portable ZIP | 131,868,364 | 115,715,044 | 12.25% |
+
+| Saved tracks | Visible library ms, before / after | Combined private bytes, before / after | Combined working-set bytes, before / after | Ten-second CPU seconds, before / after |
+|---:|---:|---:|---:|---:|
+| 100 | 11,067 / 4,846 | 211,439,616 / 201,678,848 | 497,242,112 / 480,358,400 | 0.796875 / 0.421875 (both idle) |
+| 100,000 | 6,651 / 7,311 | 556,240,896 / 300,675,072 | 846,041,088 / 556,212,224 | 12.65625 (scanning) / 0.703125 (idle) |
+
+These are single samples, with startup variance across runs. Large-library
+visibility was slower in this final sample; reduced startup contention is
+supported by settled candidate scans and resource measurements, not a claim
+that every startup became faster. Raw JSON remains in the workflow log and
+performance-evidence artifact. Both architecture package reductions exceed 10%.
+Final main validation still requires the same gates after protected merge.
+
+- [x] Required `Core tests · Linux`, `x64`, and `ARM64` on the tested code candidate.
+- [x] Signed packaging, timestamps, assemblies/scripts, embedded uninstaller, MSIX and authenticated manifest.
+- [x] Complete portable/installed library/UI/restart flows on x64/ARM64.
+- [x] Setup/MSIX install, upgrade, associations and both data-retention choices.
+- [x] Representative playback results for every listed audio format.
+- [x] Small/100,000-track resource comparison; navigation and minimized-playback checks.
 - [ ] Protected PR merge; synchronize main; signing preflight and final package validation from merged revision.
 - [ ] Delete the archived local backup branch only after gates pass; tag `v1.0.0`, publish self-signed assets, and verify uploaded hashes.
 

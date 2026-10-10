@@ -24,3 +24,10 @@ Local validation on 2026-10-10:
 
 These checks do not constitute installed-app interaction validation. The running
 user instance was not stopped or relaunched. CI now includes the new Node suite.
+
+## Final candidate evidence
+
+At `b1316ef`, [CI 38053176126](https://github.com/kalabhaftu/music-player/actions/runs/38053176126)
+passed all 101 core and 44 frontend cases, including the pagination cases above,
+and complete Windows UI checks on x64/ARM64. Signed installed setup/MSIX gates
+passed in [38053565166](https://github.com/kalabhaftu/music-player/actions/runs/38053565166).

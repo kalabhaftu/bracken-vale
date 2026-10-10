@@ -43,4 +43,3 @@ under `%LOCALAPPDATA%\MusicPlayerUninstallBackups`.
 Use `-RemoveUserData` to remove the saved profile along with MSIX. Source music and
 existing recovery backups are preserved. This helper never installs certificate
 trust. Authenticate it with the release checksum manifest before running it.
-

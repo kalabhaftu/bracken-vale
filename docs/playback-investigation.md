@@ -74,3 +74,22 @@ titles and native duration; the genuine video regression now indexes its MKV
 through the real TrackReader before playback.
 Local cached-engine checks also passed 11/11 playback/queue/DFF cases with the
 older cached LibVLC 3.0.23.1; these are supplementary, not the final engine gate.
+
+## Completed code candidate (2026-10-10)
+
+At `b1316ef`, all protected [CI checks](https://github.com/kalabhaftu/music-player/actions/runs/38053176126)
+passed: 101 core cases, 44 frontend cases, 53 native cases per architecture
+(three physical-endpoint cases skipped on runners without an audio device),
+and complete portable UI/restart flows. The corresponding
+[signed candidate](https://github.com/kalabhaftu/music-player/actions/runs/38053565166)
+passed all setup/MSIX interaction, install/upgrade/uninstall and resource gates
+on both architectures. These results resolve the earlier ARM64 input and
+installed-package gates; audible hardware quality remains separate evidence.
+
+The final ARM64 input obstruction was Windows' packaged `WWAHost` Microsoft
+account welcome window, omitted by desktop-only `EnumWindows`. The disposable
+test uses `EnumDesktopWindows` and the actual obstructing HWND, validates exact
+title/system owner/session, then waits for official foreground activation.
+It still requires genuine input and actual fullscreen bounds. Fixture generation
+runs in a child process so an installed TagLib assembly cannot remain locked
+during upgrade. Neither correction affects the user's running app.

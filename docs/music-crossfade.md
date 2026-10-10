@@ -50,3 +50,14 @@ Command:
 `dotnet test artifacts/crossfade-validation/CachedNative.Tests.csproj --no-restore --filter "FullyQualifiedName~PlaybackIntegrationTests|FullyQualifiedName~CrossfadeIntegrationTests|FullyQualifiedName~QueueRevisionTests" --verbosity quiet`.
 The ignored verification project mirrors the checked-in playback project with
 the cached native package selected explicitly.
+
+## Release-engine candidate checks
+
+At `b1316ef`, [CI 38053176126](https://github.com/kalabhaftu/music-player/actions/runs/38053176126)
+passed 53 native cases on each architecture with LibVLC 3.0.24. Three physical
+endpoint cases were skipped because those runners have no audio device;
+cached-engine physical checks above remain separate. The complete signed
+setup/MSIX and native UI gates also passed on both architectures in
+[38053565166](https://github.com/kalabhaftu/music-player/actions/runs/38053565166).
+Audible quality and arbitrary output-device hot-plug combinations are not
+claimed to have been tested on every user's hardware.
