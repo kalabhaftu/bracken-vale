@@ -18,10 +18,29 @@ public static class VideoWindowBounds {
     }
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window,out uint processId);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window,System.Text.StringBuilder text,int count);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr window,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
     [DllImport("user32.dll")] static extern uint SendInput(uint count,Input[] inputs,int size);
+    static void SendEscape() {
+        var inputs=new[] {new Input {Type=1,Key=0x1B},new Input {Type=1,Key=0x1B,Flags=2}};
+        if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the Escape key input.");
+    }
     public static void Escape(IntPtr window) {
+        // A freshly initialized Windows 11 runner can retain an open Start menu.
+        // Active menus block SetForegroundWindow. Dismiss only the observed
+        // Windows Start menu, rather than sending video input to another app.
+        var foreground=GetForegroundWindow();
+        var foregroundTitle=new System.Text.StringBuilder(256);
+        GetWindowText(foreground,foregroundTitle,foregroundTitle.Capacity);
+        uint foregroundProcess;
+        GetWindowThreadProcessId(foreground,out foregroundProcess);
+        if(foregroundTitle.ToString()=="Start" &&
+            System.Diagnostics.Process.GetProcessById((int)foregroundProcess).ProcessName=="StartMenuExperienceHost") {
+            SendEscape();
+            for(var attempt=0;attempt<30 && GetForegroundWindow()==foreground;attempt++)System.Threading.Thread.Sleep(100);
+            if(GetForegroundWindow()==foreground)throw new InvalidOperationException("The disposable runner's Start menu did not close.");
+        }
         SetForegroundWindow(window);
         // Foreground activation across input queues is asynchronous. Microsoft's
         // documented automation pattern waits for WM_NULL before checking it.
@@ -32,8 +51,7 @@ public static class VideoWindowBounds {
             var title=new System.Text.StringBuilder(256);GetWindowText(GetForegroundWindow(),title,title.Capacity);
             throw new InvalidOperationException("The video window did not obtain foreground focus for Escape; foreground window: "+title+".");
         }
-        var inputs=new[] {new Input {Type=1,Key=0x1B},new Input {Type=1,Key=0x1B,Flags=2}};
-        if(SendInput(2,inputs,40)!=2)throw new InvalidOperationException("Windows rejected the video Escape key input.");
+        SendEscape();
     }
     public static bool Fullscreen(IntPtr window) {
         Rect rect;var info=new MonitorInfo {Size=Marshal.SizeOf(typeof(MonitorInfo))};
